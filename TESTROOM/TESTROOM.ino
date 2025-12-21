@@ -2,7 +2,7 @@
 // Developed together with ChatGPT in december '25.
 // Bereikbaar op http://testroom.local of http://192.168.1.36 => Andere controller: Naam (sectie DNS/MDNS) + static IP aanpassen!
 // Recht: Met Grok:
-// 21dec25 23:00 Pixel nicknames werken VOLLEDIG in /settings en in hoofdpagina!
+// 21dec25 23:00 Pixel nicknames werken VOLLEDIG in /settings en in hoofdpagina! + RGB input velden smaller
 //          Todo: 1) Verbeterde foutafhandeling bij sensoren (Bijv. als een sensor defect is, geen waarde meet, of niet aangesloten:
 //                Toon in de web UI "sensor defect" of "niet beschikbaar" i.p.v. 0 of rare waarden, hetzelfde in seriële output
 //                Voorbeeld: DS18B20 defect → backup DHT22, en als beide falen duidelijke melding
@@ -1439,9 +1439,9 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
           <tr>
             <td class="label">Standaard RGB</td>
             <td class="input" colspan="2">
-              R: <input type="number" name="neo_r" min="0" max="255" value=")rawliteral" + String(neo_r) + R"rawliteral(" style="width:80px;">
-              G: <input type="number" name="neo_g" min="0" max="255" value=")rawliteral" + String(neo_g) + R"rawliteral(" style="width:80px;">
-              B: <input type="number" name="neo_b" min="0" max="255" value=")rawliteral" + String(neo_b) + R"rawliteral(" style="width:80px;">
+              R: <input type="number" name="neo_r" min="0" max="255" value=")rawliteral" + String(neo_r) + R"rawliteral(" style="width:40px; margin-right:10px;">
+              G: <input type="number" name="neo_g" min="0" max="255" value=")rawliteral" + String(neo_g) + R"rawliteral(" style="width:40px; margin-right:10px;">
+              B: <input type="number" name="neo_b" min="0" max="255" value=")rawliteral" + String(neo_b) + R"rawliteral(" style="width:40px;">
             </td>
           </tr>
 
