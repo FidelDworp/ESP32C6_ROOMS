@@ -2,8 +2,11 @@
 // Developed together with ChatGPT in december '25.
 // Bereikbaar op http://testroom.local of http://192.168.1.36 => Andere controller: Naam (sectie DNS/MDNS) + static IP aanpassen!
 // Recht: Met Grok:
-// 20dec25 22:30  Bed-switch & C° persistent gemaakt!
-// 21dec25 10:30 Deel van de Optionele sensors verborgen in UI, Volgende NVS settings projectjes: Rest van OP sensors verbergen in UI, uitgeschakeld in Matter)
+// 21dec25 14:00  Optionele sensoren verborgen in web UI en serial (niet in JSON) als ze niet in gebruik zijn.
+//                Volgende NVS settings projectjes: OP sensors ook uitgeschakeld in Matter
+//                Bed-switch en andere persistent states (bed, heating_setpoint, fade_duration, home_mode) ook beschikbaar maken in Matter (als je dat verder uitbreidt)
+//                Mogelijk een /reset_runtime endpoint om persistente states te wissen zonder factory reset
+//                Verbeterde foutafhandeling bij sensoren (bijv. "sensor defect" melding in UI en/of serial)
 
 
 
@@ -710,11 +713,23 @@ void setup() {
     <td class="control"></td></tr>
     <tr><td class="label">Humidity</td><td class="value">)rawliteral" + String(humi, 1) + " %" + R"rawliteral(</td><td class="control"></td></tr>
     <tr><td class="label">Dauwpunt</td><td class="value">)rawliteral" + String(dew, 1) + " °C" + R"rawliteral(</td><td class="control"></td></tr>
+    
     <tr><td class="label">DewAlert</td><td class="value">)rawliteral" + String(dew_alert ? "JA" : "NEE") + R"rawliteral(</td><td class="control"></td></tr>
-    <tr><td class="label">CO₂ ppm</td><td class="value">)rawliteral" + String(co2) + " ppm" + R"rawliteral(</td><td class="control"></td></tr>
+    
+    )rawliteral";
+    if (co2_enabled) {
+      html += R"rawliteral(
+    <tr><td class="label">CO₂</td><td class="value">)rawliteral" + String(co2) + " ppm" + R"rawliteral(</td><td class="control"></td></tr>
+    )rawliteral";
+    }
+    if (dust_enabled) {
+      html += R"rawliteral(
     <tr><td class="label">Stof</td><td class="value">)rawliteral" + String(dust) + R"rawliteral(</td><td class="control"></td></tr>
-
+    )rawliteral";
+    }
+    html += R"rawliteral(
     <tr><td class="label">Heating setpoint</td><td class="value">)rawliteral" + String(heating_setpoint) + " °C" + R"rawliteral(</td>
+
       <td class="control"><form action="/set_setpoint" method="get" onsubmit="event.preventDefault(); submitAjax(this);"><input type="range" class="slider" name="setpoint" min="10" max="30" value=")rawliteral" + String(heating_setpoint) + R"rawliteral(" onchange="submitAjax(this.form);"></form></td></tr>
     <tr><td class="label">Heating Auto</td><td class="value">)rawliteral" + String(heating_mode == 0 ? "AUTO" : "MANUEEL") + R"rawliteral(</td>
       <td class="control"><form action="/toggle_heating_auto" method="get" onsubmit="event.preventDefault(); submitAjax(this);"><label class="switch"><input type="checkbox" )rawliteral" + (heating_mode == 0 ? "checked" : "") + R"rawliteral( onchange="submitAjax(this.form);"><span class="slider-switch"></span></label></form></td></tr>
@@ -724,22 +739,34 @@ void setup() {
     <tr><td class="label">Vent Auto</td><td class="value">)rawliteral" + String(vent_mode == 0 ? "AUTO" : "MANUEEL") + R"rawliteral(</td>
       <td class="control"><form action="/toggle_vent_auto" method="get" onsubmit="event.preventDefault(); submitAjax(this);"><label class="switch"><input type="checkbox" )rawliteral" + (vent_mode == 0 ? "checked" : "") + R"rawliteral( onchange="submitAjax(this.form);"><span class="slider-switch"></span></label></form></td></tr>
 
+
     <tr><td class="label">Thuis/Uit</td><td class="value">)rawliteral" + String(home_mode ? "Thuis" : "Uit") + R"rawliteral(</td>
        <td class="control"><form action="/toggle_home" method="get" onsubmit="event.preventDefault(); submitAjax(this);">
        <label class="switch"><input type="checkbox" )rawliteral" + (home_mode ? "checked" : "") + R"rawliteral( onchange="submitAjax(this.form);">
        <span class="slider-switch"></span></label>
     </form></td></tr>
+    )rawliteral";
+    if (tstat_enabled) {
+      html += R"rawliteral(
     <tr><td class="label">Hardware thermostaat</td><td class="value">)rawliteral" + String(tstat_on ? "AAN" : "UIT") + R"rawliteral(</td><td class="control"></td></tr>
+    )rawliteral";
+    }
+    html += R"rawliteral(
     <tr><td class="label">Heating aan</td><td class="value">)rawliteral" + String(heating_on ? "JA" : "NEE") + R"rawliteral(</td><td class="control"></td></tr>
   </table>
 
 
   <div class="group-title">VERLICHTING</div>
   <table>
-    <tr><td class="label">Zonlicht (Lux)</td><td class="value">)rawliteral" + String(sun_light) + " lux" + R"rawliteral(</td><td class="control"></td></tr>
+    )rawliteral";
+    if (sun_light_enabled) {
+      html += R"rawliteral(
+    <tr><td class="label">Zonlicht</td><td class="value">)rawliteral" + String(sun_light) + " lux" + R"rawliteral(</td><td class="control"></td></tr>
+    )rawliteral";
+    }
+    html += R"rawliteral(
     <tr><td class="label">LDR (donker=100)</td><td class="value">)rawliteral" + String(light_ldr) + R"rawliteral(</td><td class="control"></td></tr>
-    <tr><td class="label">Night mode</td><td class="value">)rawliteral" + String(night ? "JA" : "NEE") + R"rawliteral(</td><td class="control"></td></tr>
-        <tr><td class="label">MOV1 PIR licht aan</td><td class="value">)rawliteral" + String(mov1_light ? "JA" : "NEE") + R"rawliteral(</td><td class="control"></td></tr>
+
 
     )rawliteral";
     if (mov2_enabled) {
@@ -792,13 +819,21 @@ void setup() {
         )rawliteral";
     }
     html += R"rawliteral(
-      </table>
 
+
+    </table>
+      )rawliteral";
+    if (beam_enabled) {
+      html += R"rawliteral(
       <div class="group-title">BEWAKING</div>
       <table>
-        <tr><td class="label">Beam sensor waarde (0-100)</td><td class="value">)rawliteral" + String(beam_value) + R"rawliteral(</td><td class="control"></td></tr>
-        <tr><td class="label">Beam alert</td><td class="value">)rawliteral" + String(beam_alert_new ? "JA" : "NEE") + R"rawliteral(</td><td class="control"></td></tr>      
+        <tr><td class="label">Beam sensor waarde</td><td class="value">)rawliteral" + String(beam_value) + R"rawliteral(</td><td class="control"></td></tr>
+        <tr><td class="label">Beam sensor alert</td><td class="value">)rawliteral" + String(beam_alert_new ? "JA" : "NEE") + R"rawliteral(</td><td class="control"></td></tr>
       </table>
+      )rawliteral";
+    }
+    html += R"rawliteral(
+
 
       <div class="group-title">CONTROLLER</div>
       <table>
