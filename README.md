@@ -43,7 +43,14 @@ Optionele sensoren ook uitschakelen in Matter-exposure (Momenteel toont Matter a
 
 ### hoe verder?
 
-1) Optionele sensoren ook uitschakelen in Matter:
-Maakt de configuratie via /settings écht volledig – wat je daar uitzet, verdwijnt overal (UI, serial én HomeKit/Matter).
+1) Verbeterde foutafhandeling bij sensoren (Bijv. als een sensor defect is, geen waarde meet, of niet aangesloten:
+- Toon in de web UI "sensor defect" of "niet beschikbaar" i.p.v. 0 of rare waarden, hetzelfde in seriële output
+- Voorbeeld: DS18B20 defect → backup DHT22, en als beide falen duidelijke melding
+- CO₂, Dust, TSL2561, Beam, etc. krijgen een "defect" detectie
+- /reset_runtime endpoint = Een simpele webpagina of GET-endpoint (bijv. /reset_runtime)
+  Wist alleen de runtime persistent states (bed, heating_setpoint, fade_duration, home_mode)
+  Zonder factory reset → ideaal om snel terug te keren naar defaults zonder alles te verliezen
 
-2) Daarna nice-to-haves
+Met de nieuwe ESP32-R6 controllers:
+10) Optionele sensoren ook uitschakelen in Matter:
+- Maakt de configuratie via /settings écht volledig – wat je daar uitzet, verdwijnt overal (UI, serial én HomeKit/Matter).
