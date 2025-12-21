@@ -43,12 +43,10 @@
 - Momenteel toont Matter altijd alles via JSON → bij uitschakelen in /settings moeten de bijbehorende entities verdwijnen of als "unavailable" gemarkeerd worden)
 
 **Eventuele nice-to-haves**
-2. /reset_runtime endpoint (wis alleen runtime persistent states, geen factory reset)
-3. Verbeterde foutafhandeling bij sensoren (bijv. "sensor defect" of "niet aangesloten" melding in UI en/of serial)
-  - Bijv. als een sensor defect is, geen waarde meet, of niet aangesloten:
-  - Toon in de web UI "sensor defect" of "niet beschikbaar" i.p.v. 0 of rare waarden, hetzelfde in seriële output
-  - Voorbeeld: DS18B20 defect → backup DHT22, en als beide falen duidelijke melding
-  - CO₂, Dust, TSL2561, Beam, etc. krijgen een "defect" detectie
-  - /reset_runtime endpoint = Een simpele webpagina of GET-endpoint (bijv. /reset_runtime)
+1) /reset_runtime endpoint (wis alleen runtime persistent states, geen factory reset)
+  = Een simpele webpagina of GET-endpoint (bijv. /reset_runtime)
   Wist alleen de runtime persistent states (bed, heating_setpoint, fade_duration, home_mode)
   Zonder factory reset → ideaal om snel terug te keren naar defaults zonder alles te verliezen
+2) Verbeterde foutafhandeling bij sensoren (Bijv. als een sensor defect is, geen waarde meet, of niet aangesloten: Toon in de web UI & serial "sensor defect" of "niet beschikbaar" i.p.v. 0 of rare waarden, hetzelfde in seriële output. Voorbeeld: DS18B20 defect → backup DHT22, en als beide falen duidelijke melding
+  - Voorbeeld: DS18B20 defect → backup DHT22, en als beide falen duidelijke melding
+  - CO₂, Dust, TSL2561, Beam, etc. krijgen een "defect" detectie
