@@ -2,7 +2,8 @@
 // Developed together with ChatGPT in december '25.
 // Bereikbaar op http://testroom.local of http://192.168.1.36 => Andere controller: Naam (sectie DNS/MDNS) + static IP aanpassen!
 // Recht: Met Grok:
-// 21dec25 21:00 Todo: 1) Verbeterde foutafhandeling bij sensoren (Bijv. als een sensor defect is, geen waarde meet, of niet aangesloten:
+// 21dec25 21:00 Pixel nicknames werken in /settings pagina!
+//         23:00 Todo: 1) Verbeterde foutafhandeling bij sensoren (Bijv. als een sensor defect is, geen waarde meet, of niet aangesloten:
 //                Toon in de web UI "sensor defect" of "niet beschikbaar" i.p.v. 0 of rare waarden, hetzelfde in seriële output
 //                Voorbeeld: DS18B20 defect → backup DHT22, en als beide falen duidelijke melding
 //                CO₂, Dust, TSL2561, Beam, etc. krijgen een "defect" detectie
@@ -70,6 +71,7 @@ const char* NVS_BED_STATE        = "bed_state";       // bool: bed AAN/UIT
 const char* NVS_CURRENT_SETPOINT = "curr_setpoint";   // int: huidige gekozen temperatuur
 const char* NVS_FADE_DURATION    = "fade_duration";   // int: dim-snelheid in seconden (1-10)
 const char* NVS_HOME_MODE_STATE = "home_mode_state";  // int: 0 = Uit, 1 = Thuis
+const char* NVS_PIXEL_NICK_BASE = "pixel_nick_";      // Pixel nicknames: keys "pixel_nick_0" t/m "pixel_nick_29"
 
 
 
@@ -89,6 +91,9 @@ String mdns_name            = "Testroom";      // Identiek aan room_id
 String wifi_ssid            = "netwerknaam";
 String wifi_pass            = "paswoord";
 String static_ip_str        = "192.168.xx.xx"; // Wordt omgezet naar IPAddress
+String pixel_nicknames[30];                    // Runtime Array voor pixel nicknames
+
+
 
 // Configureerbare defaults
 int heating_setpoint_default = 20;
@@ -99,6 +104,7 @@ int light_dark_threshold     = 50;
 unsigned long mov_window_ms  = 60000;
 int ldr_dark_threshold       = 50;
 int beam_alert_threshold     = 50;
+
 
 // Optionele feature enables (default 1 = aan)
 bool co2_enabled   = true;
@@ -139,6 +145,7 @@ int beam_alert_new = 0;  // Voor p: BEAMalert (beam_value > 50 ? 1 : 0)
 uint8_t neo_r = 255;       // Voor s: R waarde (hardcoded 255)  
 uint8_t neo_g = 255;       // Voor t: G waarde (hardcoded 255)  
 uint8_t neo_b = 255;       // Voor u: B waarde (hardcoded 255)  
+
 
 // Pixel specifieke arrays
 int pixel_mode[2] = {0, 0};  // Voor pixel 0 en 1: 0 = AUTO (PIR), 1 = MANUEEL ON (RGB)
@@ -434,6 +441,25 @@ void setup() {
   neo_b = preferences.getUChar(NVS_NEO_B, 255);
   pixels_num = preferences.getInt(NVS_PIXELS_NUM, 8);
   pixels_num = constrain(pixels_num, 1, 30);          // Laad aantal pixels uit NVS. (limiet)
+
+
+  // === PIXEL NICKNAMES INITIALISEREN ===
+  for (int i = 0; i < 30; i++) {
+    String key = String(NVS_PIXEL_NICK_BASE) + String(i);
+    pixel_nicknames[i] = preferences.getString(key.c_str(), "");
+    
+    // Als leeg (eerste boot of na factory reset) → genereer default
+    if (pixel_nicknames[i].isEmpty()) {
+      pixel_nicknames[i] = room_id + " Pixel " + String(i);
+      preferences.putString(key.c_str(), pixel_nicknames[i]);
+    }
+  }
+  
+
+  // Als aantal pixels gewijzigd is, zorg dat nieuwe pixels een default krijgen
+  for (int i = pixels_num; i < 30; i++) {
+    pixel_nicknames[i] = "";  // Niet gebruiken
+  }
 
 
   memset(pixel_on, 0, sizeof(pixel_on));     // Alle pixel toggles uit bij start
@@ -766,10 +792,11 @@ void setup() {
     <tr><td class="label">Zonlicht</td><td class="value">)rawliteral" + String(sun_light) + " lux" + R"rawliteral(</td><td class="control"></td></tr>
     )rawliteral";
     }
+    
+    
     html += R"rawliteral(
     <tr><td class="label">LDR (donker=100)</td><td class="value">)rawliteral" + String(light_ldr) + R"rawliteral(</td><td class="control"></td></tr>
-
-
+    <tr><td class="label">MOV1 PIR licht aan</td><td class="value">)rawliteral" + String(mov1_light ? "JA" : "NEE") + R"rawliteral(</td><td class="control"></td></tr>
     )rawliteral";
     if (mov2_enabled) {
       html += R"rawliteral(
@@ -777,6 +804,7 @@ void setup() {
     )rawliteral";
     }
     html += R"rawliteral(
+
 
     <tr><td class="label">NeoPixel RGB</td><td class="value">)rawliteral" + String(neo_r) + ", " + String(neo_g) + ", " + String(neo_b) + R"rawliteral(</td>
       <td class="control"><a href="/neopixel" style="color:#336699;text-decoration:underline;">Kleur kiezen</a></td></tr>
@@ -1260,10 +1288,19 @@ void setup() {
 
 // === SETTINGS PAGE - complete versie, werkende checkboxes ===
 server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
+  
+  // Bouw dynamische pixel nickname velden (buiten rawliteral voor veiligheid)
+  String pixelNamesHtml = "";
+  for (int i = 0; i < pixels_num; i++) {
+    pixelNamesHtml += "<label style=\"display:block; margin:6px 0;\">Pixel " + String(i) + ": ";
+    pixelNamesHtml += "<input type=\"text\" name=\"pixel_nick_" + String(i) + "\" value=\"" + pixel_nicknames[i] + "\" style=\"width:220px;\"></label>";
+  }
+
   String html;
   html.reserve(14000);
 
   html = R"rawliteral(
+
 <!DOCTYPE html>
 <html lang="nl">
 <head>
@@ -1387,10 +1424,14 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
             <td class="hint">Waarde voor beam alarm (0-100)</td>
           </tr>
           <tr>
+            
+
+
             <td class="label">Aantal NeoPixels</td>
             <td class="input"><input type="number" name="pixels" min="1" max="30" value=")rawliteral" + String(pixels_num) + R"rawliteral("></td>
             <td class="hint">1-30 pixels (reboot nodig na wijzigen)</td>
           </tr>
+          
           <tr>
             <td class="label">Standaard RGB</td>
             <td class="input" colspan="2">
@@ -1399,16 +1440,27 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
               B: <input type="number" name="neo_b" min="0" max="255" value=")rawliteral" + String(neo_b) + R"rawliteral(" style="width:80px;">
             </td>
           </tr>
+
+          <tr>
+            <td class="label">Pixel namen</td>
+            <td class="input" colspan="2">
+              )rawliteral" + pixelNamesHtml + R"rawliteral(
+            </td>
+            <td class="hint">Naam voor elke pixel (voor Siri/Matter)</td>
+          </tr>
+
           <tr>
             <td class="label">Optionele sensoren</td>
+            
             <td class="input" colspan="2">
-              <label><input type="checkbox" name="co2" )rawliteral" + (co2_enabled ? "checked" : "") + R"rawliteral(> CO₂</label><br>
-              <label><input type="checkbox" name="dust" )rawliteral" + (dust_enabled ? "checked" : "") + R"rawliteral(> Stof</label><br>
-              <label><input type="checkbox" name="sun" )rawliteral" + (sun_light_enabled ? "checked" : "") + R"rawliteral(> Zonlicht</label><br>
-              <label><input type="checkbox" name="mov2" )rawliteral" + (mov2_enabled ? "checked" : "") + R"rawliteral(> MOV2 PIR</label><br>
-              <label><input type="checkbox" name="tstat" )rawliteral" + (tstat_enabled ? "checked" : "") + R"rawliteral(> Hardware thermostaat</label><br>
-              <label><input type="checkbox" name="beam" )rawliteral" + (beam_enabled ? "checked" : "") + R"rawliteral(> Beam sensor</label>
+              <label><input type="checkbox" name="co2")rawliteral" + String(co2_enabled ? " checked" : "") + R"rawliteral(> CO₂</label><br>
+              <label><input type="checkbox" name="dust")rawliteral" + String(dust_enabled ? " checked" : "") + R"rawliteral(> Stof</label><br>
+              <label><input type="checkbox" name="sun")rawliteral" + String(sun_light_enabled ? " checked" : "") + R"rawliteral(> Zonlicht</label><br>
+              <label><input type="checkbox" name="mov2")rawliteral" + String(mov2_enabled ? " checked" : "") + R"rawliteral(> MOV2 PIR</label><br>
+              <label><input type="checkbox" name="tstat")rawliteral" + String(tstat_enabled ? " checked" : "") + R"rawliteral(> Hardware thermostaat</label><br>
+              <label><input type="checkbox" name="beam")rawliteral" + String(beam_enabled ? " checked" : "") + R"rawliteral(> Beam sensor</label>
             </td>
+
           </tr>
         </table>
         <div style="text-align:center;">
@@ -1474,6 +1526,24 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
   preferences.putUChar(NVS_NEO_R, arg("neo_r","255").toInt());
   preferences.putUChar(NVS_NEO_G, arg("neo_g","255").toInt());
   preferences.putUChar(NVS_NEO_B, arg("neo_b","255").toInt());
+
+
+  // Opslaan pixel nicknames
+  for (int i = 0; i < 30; i++) {
+    String argName = "pixel_nick_" + String(i);
+    if (request->hasArg(argName.c_str())) {
+      String nick = request->arg(argName.c_str());
+      nick.trim();
+      if (nick.isEmpty()) {
+        nick = room_id + " Pixel " + String(i);
+      }
+      String key = String(NVS_PIXEL_NICK_BASE) + String(i);
+      preferences.putString(key.c_str(), nick);
+      if (i < pixels_num) {
+        pixel_nicknames[i] = nick;  // Update runtime array
+      }
+    }
+  }
 
   request->send(200, "text/html",
     "<h2 style='text-align:center;padding:50px;color:#336699;'>Instellingen opgeslagen!<br>Rebooting...</h2>");
