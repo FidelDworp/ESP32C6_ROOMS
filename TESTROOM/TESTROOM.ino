@@ -3,14 +3,6 @@
 // Bereikbaar op http://testroom.local of http://192.168.1.36 => Andere controller: Naam (sectie DNS/MDNS) + static IP aanpassen!
 // Recht: Met Grok:
 // 21dec25 21:00 Pixel nicknames werken in /settings pagina!
-//         23:00 Todo: 1) Verbeterde foutafhandeling bij sensoren (Bijv. als een sensor defect is, geen waarde meet, of niet aangesloten:
-//                Toon in de web UI "sensor defect" of "niet beschikbaar" i.p.v. 0 of rare waarden, hetzelfde in seriële output
-//                Voorbeeld: DS18B20 defect → backup DHT22, en als beide falen duidelijke melding
-//                CO₂, Dust, TSL2561, Beam, etc. krijgen een "defect" detectie
-//                2) /reset_runtime endpoint = Een simpele webpagina of GET-endpoint (bijv. /reset_runtime)
-//                  Wist alleen de runtime persistent states (bed, heating_setpoint, fade_duration, home_mode)
-//                  Zonder factory reset → ideaal om snel terug te keren naar defaults zonder alles te verliezen
-
 
 
 
