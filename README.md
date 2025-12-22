@@ -56,24 +56,51 @@
 
 Doelstellingen:
 
-Captive portal in AP mode
+1) Captive portal in AP mode
+
 Na verbinding met "ROOM-<room_id>" opent iPhone/Android automatisch een popup met http://192.168.4.1/settings.
 Geen handmatig typen van IP meer nodig bij first boot of factory reset.
 
-Sensor nicknames
-Labels in de hoofdpagina (/) worden automatisch <room_id> <korte_sensornaam> (bijv. "Testroom temperatuur", "Testroom vochtigheid", "Testroom CO₂").
-Deze zijn bewerkbaar in /settings (18 tekstvelden).
-Leeg laten → automatisch terug naar de combinatie met room_id.
-Gebruik: consistente, persoonlijke namen in UI + toekomstige Matter/HomeKit entities (Siri spreekt exact deze naam uit).
-Serial report blijft ongewijzigd (vaste Nederlandse teksten, geen room_id).
+2) Sensor nicknames implementeren
 
-Belangrijkste problemen die we tegenkwamen
+- Labels in de hoofdpagina (/) worden automatisch <room_id> <korte_sensornaam> (bijv. "Testroom temperatuur", "Testroom vochtigheid", "Testroom CO₂"). Deze zijn bewerkbaar in /settings (18 tekstvelden). Indien leeg laten → automatisch terug naar de combinatie met room_id.
+- Gebruik: consistente, persoonlijke namen in UI + toekomstige Matter/HomeKit entities (Siri spreekt exact deze naam uit).
+- Serial report blijft ongewijzigd (vaste Nederlandse teksten, geen room_id).
+- Defaults lijst met korte namen, lowercase voor consistentie:
+// Vaste korte sensor-naamdelen (voor automatische combinatie met room_id)
+const char* default_sensor_labels[18] = {
+  "temperatuur",     // 0: Room temp
+  "vochtigheid",     // 1: Humidity
+  "dauwpunt",        // 2: Dauwpunt
+  "dauwalarm",       // 3: DewAlert
+  "CO₂",             // 4: CO₂
+  "stof",            // 5: Stof
+  "verwarming",      // 6: Heating setpoint
+  "verwarming aan",  // 7: Heating aan
+  "thermostaat",     // 8: Hardware thermostaat
+  "zonlicht",        // 9: Zonlicht
+  "omgevingslicht",  // 10: LDR
+  "nachtmodus",      // 11: Night mode
+  "MOV1 licht",      // 12: MOV1 PIR licht aan
+  "MOV2 licht",      // 13: MOV2 PIR licht aan
+  "MOV1 beweging",   // 14: MOV1 PIR trig/min
+  "MOV2 beweging",   // 15: MOV2 PIR trig/min
+  "lichtstraal",     // 16: Beam waarde
+  "lichtstraal alarm" // 17: Beam alert
+};
+=> Voeg deze volledige functie toe na void updateFadeInterval() (of een andere helper, voor void pushEvent(...)):
+
+---
+
+Samenvatting van de belangrijkste problemen die we tegenkwamen
 
 Ongeldige static IP default ("192.168.xx.xx") → WiFi stack instabiel → AP mode + reboots.
 Lange delay() in setup() → watchdog triggers.
 Blocking sensor reads (vooral pulseIn in CO₂) in AP mode → webserver niet responsief → reboots bij pagina laden.
 Watchdog issues in Arduino-ESP32 core v3.x.
 Cumulatieve kleine changes → onstabiele toestand.
+
+-----
 
 Hoe we het nú anders gaan doen
 
