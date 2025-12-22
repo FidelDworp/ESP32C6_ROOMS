@@ -112,27 +112,22 @@ Eerst stabiliteit garanderen:
 - Sensor reads skippen in AP mode (zodat /settings altijd bereikbaar is).
 - Captive portal toevoegen.
 
-Daarna pas sensor nicknames implementeren, in kleine, veilige stappen.
-Extra voorzichtigheid bij rawliteral HTML:
-Nooit volledige HTML blokken herschrijven.
-Altijd exacte insert punten geven (bijv. "na deze regel, voeg toe").
-Checkboxes, sliders en live update blijven altijd werken.
-Na elke HTML wijziging: testen op mobiel (iPhone) of toggles/sliders nog reageren.
+Daarna pas "sensor nicknames" implementeren, in kleine, veilige stappen: Checkboxes, sliders en live update blijven altijd werken.
 
 Nieuw stappenplan (na clean start)
-
-Stabiliteit fixes (static IP + AP mode robuust maken + captive portal).
-Sensor nicknames globals + regenerate functie.
-Laden uit NVS in setup().
-Opslaan in /save_settings.
-Tekstvelden toevoegen in /settings.
-Labels vervangen in hoofdpagina (/).
-Testen + polish.
+- Stabiliteit fixes (static IP + AP mode robuust maken + captive portal).
+- Sensor nicknames globals + regenerate functie.
+- Laden uit NVS in setup().
+- Opslaan in /save_settings.
+- Tekstvelden toevoegen in /settings.
+- Labels vervangen in hoofdpagina (/).
+- Testen + polish.
 
 Werkwijze:
-- Geen volledige code dumps! Dit zorgt voor "rabbit holes"!
-- Exacte ankerregels (“na deze regel…”)
-- Eén wijziging per stap, maar goed uitgedacht zodat verschillende gewijzigde regels gegroepeerd worden.
-- Na elke stap: jij test
-- Pas daarna volgende stap
+- Geen volledige code dumps, geen refactor! Dit zorgt voor "rabbit holes"!
+- Altijd een testbaar resultaat nastreven.
+- Exacte bestaande regel als ankerankerregel (“na deze regel…”)
+- Exacte insert code geven: Eén wijziging per stap, maar goed uitgedacht zodat eventueel meerdere gewijzigde regels gegroepeerd worden.
+- Géén volledige HTML blokken herschrijven indien niet nodig! Indien wel, opgepast voor de "checkboxes" Extra voorzichtigheid bij rawliteral HTML! Na elke HTML wijziging: testen op mobiel (iPhone) of toggles/sliders nog reageren.
+- Na elke stap: testen! Pas daarna volgende stap
 => Werk rustig, één stap per keer, met goedkeuring vóór elke volgende code wijziging.
