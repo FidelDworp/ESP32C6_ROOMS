@@ -5,7 +5,7 @@
 - /settings pagina volledig functioneel:
   - Room naam, WiFi SSID/pass, static IP
   - HVAC defaults (heating setpoint default, vent request default, dew margin, home mode default, LDR dark threshold, beam alert threshold)
-  - Optionele sensoren (checkboxes: CO₂, Stof, Zonlicht, MOV2 PIR, Hardware thermostaat, Beam sensor) –
+  - Optionele sensoren in of uitschakelen (checkboxes: CO₂, Stof, Zonlicht, MOV2 PIR, Hardware thermostaat, Beam sensor) => Opgepast: Dit is een zéér kwetsbare aanpak met "rawliteral"! Opgepast bij wijzigingen! Check altijd dat de "rawliteral" structuur niet gebroken wordt!
   
 **persistent na reboot**
   - NeoPixel defaults (aantal pixels 1-30, RGB)
@@ -38,16 +38,15 @@
 - Web UI gebouwd met R"rawliteral()", responsive tables, conditionele HTML via `if (xxx_enabled)`
 
 **Nog te doen**
-- "captive portal" realiseren: standaard bij veel devices (zoals Sonoff of Tasmota). Na connect met AP, opent device automatisch een popup met de config pagina (/settings). Je kan direct configureren!
-- Met de nieuwe ESP32-R6 controllers: Optionele sensoren ook uitschakelen in Matter-exposure
-- Maakt de configuratie via /settings écht volledig – wat je daar uitzet, verdwijnt overal (UI, serial én HomeKit/Matter).
-- Momenteel toont Matter altijd alles via JSON → bij uitschakelen in /settings moeten de bijbehorende entities verdwijnen of als "unavailable" gemarkeerd worden)
+1. Verbeterde foutafhandeling bij sensoren (Bijv. als een sensor defect is, geen waarde meet, of niet aangesloten: Toon in de web UI & serial "sensor defect" of "niet beschikbaar" i.p.v. 0 of rare waarden, hetzelfde in seriële output. Voorbeeld: DS18B20 defect → backup DHT22, en als beide falen duidelijke melding
+  - Voorbeeld: DS18B20 defect → backup DHT22, en als beide falen duidelijke melding
+  - CO₂, Dust, TSL2561, Beam, etc. krijgen een "defect" detectie
+2. "captive portal" realiseren: standaard bij veel devices (zoals Sonoff of Tasmota). Na connect met AP, opent device automatisch een popup met de config pagina (/settings). Je kan direct configureren!
+3. Met de nieuwe ESP32-R6 controllers: Optionele sensoren ook uitschakelen in Matter-exposure
+=> Maakt de configuratie via /settings écht volledig: Wat je daar uitzet, verdwijnt overal (UI, serial én HomeKit/Matter). Momenteel toont Matter altijd alles via JSON. Bij uitschakelen in /settings moeten de bijbehorende entities verdwijnen of als "unavailable" gemarkeerd worden)
 
 **Eventuele nice-to-haves**
-1) /reset_runtime endpoint (wis alleen runtime persistent states, geen factory reset)
+1. /reset_runtime endpoint (wis alleen runtime persistent states, geen factory reset)
   = Een simpele webpagina of GET-endpoint (bijv. /reset_runtime)
   Wist alleen de runtime persistent states (bed, heating_setpoint, fade_duration, home_mode)
   Zonder factory reset → ideaal om snel terug te keren naar defaults zonder alles te verliezen
-2) Verbeterde foutafhandeling bij sensoren (Bijv. als een sensor defect is, geen waarde meet, of niet aangesloten: Toon in de web UI & serial "sensor defect" of "niet beschikbaar" i.p.v. 0 of rare waarden, hetzelfde in seriële output. Voorbeeld: DS18B20 defect → backup DHT22, en als beide falen duidelijke melding
-  - Voorbeeld: DS18B20 defect → backup DHT22, en als beide falen duidelijke melding
-  - CO₂, Dust, TSL2561, Beam, etc. krijgen een "defect" detectie
