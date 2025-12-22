@@ -129,4 +129,10 @@ Tekstvelden toevoegen in /settings.
 Labels vervangen in hoofdpagina (/).
 Testen + polish.
 
-Werk rustig, één stap per keer, met goedkeuring vóór elke code wijziging.
+Werkwijze:
+- Geen volledige code dumps! Dit zorgt voor "rabbit holes"!
+- Exacte ankerregels (“na deze regel…”)
+- Eén wijziging per stap, maar goed uitgedacht zodat verschillende gewijzigde regels gegroepeerd worden.
+- Na elke stap: jij test
+- Pas daarna volgende stap
+=> Werk rustig, één stap per keer, met goedkeuring vóór elke volgende code wijziging.
