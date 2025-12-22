@@ -50,3 +50,56 @@
   = Een simpele webpagina of GET-endpoint (bijv. /reset_runtime)
   Wist alleen de runtime persistent states (bed, heating_setpoint, fade_duration, home_mode)
   Zonder factory reset → ideaal om snel terug te keren naar defaults zonder alles te verliezen
+
+
+**Verder werken op 22dec25:**
+
+Doelstellingen:
+
+Captive portal in AP mode
+Na verbinding met "ROOM-<room_id>" opent iPhone/Android automatisch een popup met http://192.168.4.1/settings.
+Geen handmatig typen van IP meer nodig bij first boot of factory reset.
+
+Sensor nicknames
+Labels in de hoofdpagina (/) worden automatisch <room_id> <korte_sensornaam> (bijv. "Testroom temperatuur", "Testroom vochtigheid", "Testroom CO₂").
+Deze zijn bewerkbaar in /settings (18 tekstvelden).
+Leeg laten → automatisch terug naar de combinatie met room_id.
+Gebruik: consistente, persoonlijke namen in UI + toekomstige Matter/HomeKit entities (Siri spreekt exact deze naam uit).
+Serial report blijft ongewijzigd (vaste Nederlandse teksten, geen room_id).
+
+Belangrijkste problemen die we tegenkwamen
+
+Ongeldige static IP default ("192.168.xx.xx") → WiFi stack instabiel → AP mode + reboots.
+Lange delay() in setup() → watchdog triggers.
+Blocking sensor reads (vooral pulseIn in CO₂) in AP mode → webserver niet responsief → reboots bij pagina laden.
+Watchdog issues in Arduino-ESP32 core v3.x.
+Cumulatieve kleine changes → onstabiele toestand.
+
+Hoe we het nú anders gaan doen
+
+Clean start: alleen onze werkende originele sketch als basis.
+Geen code genereren tot Filip expliciet vraagt.
+Stap-voor-stap plan met voorafgaande goedkeuring van elke stap.
+Eerst stabiliteit garanderen:
+- Static IP default leeg maken (DHCP standaard).
+- Sensor reads skippen in AP mode (zodat /settings altijd bereikbaar is).
+- Captive portal toevoegen.
+
+Daarna pas sensor nicknames implementeren, in kleine, veilige stappen.
+Extra voorzichtigheid bij rawliteral HTML:
+Nooit volledige HTML blokken herschrijven.
+Altijd exacte insert punten geven (bijv. "na deze regel, voeg toe").
+Checkboxes, sliders en live update blijven altijd werken.
+Na elke HTML wijziging: testen op mobiel (iPhone) of toggles/sliders nog reageren.
+
+Nieuw stappenplan (na clean start)
+
+Stabiliteit fixes (static IP + AP mode robuust maken + captive portal).
+Sensor nicknames globals + regenerate functie.
+Laden uit NVS in setup().
+Opslaan in /save_settings.
+Tekstvelden toevoegen in /settings.
+Labels vervangen in hoofdpagina (/).
+Testen + polish.
+
+Werk rustig, één stap per keer, met goedkeuring vóór elke code wijziging.
