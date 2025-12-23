@@ -1,10 +1,3 @@
-Hieronder staat **dezelfde inhoud**, maar **proper geformatteerd in GitHub-Markdown**, met duidelijke line breaks, koppen, **bold** en waar zinvol *underline via emphasis*.
-Er is **inhoudelijk niets gewijzigd**.
-
-U kan dit **rechtstreeks kopiëren** naar `README.md`.
-
----
-
 # ESP32 Testroom Controller
 
 **Project README – status december 2025**
