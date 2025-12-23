@@ -1,200 +1,342 @@
-### ESP32 Testroom Controller Project (december 2025)
+# ESP32 Testroom Controller
 
-**Huidige status (wat werkt perfect):**
-- Volledige, mooie en responsive webinterface (header, sidebar, warning box, hints, table-stijl)
-- /settings pagina volledig functioneel:
-  - Room naam, WiFi SSID/pass, static IP
-  - HVAC defaults (heating setpoint default, vent request default, dew margin, home mode default, LDR dark threshold, beam alert threshold)
-  - Optionele sensoren in of uitschakelen (checkboxes: CO₂, Stof, Zonlicht, MOV2 PIR, Hardware thermostaat, Beam sensor) => Opgepast: Dit is een zéér kwetsbare aanpak met "rawliteral"! Opgepast bij wijzigingen! Check altijd dat de "rawliteral" structuur niet gebroken wordt!
-  - TO DO: De "nicknames" voor optionele sensors
-- Captive Portal functionaliteit toegevoegd (ChatGPT): De AP-mode is nu veel professioneler en gebruiksvriendelijker. Na connect met AP, opent device automatisch een popup met de config pagina (/settings). Je kan direct configureren! (Standaard bij veel devices zoals Sonoff of Tasmota).
+**Project README – status december 2025**
 
-  
-**persistent na reboot**
-  - NeoPixel defaults (aantal pixels 1-30, RGB)
-  - Factory Reset knop
-  - JavaScript validatie (IP-formaat, verplichte velden, confirm)
-- Checkboxes werken betrouwbaar via method="get" + request->hasArg("naam")
-- Runtime persistent states (na power-off/on reboot) en beschikbaar/expose in Matter
-  - bed (AAN/UIT)
-  - heating_setpoint (huidige gekozen temperatuur)
-  - fade_duration (dim-snelheid 1-10s)
-  - home_mode (Thuis/Uit)
+## 1. Projectdoel
 
-**Optionele sensoren volledig dynamisch**:
-  - Bij uitschakelen in /settings → rijen verdwijnen uit web UI (/) én regels uit seriële output
-  - Lege sectietitels (bv. BEWAKING) verdwijnen mee
-  - Labels overal geharmoniseerd en consistent
-  - JSON endpoint blijft **altijd alles sturen** (voor Matter/Home Assistant)
-- Veilig fallback-gedrag: kritieke states (vent_percent, pixel modes, heating_mode, vent_mode) vallen terug naar defaults bij reboot
-- Alle core functionaliteit intact: OTA, JSON endpoint, NeoPixel kleurkiezer, sliders/toggles met live update, seriële output, etc.
+Dit project is een ESP32-gebaseerde “room controller” met:
 
-**Nicknames voor pixels**
-- Gebruiker kan elke pixel een vrije naam geven (ideaal voor Siri/Matter later)
-- Defaults zijn zinvol ("Testroom Pixel 0")
-- Alles veilig opgeslagen en geladen in NVS
+* een volledige webinterface (desktop & mobiel),
+* persistente configuratie via NVS,
+* optionele sensoren die dynamisch aan/uit gezet kunnen worden,
+* integratie met Matter / Home Assistant via JSON,
+* robuuste fallback naar AP-mode met captive portal.
 
-**Belangrijke technische keuzes**
-- NVS voor alle permanente instellingen
-- Simpele, betrouwbare checkbox-afhandeling (GET + hasArg)
-- Runtime persistent states beperkt tot niet-kritieke instellingen
-- Web UI gebouwd met R"rawliteral()", responsive tables, conditionele HTML via `if (xxx_enabled)`
-
-**Nog te doen**
-1. Verbeterde foutafhandeling bij sensoren (Bijv. als een sensor defect is, geen waarde meet, of niet aangesloten: Toon in de web UI & serial "sensor defect" of "niet beschikbaar" i.p.v. 0 of rare waarden, hetzelfde in seriële output. Voorbeeld: DS18B20 defect → backup DHT22, en als beide falen duidelijke melding
-  - Voorbeeld: DS18B20 defect → backup DHT22, en als beide falen duidelijke melding
-  - CO₂, Dust, TSL2561, Beam, etc. krijgen een "defect" detectie
-2. Met de nieuwe ESP32-R6 controllers: Optionele sensoren ook uitschakelen in Matter-exposure
-=> Maakt de configuratie via /settings écht volledig: Wat je daar uitzet, verdwijnt overal (UI, serial én HomeKit/Matter). Momenteel toont Matter altijd alles via JSON. Bij uitschakelen in /settings moeten de bijbehorende entities verdwijnen of als "unavailable" gemarkeerd worden)
-
-**Eventuele nice-to-haves**
-1. /reset_runtime endpoint (wis alleen runtime persistent states, geen factory reset)
-  = Een simpele webpagina of GET-endpoint (bijv. /reset_runtime)
-  Wist alleen de runtime persistent states (bed, heating_setpoint, fade_duration, home_mode)
-  Zonder factory reset → ideaal om snel terug te keren naar defaults zonder alles te verliezen
-
-
-**Verder werken op 22dec25:**
-
-Doelstellingen:
-
-1) Captive portal in AP mode
-
-Na verbinding met "ROOM-<room_id>" opent iPhone/Android automatisch een popup met http://192.168.4.1/settings.
-Geen handmatig typen van IP meer nodig bij first boot of factory reset.
-
-2) Sensor nicknames implementeren
-
-- Labels in de hoofdpagina (/) worden automatisch <room_id> <korte_sensornaam> (bijv. "Testroom temperatuur", "Testroom vochtigheid", "Testroom CO₂"). Deze zijn bewerkbaar in /settings (18 tekstvelden). Indien leeg laten → automatisch terug naar de combinatie met room_id.
-- Gebruik: consistente, persoonlijke namen in UI + toekomstige Matter/HomeKit entities (Siri spreekt exact deze naam uit).
-- Serial report blijft ongewijzigd (vaste Nederlandse teksten, geen room_id).
-- Defaults lijst met korte namen, lowercase voor consistentie:
-// Vaste korte sensor-naamdelen (voor automatische combinatie met room_id)
-const char* default_sensor_labels[18] = {
-  "temperatuur",     // 0: Room temp
-  "vochtigheid",     // 1: Humidity
-  "dauwpunt",        // 2: Dauwpunt
-  "dauwalarm",       // 3: DewAlert
-  "CO₂",             // 4: CO₂
-  "stof",            // 5: Stof
-  "verwarming",      // 6: Heating setpoint
-  "verwarming aan",  // 7: Heating aan
-  "thermostaat",     // 8: Hardware thermostaat
-  "zonlicht",        // 9: Zonlicht
-  "omgevingslicht",  // 10: LDR
-  "nachtmodus",      // 11: Night mode
-  "MOV1 licht",      // 12: MOV1 PIR licht aan
-  "MOV2 licht",      // 13: MOV2 PIR licht aan
-  "MOV1 beweging",   // 14: MOV1 PIR trig/min
-  "MOV2 beweging",   // 15: MOV2 PIR trig/min
-  "lichtstraal",     // 16: Beam waarde
-  "lichtstraal alarm" // 17: Beam alert
-};
-=> Voeg deze volledige functie toe na void updateFadeInterval() (of een andere helper, voor void pushEvent(...)):
+Het systeem is bedoeld als **stabiele basis** waarop stapsgewijs extra functionaliteit kan worden toegevoegd, zonder regressies of instabiliteit.
 
 ---
 
-Samenvatting van de belangrijkste problemen die we tegenkwamen
+## 2. Huidige status – wat werkt volledig en stabiel
 
-Ongeldige static IP default ("192.168.xx.xx") → WiFi stack instabiel → AP mode + reboots.
-Lange delay() in setup() → watchdog triggers.
-Blocking sensor reads (vooral pulseIn in CO₂) in AP mode → webserver niet responsief → reboots bij pagina laden.
-Watchdog issues in Arduino-ESP32 core v3.x.
-Cumulatieve kleine changes → onstabiele toestand.
+### 2.1 Webinterface
 
------
+* Volledig uitgewerkte, **responsive web UI**
 
-Hoe we het nú anders gaan doen
+  * header
+  * sidebar
+  * warning box
+  * hints
+  * table-layout
+* Werkt correct op mobiel (iPhone getest).
 
-Clean start: alleen onze werkende originele sketch als basis.
-Geen code genereren tot Filip expliciet vraagt.
-Stap-voor-stap plan met voorafgaande goedkeuring van elke stap.
-Eerst stabiliteit garanderen:
-- Static IP default leeg maken (DHCP standaard).
-- Sensor reads skippen in AP mode (zodat /settings altijd bereikbaar is).
-- Captive portal toevoegen.
+### 2.2 `/settings` pagina (volledig functioneel)
 
-Daarna pas "sensor nicknames" implementeren, in kleine, veilige stappen: Checkboxes, sliders en live update blijven altijd werken.
+Configuratie via webinterface:
 
-Nieuw stappenplan (na clean start)
-- Stabiliteit fixes (static IP + AP mode robuust maken + captive portal).
-- Sensor nicknames globals + regenerate functie.
-- Laden uit NVS in setup().
-- Opslaan in /save_settings.
-- Tekstvelden toevoegen in /settings.
-- Labels vervangen in hoofdpagina (/).
-- Testen + polish.
+* **Algemeen**
 
-Werkwijze:
-- Geen volledige code dumps, geen refactor! Dit zorgt voor "rabbit holes"!
-- Altijd een testbaar resultaat nastreven.
-- Exacte bestaande regel als ankerankerregel (“na deze regel…”)
-- Exacte insert code geven: Eén wijziging per stap, maar goed uitgedacht zodat eventueel meerdere gewijzigde regels gegroepeerd worden.
-- Géén volledige HTML blokken herschrijven indien niet nodig! Indien wel, opgepast voor de "checkboxes" Extra voorzichtigheid bij rawliteral HTML! Na elke HTML wijziging: testen op mobiel (iPhone) of toggles/sliders nog reageren.
-- Na elke stap: testen! Pas daarna volgende stap
-=> Werk rustig, één stap per keer, met goedkeuring vóór elke volgende code wijziging.
+  * Room naam
+  * WiFi SSID / password
+  * Static IP
+* **HVAC defaults**
 
-Grok verprutste dit werk, dus gaf ik het door aan ChatGPT:
+  * heating setpoint (default)
+  * vent request (default)
+  * dew margin
+  * home mode (default)
+  * LDR dark threshold
+  * beam alert threshold
+* **Optionele sensoren (checkboxes)**
 
---------------
+  * CO₂
+  * Stof
+  * Zonlicht
+  * MOV2 PIR
+  * Hardware thermostaat
+  * Beam sensor
 
-Vergelijking door Grok tussen versie van 22dec25 door Grok en versie van 23dec25 door ChatGPT.
+⚠️ **Belangrijk:**
+Deze pagina is opgebouwd met `R"rawliteral()"`.
+Dit is **extreem kwetsbaar**: bij elke wijziging moet expliciet gecontroleerd worden dat de rawliteral-structuur niet breekt.
+Checkboxes mogen **niet** herschreven of verplaatst worden zonder testen.
 
-Belangrijke en goede verbeteringen om de AP-mode (fallback bij geen WiFi) veel robuuster en gebruiksvriendelijker te maken.
+**Nog niet geïmplementeerd:**
 
-1. Captive Portal functionaliteit toegevoegd (grote verbetering!)
-   
-Dit is de belangrijkste toevoeging – precies wat je wilde: automatisch de config-pagina openen op iPhone/Android na verbinding met de AP.
+* Nicknames voor optionele sensoren (zie §6)
 
-Nieuwe include: #include <DNSServer.h>
-Globals toegevoegd:
-DNSServer dnsServer;
-const byte DNS_PORT = 53;
-bool mdns_running = false; (voor betere mDNS handling)
-wl_status_t last_wifi_status = WL_IDLE_STATUS; (voor WiFi status detectie)
+### 2.3 Persistent gedrag (na reboot / power-cycle)
 
-In setup() – AP blok:
-Na WiFi.softAPConfig(...):
-dnsServer.start(DNS_PORT, "*", ap_ip);
-Extra serial prints voor duidelijkheid.
-ap_mode_active = true; (duplicaat, maar harmless).
+Permanent opgeslagen in NVS:
 
-In loop():
-Nieuwe WiFi status detectie + mDNS herstart bij connect/disconnect (zeer netjes!).
-if (ap_mode_active) { dnsServer.processNextRequest(); } → dit houdt de DNS server draaiende.
+* NeoPixel defaults
 
-In /settings handler (bovenaan):
-Nieuwe handlers voor captive portal detectie:
-/hotspot-detect.html → redirect naar /settings (iOS/macOS)
-/generate_204 → redirect (Android)
-/ncsi.txt → redirect (Windows)
+  * aantal pixels (1–30)
+  * RGB-kleur
+* Factory Reset knop
+* JavaScript validatie
 
-Resultaat: Na verbinding met "ROOM-Testroom" opent iPhone/Android automatisch een popup met http://192.168.4.1/settings. Geen handmatig IP typen meer nodig!
+  * IP-formaat
+  * verplichte velden
+  * confirm dialogs
 
-2. Verbeterde mDNS handling
+**Checkbox-afhandeling**
 
-mDNS wordt nu alleen gestart bij geldige STA-verbinding.
-Bij WiFi disconnect wordt mDNS gestopt.
-Bij reconnect wordt mDNS opnieuw gestart.
-Voorkomt conflicten in AP-mode en maakt reconnects stabieler.
+* Betrouwbaar via `method="get"` + `request->hasArg("naam")`
 
-3. Serial output verbeteringen in AP-mode
+### 2.4 Runtime-persistent states (Matter-exposed)
 
-Duidelijkere meldingen bij AP start.
-Extra regel "AP-mode actief → webserver en DNS blijven actief".
-"DNS captive portal actief (alle domeinen → 192.168.4.1)".
+Deze blijven behouden over reboot en zijn beschikbaar via JSON / Matter:
 
-4. Kleine clean-ups
+* `bed` (AAN / UIT)
+* `heating_setpoint` (actuele waarde)
+* `fade_duration` (1–10 s)
+* `home_mode` (Thuis / Uit)
 
-ap_mode_active = true; twee keer gezet (geen probleem).
-IP print in setup() nog op WiFi.localIP() (0.0.0.0 in AP-mode), maar niet kritiek.
+Niet-kritieke states worden persistent gehouden; kritieke states krijgen veilige defaults (zie hieronder).
 
-Wat is NIET veranderd (goed nieuws!)
+---
 
-- Geen sensor nicknames code toegevoegd → we blijven clean.
-- Geen wijzigingen aan rawliteral HTML in / of /settings → checkboxes, sliders, live update blijven 100% intact.
-- Static IP default nog "192.168.xx.xx" → dit is nog steeds een potentieel probleem (zoals ChatGPT eerder zei), maar niet gefixt in deze versie.
+## 3. Optionele sensoren – dynamisch gedrag
 
-CHECK:
-- Geen skip van sensor reads in AP-mode → pulseIn() kan nog blocking zijn en reboot veroorzaken bij pagina laden (jouw huidige probleem). Huidige reboot-probleem bij het openen van http://192.168.4.1/settings nog niet is opgelost, omdat: Sensor reads (vooral pulseIn() in readCO2()) nog steeds draaien in AP-mode. Deze blokkeren de CPU → AsyncWebServer krijgt geen tijd → watchdog reset.
-=> Sensor reads skippen in AP-mode (kleine, veilige wijziging in loop()) zodat de webserver altijd responsief blijft.
+* Uitschakelen in `/settings` resulteert in:
+
+  * verdwijnen van rijen in de hoofdpagina (`/`)
+  * verdwijnen van bijbehorende seriële output
+* Lege sectietitels (bv. **BEWAKING**) verdwijnen automatisch
+* Labels zijn overal geharmoniseerd en consistent
+* **JSON endpoint stuurt altijd alle waarden**
+
+  * vereist voor Matter / Home Assistant
+* Veilig fallback-gedrag bij reboot:
+
+  * `vent_percent`
+  * pixel modes
+  * `heating_mode`
+  * `vent_mode`
+    → vallen altijd terug naar defaults
+
+**Alle core functionaliteit blijft intact:**
+
+* OTA
+* JSON endpoint
+* NeoPixel kleurkiezer
+* sliders en toggles met live update
+* seriële logging
+
+---
+
+## 4. Pixel nicknames (reeds geïmplementeerd)
+
+* Elke NeoPixel kan een **vrije gebruikersnaam** krijgen
+* Zinvolle defaults (bv. `"Testroom Pixel 0"`)
+* Volledig opgeslagen en geladen via NVS
+* Voorbereiding voor Siri / Matter voice control
+
+---
+
+## 5. Belangrijke technische keuzes
+
+* **NVS** voor alle permanente instellingen
+* Eenvoudige, robuuste checkbox-logica (`GET + hasArg`)
+* Runtime-persistent states bewust beperkt tot niet-kritieke parameters
+* Web UI opgebouwd met:
+
+  * `R"rawliteral()"`
+  * responsive tabellen
+  * conditionele HTML via `if (xxx_enabled)`
+
+---
+
+## 6. Nog te doen (technisch noodzakelijk)
+
+### 6.1 Betere foutafhandeling bij sensoren
+
+Probleem:
+
+* Defecte of niet-aangesloten sensoren tonen momenteel `0` of onzinwaarden.
+
+Doel:
+
+* In **web UI** en **serial output** expliciet tonen:
+
+  * `"sensor defect"`
+  * `"niet beschikbaar"`
+
+Voorbeelden:
+
+* DS18B20 defect → fallback naar DHT22
+* DS18B20 + DHT22 defect → duidelijke foutmelding
+* CO₂, Dust, TSL2561, Beam, etc. krijgen defect-detectie
+
+### 6.2 Matter exposure koppelen aan `/settings`
+
+Met ESP32-R6 controllers:
+
+* Optionele sensoren die uitgeschakeld zijn in `/settings`:
+
+  * verdwijnen ook in Matter / HomeKit
+  * of worden als `unavailable` gemarkeerd
+
+Momenteel:
+
+* Matter toont **altijd alles** via JSON
+  → dit moet consistent worden met de webconfiguratie.
+
+---
+
+## 7. Nice-to-have
+
+### `/reset_runtime` endpoint
+
+* Webpagina of GET-endpoint (`/reset_runtime`)
+* Wist **alleen** runtime-persistent states:
+
+  * `bed`
+  * `heating_setpoint`
+  * `fade_duration`
+  * `home_mode`
+* **Geen factory reset**
+* Bedoeld om snel terug te keren naar defaults
+
+---
+
+## 8. Werkfocus vanaf 22 december 2025
+
+### 8.1 Doel 1 – Captive portal in AP-mode
+
+Bij verbinding met AP `ROOM-<room_id>`:
+
+* iOS / Android opent automatisch:
+
+  ```
+  http://192.168.4.1/settings
+  ```
+* Geen manueel IP-typen nodig
+* Gedrag vergelijkbaar met Sonoff / Tasmota
+
+### 8.2 Doel 2 – Sensor nicknames
+
+* Labels op hoofdpagina (`/`) worden:
+
+  ```
+  <room_id> <korte_sensornaam>
+  ```
+
+  bv.
+  *“Testroom temperatuur”*, *“Testroom CO₂”*
+* Alle labels bewerkbaar in `/settings` (18 tekstvelden)
+* Leeg veld → automatisch fallback naar `<room_id> + default`
+* Serial output blijft **ongewijzigd** (vaste NL-teksten)
+
+**Default korte namen (lowercase, consistent):**
+
+```cpp
+const char* default_sensor_labels[18] = {
+  "temperatuur",
+  "vochtigheid",
+  "dauwpunt",
+  "dauwalarm",
+  "CO₂",
+  "stof",
+  "verwarming",
+  "verwarming aan",
+  "thermostaat",
+  "zonlicht",
+  "omgevingslicht",
+  "nachtmodus",
+  "MOV1 licht",
+  "MOV2 licht",
+  "MOV1 beweging",
+  "MOV2 beweging",
+  "lichtstraal",
+  "lichtstraal alarm"
+};
+```
+
+Deze functionaliteit wordt toegevoegd als helperfunctie
+(na `void updateFadeInterval()` of vóór `void pushEvent(...)`).
+
+---
+
+## 9. Problemen uit het verleden (lessons learned)
+
+* Ongeldige static IP default (`192.168.xx.xx`)
+  → WiFi stack instabiel → AP-mode + reboot loops
+* Lange `delay()` in `setup()` → watchdog resets
+* Blocking sensor reads (vooral `pulseIn()` bij CO₂)
+  → webserver niet responsief
+  → reboot bij pagina-load
+* Arduino-ESP32 core v3.x watchdog issues
+* Cumulatie van kleine wijzigingen → instabiliteit
+
+---
+
+## 10. Nieuwe aanpak (strikt!)
+
+### Clean start
+
+* Start van **laatste stabiele werkende sketch**
+* Geen code genereren tenzij Filip dit expliciet vraagt
+
+### Eerst stabiliteit, dan features
+
+1. Static IP default leeg (DHCP standaard)
+2. Sensor reads **skippen in AP-mode**
+3. Captive portal robuust maken
+
+Pas daarna:
+
+* Sensor nicknames, stap voor stap
+
+---
+
+## 11. Werkwijze (niet onderhandelbaar)
+
+* **Geen volledige code dumps**
+* **Geen refactors**
+* Eén wijziging per stap
+* Exacte **ankerregel** (“na deze regel…”)
+* Exacte insert-code
+* Geen onnodige HTML-wijzigingen
+* Extra voorzichtigheid bij `rawliteral()`
+* Na elke HTML-wijziging:
+
+  * testen op mobiel
+  * check sliders & toggles
+* Na elke stap testen
+* Volgende stap pas na expliciete goedkeuring
+
+---
+
+## 12. Overname van Grok → ChatGPT
+
+Grok leverde een instabiele evolutie.
+Deze README beschrijft de **ChatGPT-versie van 23 dec 2025**, met duidelijke verbeteringen in AP-mode.
+
+### Wat werd correct verbeterd
+
+* Captive portal (DNS hijack + OS-detectie)
+* Betere mDNS lifecycle
+* Duidelijke serial logging in AP-mode
+
+### Wat bewust niet werd aangeraakt
+
+* Geen sensor nicknames
+* Geen rawliteral HTML wijzigingen
+* Geen refactors
+
+### Wat nog fout loopt (kritisch)
+
+* Sensor reads draaien nog in AP-mode
+* `pulseIn()` blokkeert → webserver starvation
+* Watchdog reset bij openen `/settings`
+
+**Volgende stap (veilig):**
+
+* Sensor reads conditioneel skippen in AP-mode
+  → webserver altijd responsief houden
+
+---
+
+**Dit document is het formele ankerpunt voor verdere ontwikkeling.**
+Elke volgende stap vertrekt expliciet van deze status.
