@@ -714,3 +714,335 @@ Dit addendum zorgt ervoor dat:
 * u niet opnieuw dezelfde strijd moet voeren
 
 ---
+
+Prima. Hieronder krijg je **twee volledig uitgewerkte documenten**, **klaar om 1-op-1 in je GitHub-repository te plaatsen**.
+Ze zijn bewust streng, expliciet en AI-proof geschreven.
+
+---
+
+# 📄 `DESIGN_RULES.md`
+
+## ESP32 Testroom Controller
+
+**Strikte ontwerp- en samenwerkingsregels – bindend**
+
+---
+
+## 1. Doel van dit document
+
+Dit document beschrijft **niet-onderhandelbare ontwerp- en werkwijzeregels** voor het project
+**ESP32 Testroom Controller**.
+
+Het is bedoeld voor:
+
+* toekomstige ontwikkeling,
+* samenwerking met AI-systemen (ChatGPT, Copilot, Grok, …),
+* het vermijden van regressies, instabiliteit en herhaling van fouten.
+
+👉 **Elke wijziging die deze regels schendt, wordt beschouwd als fout.**
+
+---
+
+## 2. Fundamenteel principe
+
+> **Eerst stabiliteit, dan features. Altijd.**
+
+Dit project is **geen experimentele playground**, maar een stabiele controller in reële omgeving.
+
+---
+
+## 3. Werkwijze (NIET onderhandelbaar)
+
+### 3.1 Code discipline
+
+* ❌ Geen volledige code dumps
+
+* ❌ Geen refactors
+
+* ❌ Geen “opkuis”
+
+* ❌ Geen herstructurering
+
+* ❌ Geen “betere aanpak” voorstellen zonder expliciete vraag
+
+* ✅ **Exact één wijziging per stap**
+
+* ✅ Elke wijziging moet:
+
+  * compileerbaar zijn
+  * testbaar zijn
+  * revertbaar zijn
+
+---
+
+### 3.2 Ankerregel – absoluut verplicht
+
+Elke wijziging moet gebeuren met:
+
+* een **letterlijk bestaande regel** uit `TESTROOM.ino`
+* exact benoemd als ankerpunt
+
+Formaat:
+
+```
+Zoek exact deze regel:
+<letterlijke code>
+
+Voeg DIRECT NA deze regel toe:
+<nieuwe code>
+```
+
+❌ “Functioneel equivalent”
+❌ “Zoek iets gelijkaardigs”
+❌ “In setup() ergens”
+
+➡️ **Niet toegestaan**
+
+---
+
+## 4. HTML & Web UI – ZEER GEVOELIG
+
+### 4.1 R"rawliteral()"
+
+* De volledige web UI is opgebouwd met `R"rawliteral()"`
+* Dit is **extreem kwetsbaar**
+
+❌ Geen herschrijven
+❌ Geen verplaatsen
+❌ Geen herformatteren
+❌ Geen “kleine aanpassing” zonder testen
+
+### 4.2 Checkboxes
+
+* Afhandeling via:
+
+  ```
+  method="get" + request->hasArg("naam")
+  ```
+* Dit gedrag mag **nooit gewijzigd** worden zonder expliciete toestemming.
+
+---
+
+## 5. AP-mode vs STA-mode – harde scheiding
+
+### 5.1 AP-mode (configuratie / reddingsmodus)
+
+In **AP-mode**:
+
+* ✅ Webserver **moet altijd** responsief zijn
+
+* ✅ DNS captive portal actief
+
+* ✅ `/settings` moet altijd laden
+
+* ❌ GEEN sensor reads
+
+* ❌ GEEN blocking calls
+
+  * geen `pulseIn()`
+  * geen lange `delay()`
+
+* ❌ GEEN mDNS
+
+AP-mode = **configuratie**, geen functionaliteit.
+
+---
+
+### 5.2 STA-mode (normale werking)
+
+Pas in STA-mode:
+
+* Sensor reads toegestaan
+* JSON updates actief
+* mDNS toegestaan (zie §6)
+
+---
+
+## 6. mDNS – lifecycle regels
+
+mDNS mag:
+
+* ✅ Alleen starten als:
+
+  * `WiFi.status() == WL_CONNECTED`
+  * `WiFi.localIP() != 0.0.0.0`
+
+mDNS mag NIET:
+
+* ❌ in AP-mode
+* ❌ zonder geldige STA-IP
+* ❌ dubbel gestart worden
+* ❌ starten vóór WiFi connectie stabiel is
+
+mDNS moet:
+
+* 🔁 herstartbaar zijn na reconnect
+* 🔁 correct stoppen en opnieuw starten
+
+---
+
+## 7. Static IP – vaste regel
+
+* Static IP default = **LEEG**
+* DHCP is standaard
+
+Reden:
+
+* Ongeldige defaults veroorzaakten:
+
+  * WiFi instabiliteit
+  * AP-loops
+  * reboot storms
+
+➡️ Deze fout mag **nooit** terugkeren.
+
+---
+
+## 8. Sensor reads – kritisch aandachtspunt
+
+### 8.1 Bekend probleem
+
+* Sensor reads draaien nog in AP-mode
+* `pulseIn()` (CO₂) blokkeert
+* Resultaat:
+
+  * webserver starvation
+  * watchdog resets bij `/settings`
+
+---
+
+### 8.2 Vastgelegde oplossing
+
+* Sensor reads **conditioneel skippen in AP-mode**
+* Geen uitzonderingen
+* Geen workarounds
+
+👉 **Dit is prioriteit #1 vóór nieuwe features**
+
+---
+
+## 9. Samenwerking met AI – expliciete instructie
+
+Bij elk nieuw AI-gesprek moet expliciet vermeld worden:
+
+> “Gebruik mijn DESIGN_RULES.md als bindend contract.
+> Genereer geen code tenzij expliciet gevraagd.
+> Werk uitsluitend met exacte ankerpunten uit mijn sketch.”
+
+Zonder deze context is AI-output **onbetrouwbaar**.
+
+---
+
+## 10. Slotverklaring
+
+Dit document is **bindend**.
+
+Elke wijziging die hiermee in conflict is:
+
+* wordt verworpen
+* wordt teruggedraaid
+* wordt niet verder besproken
+
+---
+
+---
+
+# 📄 `KNOWN_ISSUES.md`
+
+## ESP32 Testroom Controller
+
+**Bekende problemen & technische schuld**
+
+---
+
+## 1. Doel
+
+Dit document voorkomt dat **oude fouten opnieuw gemaakt worden**
+en bewaart technische context die anders verloren gaat.
+
+---
+
+## 2. Kritische problemen (actueel)
+
+### 2.1 Sensor reads in AP-mode
+
+**Status:** ❌ Nog niet opgelost
+
+* Sensor reads lopen in AP-mode
+* Vooral `pulseIn()` (CO₂) is problematisch
+* Gevolg:
+
+  * webserver starvation
+  * watchdog reset
+  * `/settings` laadt niet betrouwbaar
+
+**Oplossing (vastgelegd):**
+
+* Sensor reads conditioneel skippen in AP-mode
+
+---
+
+### 2.2 Safari captive portal gedrag
+
+* Safari (macOS / iOS) is wispelturig
+* Captive portal popup verschijnt niet altijd
+* Soms manuele refresh nodig
+
+➡️ Dit is **geen bug** in de ESP32-code
+➡️ Gedrag is acceptabel
+
+---
+
+## 3. Historische fouten (lessons learned)
+
+### 3.1 Ongeldige static IP defaults
+
+* Voorbeeld:
+
+  ```
+  192.168.xx.xx
+  ```
+* Gevolg:
+
+  * WiFi stack instabiel
+  * AP-loops
+  * reboot storms
+
+---
+
+### 3.2 Lange delay() in setup()
+
+* Watchdog resets
+* Onvoorspelbaar gedrag
+
+---
+
+### 3.3 Arduino-ESP32 core v3.x
+
+* Bekende watchdog issues
+* Extra voorzichtigheid vereist
+* Geen “trial-and-error” code
+
+---
+
+## 4. Niet-problemen (bewust zo gelaten)
+
+* mDNS werkt correct
+* JSON stuurt altijd alle waarden
+* Sommige waarden blijven persistent over reboot
+
+➡️ Dit is **bewust ontwerp**, geen bug.
+
+---
+
+## 5. Volgende veilige stap
+
+> **Sensor reads volledig uitschakelen in AP-mode**
+
+Pas daarna:
+
+* sensor defect-detectie
+* sensor nicknames
+* Matter exposure koppelen aan `/settings`
+
+---
