@@ -368,15 +368,130 @@ Deze README beschrijft de **ChatGPT-versie van 23 dec 2025**, met duidelijke ver
 
 ---
 
-Als u wilt, kan ik hierna ook nog:
 
-* een **compacte AI-prompt** maken voor herstart van het project, of
+**WERKDOCUMENT Voor AI**
+
+* een **compacte AI-prompt** voor herstart van het project, of
 * deze README opsplitsen in `README.md` + `DESIGN_RULES.md`
 
-Maar enkel op expliciete vraag.
+Prima. Hieronder krijg je **twee concrete deliverables**, klaar om te gebruiken.
+
+---
+
+## 1️⃣ Compacte AI-prompt om het project opnieuw op te starten
+
+Deze prompt kan je **letterlijk kopiëren** in een nieuw ChatGPT-gesprek, samen met je `TESTROOM.ino`.
+
+---
+
+### 🔹 AI-STARTPROMPT (aanbevolen)
+
+```
+Je werkt aan een bestaand ESP32-project genaamd “ESP32 Testroom Controller”.
+
+Context:
+- De sketch is groot, stabiel en in productie.
+- Stabiliteit heeft absolute prioriteit boven nieuwe features.
+- Er mag NIETS gerefactord worden tenzij expliciet gevraagd.
+- HTML is opgebouwd met R"rawliteral()" en is extreem kwetsbaar.
+- Wijzigingen gebeuren stap voor stap, met exacte ankerregels.
+
+Wat reeds correct werkt:
+- Webinterface (desktop + mobiel)
+- /settings configuratie via NVS
+- Captive portal in AP-mode
+- STA + mDNS lifecycle
+- JSON endpoint (Matter / Home Assistant)
+- OTA, NeoPixels, runtime states
+
+Strikte werkwijze:
+- Geen volledige code dumps
+- Eén wijziging per stap
+- Altijd: “zoek exact deze regel” → “voeg exact dit toe”
+- Geen aannames, gebruik ALLEEN de aangeleverde sketch
+- Na elke stap wachten op expliciete bevestiging
+
+Huidige focus (technisch noodzakelijk):
+1. Sensor reads volledig skippen in AP-mode
+2. Webserver moet altijd responsief blijven
+3. Geen blocking calls (pulseIn, delay, etc.)
+
+Ik upload nu TESTROOM.ino.
+Begin met: analyse van setup() en loop(), geen code schrijven.
+```
+
+---
+
+## 2️⃣ Opsplitsing van de README (aanbevolen structuur)
+
+Dit maakt je repository **duidelijker**, en voorkomt dat een AI later regels door elkaar haalt.
+
+---
+
+### 📄 `README.md` (publiek / overzicht)
+
+**Bevat:**
+
+* Projectdoel
+* Wat werkt
+* Architectuur op hoog niveau
+* Werkfocus
+* Status
+
+**Korter, leesbaar voor mensen.**
+
+---
+
+### 📄 `DESIGN_RULES.md` (streng, voor AI & future you)
+
+**Bevat:**
+
+* Werkwijze (niet onderhandelbaar)
+* Rawliteral-waarschuwingen
+* AP vs STA principes
+* Lessons learned
+* Wat nooit zonder expliciete toestemming mag
+
+Dit bestand is **cruciaal** om regressies te vermijden.
+
+---
+
+### 📄 `KNOWN_ISSUES.md` (optioneel, maar nuttig)
+
+**Bevat:**
+
+* Sensor blocking
+* pulseIn-probleem
+* watchdog resets
+* AP-mode beperkingen
+
+Helpt om niet opnieuw dezelfde fouten te maken.
+
+---
+
+## 3️⃣ Waarom dit werkt (belangrijk)
+
+* Je **begrenst de AI expliciet**
+* Je dwingt **ankerpunten af**
+* Je vermijdt “goedbedoelde refactors”
+* Je bewaart stabiliteit als contract
+
+Dit is exact de aanpak die je project nodig heeft.
 
 
 ---------------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
 
 TESTROOM.ino
 
