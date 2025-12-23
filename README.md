@@ -38,6 +38,7 @@ Configuratie via webinterface:
   * Room naam
   * WiFi SSID / password
   * Static IP
+
 * **HVAC defaults**
 
   * heating setpoint (default)
@@ -46,6 +47,7 @@ Configuratie via webinterface:
   * home mode (default)
   * LDR dark threshold
   * beam alert threshold
+
 * **Optionele sensoren (checkboxes)**
 
   * CO₂
@@ -57,8 +59,7 @@ Configuratie via webinterface:
 
 ⚠️ **Belangrijk:**
 Deze pagina is opgebouwd met `R"rawliteral()"`.
-Dit is **extreem kwetsbaar**: bij elke wijziging moet expliciet gecontroleerd worden dat de rawliteral-structuur niet breekt.
-Checkboxes mogen **niet** herschreven of verplaatst worden zonder testen.
+Dit is **extreem kwetsbaar**: bij elke wijziging moet expliciet gecontroleerd worden dat de rawliteral-structuur niet breekt. Checkboxes mogen **niet** herschreven of verplaatst worden zonder testen.
 
 **Nog niet geïmplementeerd:**
 
@@ -69,18 +70,15 @@ Checkboxes mogen **niet** herschreven of verplaatst worden zonder testen.
 Permanent opgeslagen in NVS:
 
 * NeoPixel defaults
-
   * aantal pixels (1–30)
   * RGB-kleur
 * Factory Reset knop
 * JavaScript validatie
-
   * IP-formaat
   * verplichte velden
   * confirm dialogs
 
 **Checkbox-afhandeling**
-
 * Betrouwbaar via `method="get"` + `request->hasArg("naam")`
 
 ### 2.4 Runtime-persistent states (Matter-exposed)
@@ -335,8 +333,3 @@ Deze README beschrijft de **ChatGPT-versie van 23 dec 2025**, met duidelijke ver
 
 * Sensor reads conditioneel skippen in AP-mode
   → webserver altijd responsief houden
-
----
-
-**Dit document is het formele ankerpunt voor verdere ontwikkeling.**
-Elke volgende stap vertrekt expliciet van deze status.
