@@ -1,23 +1,19 @@
 // ESP32_TESTROOM_Grok.ino = Transition from Photon based to ESP32 based Home automation system
-// Developed together with ChatGPT in december '25.
-// Bereikbaar op http://testroom.local of http://192.168.1.36 => Andere controller: Naam (sectie DNS/MDNS) + static IP aanpassen!
-// Recht: Met Grok:
-// 21dec25 23:00 Pixel nicknames werken VOLLEDIG in /settings en in hoofdpagina! + RGB input velden smaller
-//          Todo: 1) Verbeterde foutafhandeling bij sensoren (Bijv. als een sensor defect is, geen waarde meet, of niet aangesloten:
-//                Toon in de web UI "sensor defect" of "niet beschikbaar" i.p.v. 0 of rare waarden, hetzelfde in seriële output
-//                Voorbeeld: DS18B20 defect → backup DHT22, en als beide falen duidelijke melding
-//                CO₂, Dust, TSL2561, Beam, etc. krijgen een "defect" detectie
-//                2) /reset_runtime endpoint = Een simpele webpagina of GET-endpoint (bijv. /reset_runtime)
-//                  Wist alleen de runtime persistent states (bed, heating_setpoint, fade_duration, home_mode)
-//                  Zonder factory reset → ideaal om snel terug te keren naar defaults zonder alles te verliezen
+// Developed together with ChatGPT & Grok in december '25.
+// Thuis bereikbaar op http://testroom.local of http://192.168.1.36 => Andere controller: Naam (sectie DNS/MDNS) + static IP aanpassen!
 
-
+// 21dec25 23:00 Pixel nicknames werken VOLLEDIG in /settings en in / (hoofdpagina)! Ga terug naar deze versie als je vastloopt!
+// 22dec25 18:00 Begonnen met volgend plan: "Sensor nicknames" maken naar analogie met pixel nicknames.
+//               Eerste code wijzigingen hebben iets gebroken! We beginnen dus opnieuw van de code van 21dec25 om 2300.
+//         20:30 chatGPT: Uploaded TESTROOM.ino => Captive portal geimplementeerd en gans factory reset proces verbeterd! Thuis testen.
+// 23dec25 ????? chatGPT: Laatste stap afwerken: Correcte serial monitor logging...
 
 
 #include <WiFi.h>
+#include <ESPmDNS.h>
+#include <DNSServer.h>        // Toegevoegd om captive portal toe te voegen
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
-#include <ESPmDNS.h>
 #include <Update.h>           // Voor OTA update
 #include <DHT.h>
 #include <OneWire.h>
@@ -56,22 +52,22 @@ const char* NVS_HOME_MODE           = "home_mode";
 const char* NVS_LIGHT_THRESHOLD     = "light_thresh";
 const char* NVS_MOV_WINDOW          = "mov_window";
 const char* NVS_LDR_DARK            = "ldr_dark";
-const char* NVS_BEAM_THRESHOLD       = "beam_thresh";
+const char* NVS_BEAM_THRESHOLD      = "beam_thresh";
 const char* NVS_CO2_ENABLED         = "co2_en";
 const char* NVS_DUST_ENABLED        = "dust_en";
 const char* NVS_SUN_ENABLED         = "sun_en";
 const char* NVS_MOV2_ENABLED        = "mov2_en";
 const char* NVS_TSTAT_ENABLED       = "tstat_en";
 const char* NVS_BEAM_ENABLED        = "beam_en";
-const char* NVS_NEO_R = "neo_r";
-const char* NVS_NEO_G = "neo_g";
-const char* NVS_NEO_B = "neo_b";
-const char* NVS_PIXELS_NUM = "pixels_num";
-const char* NVS_BED_STATE        = "bed_state";       // bool: bed AAN/UIT
-const char* NVS_CURRENT_SETPOINT = "curr_setpoint";   // int: huidige gekozen temperatuur
-const char* NVS_FADE_DURATION    = "fade_duration";   // int: dim-snelheid in seconden (1-10)
-const char* NVS_HOME_MODE_STATE = "home_mode_state";  // int: 0 = Uit, 1 = Thuis
-const char* NVS_PIXEL_NICK_BASE = "pixel_nick_";      // Pixel nicknames: keys "pixel_nick_0" t/m "pixel_nick_29"
+const char* NVS_NEO_R               = "neo_r";
+const char* NVS_NEO_G               = "neo_g";
+const char* NVS_NEO_B               = "neo_b";
+const char* NVS_PIXELS_NUM          = "pixels_num";
+const char* NVS_BED_STATE           = "bed_state";       // bool: bed AAN/UIT
+const char* NVS_CURRENT_SETPOINT    = "curr_setpoint";   // int: huidige gekozen temperatuur
+const char* NVS_FADE_DURATION       = "fade_duration";   // int: dim-snelheid in seconden (1-10)
+const char* NVS_HOME_MODE_STATE     = "home_mode_state"; // int: 0 = Uit, 1 = Thuis
+const char* NVS_PIXEL_NICK_BASE     = "pixel_nick_";     // Pixel nicknames: keys "pixel_nick_0" t/m "pixel_nick_29"
 
 
 
@@ -106,6 +102,7 @@ int ldr_dark_threshold       = 50;
 int beam_alert_threshold     = 50;
 
 
+
 // Optionele feature enables (default 1 = aan)
 bool co2_enabled   = true;
 bool dust_enabled  = true;
@@ -113,11 +110,18 @@ bool sun_light_enabled = true;
 bool mov2_enabled  = true;
 bool tstat_enabled = true;
 bool beam_enabled  = true;
-int pixels_num = 8;         // Default. Configureerbaar via NVS (1-30)
+int pixels_num     = 8;     // Default. Configureerbaar via NVS (1-30)
 
 
 // AP mode (Access Point)
 bool ap_mode_active = false;  // Track of we in AP fallback zitten
+DNSServer dnsServer;
+const byte DNS_PORT = 53;
+
+
+bool mdns_running = false;
+wl_status_t last_wifi_status = WL_IDLE_STATUS;
+
 
 
 // HVAC Variabelen
@@ -588,6 +592,13 @@ void setup() {
     // Belangrijk: geef de iPhone tijd om het netwerk te zien
     delay(1000);
     ap_mode_active = true;
+
+    Serial.println("AP-mode actief → webserver en DNS blijven actief");
+    ap_mode_active = true;
+    
+    dnsServer.start(DNS_PORT, "*", ap_ip);
+    Serial.println("DNS captive portal actief (alle domeinen → 192.168.4.1)");
+
   }
 
 
@@ -606,10 +617,17 @@ void setup() {
 
   Serial.println("\nIP: " + WiFi.localIP().toString());
 
-  if (MDNS.begin(mdns_name.c_str())) {
-    Serial.printf("mDNS gestart: http://%s.local\n", mdns_name.c_str());
+  // mDNS alleen starten bij geldige STA-verbinding
+  if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
+    if (MDNS.begin(room_id.c_str())) {
+      Serial.print("mDNS gestart: http://");
+      Serial.print(room_id);
+      Serial.println(".local");
+    } else {
+      Serial.println("mDNS start mislukt");
+    }
   } else {
-    Serial.println("Fout bij starten mDNS");
+    Serial.println("mDNS niet gestart (geen geldige STA-IP)");
   }
 
 
@@ -1292,6 +1310,22 @@ void setup() {
 
 // === SETTINGS PAGE - complete versie, werkende checkboxes ===
 server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
+
+// Apple captive portal detectie (iOS / macOS)
+server.on("/hotspot-detect.html", HTTP_GET, [](AsyncWebServerRequest *request) {
+  request->redirect("/settings");
+});
+
+// Android / Windows captive portal checks
+server.on("/generate_204", HTTP_GET, [](AsyncWebServerRequest *request) {
+  request->redirect("/settings");
+});
+
+server.on("/ncsi.txt", HTTP_GET, [](AsyncWebServerRequest *request) {
+  request->redirect("/settings");
+});
+
+
   
   // Bouw dynamische pixel nickname velden (buiten rawliteral voor veiligheid)
   String pixelNamesHtml = "";
@@ -1439,9 +1473,9 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
           <tr>
             <td class="label">Standaard RGB</td>
             <td class="input" colspan="2">
-              R: <input type="number" name="neo_r" min="0" max="255" value=")rawliteral" + String(neo_r) + R"rawliteral(" style="width:40px; margin-right:10px;">
-              G: <input type="number" name="neo_g" min="0" max="255" value=")rawliteral" + String(neo_g) + R"rawliteral(" style="width:40px; margin-right:10px;">
-              B: <input type="number" name="neo_b" min="0" max="255" value=")rawliteral" + String(neo_b) + R"rawliteral(" style="width:40px;">
+              R: <input type="number" name="neo_r" min="0" max="255" value=")rawliteral" + String(neo_r) + R"rawliteral(" style="width:80px;">
+              G: <input type="number" name="neo_g" min="0" max="255" value=")rawliteral" + String(neo_g) + R"rawliteral(" style="width:80px;">
+              B: <input type="number" name="neo_b" min="0" max="255" value=")rawliteral" + String(neo_b) + R"rawliteral(" style="width:80px;">
             </td>
           </tr>
 
@@ -1662,6 +1696,46 @@ unsigned long last_slow = 0;
 
 
 void loop() {
+
+
+  // WiFi status change detectie voor mDNS
+  wl_status_t current_status = WiFi.status();
+
+  if (current_status != last_wifi_status) {
+
+    if (current_status == WL_CONNECTED &&
+        WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
+
+      if (mdns_running) {
+        MDNS.end();
+        mdns_running = false;
+        Serial.println("mDNS gestopt (herstart wegens WiFi connect)");
+      }
+
+      if (MDNS.begin(room_id.c_str())) {
+        mdns_running = true;
+        Serial.print("mDNS opnieuw gestart: http://");
+        Serial.print(room_id);
+        Serial.println(".local");
+      } else {
+        Serial.println("mDNS herstart mislukt");
+      }
+    }
+
+    if (current_status != WL_CONNECTED && mdns_running) {
+      MDNS.end();
+      mdns_running = false;
+      Serial.println("mDNS gestopt (WiFi disconnect)");
+    }
+
+    last_wifi_status = current_status;
+  }
+
+
+
+  if (ap_mode_active) {
+    dnsServer.processNextRequest();
+  }
 
   handleSerialCommands();
 
