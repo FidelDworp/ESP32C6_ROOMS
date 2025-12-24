@@ -127,6 +127,29 @@ https://www.amazon.com/dp/B0DKF4NQHC   => VIDEO: https://youtu.be/LyMUUUmBnLI
 
 Espressif product selector: https://products.espressif.com/#/product-selector?names=ESP32-C6-WROOM-1-N8
 
+        ┌──────────────────────────┐
+        │        ANTENNA           │
+        │   (KEEP-OUT ZONE!)       │
+        │                          │
+ L1  ───┤■ 1                  29 ■├── R29
+ L2  ───┤■ 2                  28 ■├── R28
+ L3  ───┤■ 3                  27 ■├── R27
+ L4  ───┤■ 4                  26 ■├── R26
+ L5  ───┤■ 5                  25 ■├── R25
+ L6  ───┤■ 6                  24 ■├── R24
+ L7  ───┤■ 7                  23 ■├── R23
+ L8  ───┤■ 8                  22 ■├── R22
+ L9  ───┤■ 9                  21 ■├── R21
+ L10 ───┤■10                  20 ■├── R20
+ L11 ───┤■11                  19 ■├── R19
+ L12 ───┤■12                  18 ■├── R18
+ L13 ───┤■13                  17 ■├── R17
+ L14 ───┤■14                  16 ■├── R16
+ L15 ───┤■15                  15 ■├── R15
+        │                          │
+        │   MODULE BODY 25.5 mm     │
+        └──────────────────────────┘
+          ←────── 18.0 mm ──────→
 
 
 
