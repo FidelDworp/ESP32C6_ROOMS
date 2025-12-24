@@ -73,7 +73,9 @@ en wat nuttige context over dit soort modules in productiescenario’s:
 
 Er is een open project online waarin een hobby-ontwerper een **ESP32-C6-gebaseerde PCB zelf heeft ontworpen en via PCBWay heeft geproduceerd**.
 
+Project:
 https://fritzenlab.net/fritzenlab-esp32-c6-dev-board/
+Development:
 https://fritzenlab.net/2024/06/10/develop-a-circuit-board-esp32-c6/
 
 De maker beschrijft dat hij:
