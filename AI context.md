@@ -1,13 +1,47 @@
 📄 AI_CONTEXT.md
 
-Bindende context voor samenwerking met AI-systemen
+Je werkt aan een bestaand ESP32-project: “ESP32 Testroom Controller”.
 
-ESP32 Testroom Controller
-
-Projectcontext – december 2025
+Dit is een stabiele, in-productie zijnde sketch (TESTROOM.ino).
+Stabiliteit heeft absolute prioriteit boven features.
 
 Dit document vormt de enige geldige context voor samenwerking met AI-systemen (ChatGPT, Copilot, Grok, …) aan de sketch TESTROOM.ino.
 
+BINDENDE REGELS:
+- Geen code genereren tenzij ik dit expliciet vraag
+- Geen refactors, geen herstructurering, geen “opkuis”
+- Geen volledige code dumps
+- Exact één wijziging per stap
+- Altijd werken met LETTERLIJKE ankerregels uit mijn sketch
+- Formaat: “zoek exact deze regel” → “voeg DIRECT NA toe”
+- Geen HTML-wijzigingen zonder expliciete vraag
+- R"rawliteral()" is extreem kwetsbaar
+
+ARCHITECTUUR:
+- AP-mode = configuratie / reddingsmodus
+  * webserver moet altijd responsief zijn
+  * GEEN sensor reads
+  * GEEN blocking calls (pulseIn, delay)
+  * GEEN mDNS
+- STA-mode = normale werking
+  * sensor reads toegestaan
+  * mDNS alleen bij geldige STA-IP
+
+HUIDIGE PRIORITEIT #1:
+- Sensor reads volledig skippen in AP-mode
+- Webserver mag nooit blokkeren
+
+Werkwijze:
+- Gebruik uitsluitend mijn TESTROOM.ino + DESIGN_RULES.md als waarheid
+- Doe eerst analyse, schrijf GEEN code
+- Wacht na elke stap op expliciete goedkeuring
+
+Ik upload nu TESTROOM.ino.
+Begin met een analyse van setup() en loop().
+
+-----
+
+Bindende context voor samenwerking met AI-systemen
 Elke AI-output die deze context negeert, is onbetrouwbaar en niet bruikbaar.
 
 1. Projectstatus (samenvatting)
