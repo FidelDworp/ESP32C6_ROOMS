@@ -1,6 +1,6 @@
-#ESP32-C6-WROOM-1 module voor MATTER	
-	
-ESP32-C6-WROOM-1 module (klaar gesoldeerd, met antenne, flash, crystal) is ideaal voor shields: eenvoudige footprint (18x25mm, 0.1” pins), goedkoop (€2-3 bij LCSC/JLCPCB), geen soldering van SoC nodig.	
+### 📄 `ESP32-C6-WROOM-1 module voor MATTER.md`
+
+# ESP32-C6-WROOM-1 module (klaar gesoldeerd, met antenne, flash, crystal) is ideaal voor shields: eenvoudige footprint (18x25mm, 0.1” pins), goedkoop (€2-3 bij LCSC/JLCPCB), geen soldering van SoC nodig.	
 
 Voordelen vs bare SoC (ESP32-C6-QFN32):	
 	•  Geen fine-pitch QFN soldering (0.4mm pitch, moeilijk handmatig).
