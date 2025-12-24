@@ -1,167 +1,185 @@
-📄 AI_CONTEXT.md
+# 📄 AI_CONTEXT.md
 
-Je werkt aan een bestaand ESP32-project: “ESP32 Testroom Controller”.
+**ESP32 Testroom Controller — bindende AI-context**
 
-Dit is een stabiele, in-productie zijnde sketch (TESTROOM.ino).
-Stabiliteit heeft absolute prioriteit boven features.
+---
 
-Dit document vormt de enige geldige context voor samenwerking met AI-systemen (ChatGPT, Copilot, Grok, …) aan de sketch TESTROOM.ino.
+## Geldigheid
 
-BINDENDE REGELS:
-- Geen code genereren tenzij ik dit expliciet vraag
-- Geen refactors, geen herstructurering, geen “opkuis”
-- Geen volledige code dumps
-- Exact één wijziging per stap
-- Altijd werken met LETTERLIJKE ankerregels uit mijn sketch
-- Formaat: “zoek exact deze regel” → “voeg DIRECT NA toe”
-- Geen HTML-wijzigingen zonder expliciete vraag
-- R"rawliteral()" is extreem kwetsbaar
+* ENIGE geldige context voor AI-samenwerking
+* Geldt voor: TESTROOM.ino
+* Context negeren = output onbruikbaar
 
-ARCHITECTUUR:
-- AP-mode = configuratie / reddingsmodus
-  * webserver moet altijd responsief zijn
-  * GEEN sensor reads
-  * GEEN blocking calls (pulseIn, delay)
-  * GEEN mDNS
-- STA-mode = normale werking
-  * sensor reads toegestaan
-  * mDNS alleen bij geldige STA-IP
+---
 
-HUIDIGE PRIORITEIT #1:
-- Sensor reads volledig skippen in AP-mode
-- Webserver mag nooit blokkeren
+## Project
 
-Werkwijze:
-- Gebruik uitsluitend mijn TESTROOM.ino + DESIGN_RULES.md als waarheid
-- Doe eerst analyse, schrijf GEEN code
-- Wacht na elke stap op expliciete goedkeuring
+* Groot bestaand ESP32-project
+* In productie
+* Stabiliteit > features
+* Web UI via `R"rawliteral()"` (zeer kwetsbaar)
+* AP-mode = configuratie / recovery
 
-Ik upload nu TESTROOM.ino.
-Begin met een analyse van setup() en loop().
+---
 
------
+## Fundamenteel principe
 
-Bindende context voor samenwerking met AI-systemen
-Elke AI-output die deze context negeert, is onbetrouwbaar en niet bruikbaar.
+* Eerst stabiliteit
+* Dan pas features
+* Geen uitzonderingen
 
-1. Projectstatus (samenvatting)
+---
 
-Groot, bestaand ESP32-project
+## Clean start
 
-Draait in reële omgeving
+* Vertrek van laatste stabiele sketch
+* Geen code tenzij expliciet gevraagd door Filip
 
-Stabiliteit is belangrijker dan features
+---
 
-Webinterface gebouwd met R"rawliteral()" (extreem kwetsbaar)
+## Absolute prioriteiten
 
-AP-mode fungeert als reddings- en configuratiemodus
+* Static IP default = LEEG
+* DHCP standaard
+* Sensor reads UIT in AP-mode
+* Captive portal altijd responsief
 
-2. Nieuwe aanpak (strikt)
-2.1 Clean start
+---
 
-Vertrek uitsluitend van de laatste stabiele werkende sketch
+## Architectuur
 
-Geen code genereren tenzij Filip dit expliciet vraagt
+### AP-mode
 
-2.2 Eerst stabiliteit, dan features
+* Webserver altijd responsief
+* DNS captive portal actief
+* `/settings` altijd bereikbaar
+* GEEN sensor reads
+* GEEN blocking calls
 
-Absolute prioriteiten:
+  * geen `pulseIn()`
+  * geen lange `delay()`
+* GEEN mDNS
 
-Static IP default = leeg (DHCP standaard)
+---
 
-Sensor reads volledig uitschakelen in AP-mode
+### STA-mode
 
-Captive portal robuust en responsief houden
+* Sensor reads toegestaan
+* mDNS toegestaan ALLEEN indien:
 
-Pas daarna:
+  * `WiFi.status() == WL_CONNECTED`
+  * `WiFi.localIP() != 0.0.0.0`
 
-Sensor nicknames
+---
 
-Extra logica
+## Werkwijze — verboden
 
-Verdere uitbreidingen
+* Geen volledige code dumps
+* Geen refactors
+* Geen herstructurering
+* Geen “opkuis”
+* Geen “betere aanpak” voorstellen
+* Geen HTML-wijzigingen zonder expliciete vraag
+* Geen onnodige wijzigingen in `R"rawliteral()"`
 
-3. Werkwijze (niet onderhandelbaar)
+---
 
-Deze regels zijn hard constraints:
+## Werkwijze — verplicht
 
-❌ Geen volledige code dumps
+* Exact 1 wijziging per stap
+* Altijd LETTERLIJKE ankerregel uit TESTROOM.ino
+* Verplicht formaat:
 
-❌ Geen refactors
+```
+Zoek exact deze regel:
+<letterlijke code>
 
-❌ Geen herstructurering
+Voeg DIRECT NA deze regel toe:
+<nieuwe code>
+```
 
-❌ Geen “betere aanpak” voorstellen
+* “Functioneel equivalent” = VERBODEN
+* “In setup() ergens” = VERBODEN
 
-✅ Exact één wijziging per stap
+---
 
-✅ Altijd werken met letterlijke ankerregels
+## Testdiscipline
 
-✅ Exacte instructies:
+* Na elke HTML-wijziging:
 
-“zoek exact deze regel”
+  * mobiel testen
+  * sliders & toggles controleren
+* Na elke stap:
 
-“voeg hierna toe”
+  * testen
+  * wachten op expliciete goedkeuring
 
-“vervang dit blok door”
+---
 
-❌ Geen HTML-wijzigingen zonder expliciete vraag
+## Historiek Grok → ChatGPT
 
-❌ Geen onnodige wijzigingen in R"rawliteral()"
+* Grok = instabiele evolutie
+* ChatGPT-versie = 23 dec 2025
 
-Na elke HTML-wijziging:
+---
 
-testen op mobiel
+## Correct verbeterd
 
-sliders en toggles controleren
+* Captive portal (DNS hijack + OS-detectie)
+* mDNS lifecycle
+* Serial logging AP-mode
 
-Na elke stap:
+---
 
-testen
+## Bewust NIET aangepast
 
-wachten op expliciete goedkeuring
+* Geen sensor nicknames
+* Geen rawliteral HTML-wijzigingen
+* Geen refactors
 
-4. Overname van Grok → ChatGPT
+---
 
-Grok leverde een instabiele evolutie.
+## Kritische fouten (actueel)
 
-Deze repository beschrijft de ChatGPT-versie van 23 december 2025, met duidelijke verbeteringen in AP-mode.
+* Sensor reads actief in AP-mode
+* `pulseIn()` blokkeert
+* Webserver starvation
+* Watchdog reset bij `/settings`
 
-4.1 Correct verbeterd
+---
 
-Captive portal (DNS hijack + OS-detectie)
+## Huidige prioriteit #1
 
-mDNS lifecycle duidelijker
+* Sensor reads conditioneel UIT in AP-mode
+* Webserver MAG NOOIT blokkeren
 
-Heldere serial logging in AP-mode
+---
 
-4.2 Bewust NIET aangepast
+## Verplichte AI-startzin
 
-Geen sensor nicknames
+* “Gebruik AI_CONTEXT.md + DESIGN_RULES.md als bindend contract”
+* “Genereer geen code tenzij expliciet gevraagd”
+* “Werk uitsluitend met LETTERLIJKE ankerpunten”
 
-Geen rawliteral HTML-wijzigingen
+---
 
-Geen refactors
+## Startinstructie
 
-4.3 Kritische resterende fouten
+* TESTROOM.ino wordt aangeleverd
+* Start met:
 
-Sensor reads lopen nog in AP-mode
+  * analyse `setup()`
+  * analyse `loop()`
+* GEEN code schrijven
 
-pulseIn() blokkeert → webserver starvation
+---
 
-Watchdog reset bij openen van /settings
+**EINDE — AI_CONTEXT_MIN.md**
 
-4.4 Volgende veilige stap
+---
 
-Sensor reads conditioneel uitschakelen in AP-mode
-→ webserver moet altijd responsief blijven
+Dit is ongeveer het **minimum** dat een LLM nodig heeft om zich correct te gedragen.
+Als je wil, kan ik nu ook:
 
-5. Verplichte AI-startinstructie
-
-Bij elk nieuw AI-gesprek moet expliciet vermeld worden:
-
-“Gebruik mijn AI_CONTEXT.md en DESIGN_RULES.md als bindend contract.
-Genereer geen code tenzij expliciet gevraagd.
-Werk uitsluitend met exacte ankerpunten uit mijn TESTROOM.ino.”
-
-Zonder deze context is AI-output niet bruikbaar.
+* een **machine-checkbare checklist** maken (ja/nee-regels), of
+* een **“reject template”** waarmee je AI-antwoorden meteen kan afkeuren.
