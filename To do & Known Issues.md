@@ -28,9 +28,10 @@ Ongeldige static IP defaults
 Lange delay() in setup()
 ESP32 core v3.x watchdog-gevoeligheid
 
-3. Volgende veilige stap
+3. Volgende stappen
 
-Sensor reads volledig uitschakelen in AP-mode
+- Sensor reads volledig uitschakelen in AP-mode
+
 Daarna pas:
 - sensor defect-detectie
 - sensor nicknames
