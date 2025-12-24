@@ -19,14 +19,13 @@ Vastgelegde oplossing: Sensor reads conditioneel uitschakelen in AP-mode
 
 - Onvoorspelbaar
 - Soms manuele refresh nodig
-
 ➡️ Geen bug, aanvaard gedrag
 
 2. Historische fouten (lessons learned)
 
-Ongeldige static IP defaults
-Lange delay() in setup()
-ESP32 core v3.x watchdog-gevoeligheid
+- Ongeldige static IP defaults
+- Lange delay() in setup()
+- ESP32 core v3.x watchdog-gevoeligheid
 
 3. Volgende stappen
 
