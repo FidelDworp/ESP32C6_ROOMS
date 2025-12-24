@@ -1,20 +1,23 @@
 📄 KNOWN_ISSUES.md
-Bekende problemen & technische schuld
 ESP32 Testroom Controller
 
-1. Actuele kritische problemen
-1.1 Sensor reads in AP-mode
-Status: ❌ Niet opgelost
+Bekende problemen & technische schuld
 
-pulseIn() blokkeert
-Webserver starvation
-Watchdog resets bij /settings
+1. Actuele kritische problemen
+   
+1.1 Sensor reads in AP-mode
+   
+- Status: ❌ Niet opgelost
+- pulseIn() blokkeert
+- Webserver starvation
+- Watchdog resets bij /settings
 
 Vastgelegde oplossing: Sensor reads conditioneel uitschakelen in AP-mode
 
 1.2 Safari captive portal gedrag
-Onvoorspelbaar
-Soms manuele refresh nodig
+
+- Onvoorspelbaar
+- Soms manuele refresh nodig
 
 ➡️ Geen bug, aanvaard gedrag
 
@@ -28,13 +31,14 @@ ESP32 core v3.x watchdog-gevoeligheid
 
 Sensor reads volledig uitschakelen in AP-mode
 Daarna pas:
-sensor defect-detectie
-sensor nicknames
-Matter-koppeling
-extra endpoints
+- sensor defect-detectie
+- sensor nicknames
+- Matter-koppeling
+- extra endpoints
 
-Slotopmerking
+4. Conclusie:
+
 Dit geheel vormt nu een juridisch-achtig contract tussen jou en elke AI:
-ondubbelzinnig
-afdwingbaar
-regressiebestendig
+- ondubbelzinnig
+- afdwingbaar
+- regressiebestendig
