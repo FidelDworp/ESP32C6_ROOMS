@@ -112,6 +112,19 @@ Dat betekent voor jouw PCB-project:
 * de prijzen voor de modules zelf zijn **scherp** bij LCSC of in houses zoals JLCPCB Assembly (~€2–€4 per stuk) ([jlcpcb.com][3]).
 
 ---
+Welke module kiezen?
+
+Bij JLCPCB vind ik deze Espressif module "esp32-c6-devkitc-1-n8" maar de pin layout (2x 16p) verschilt van mijn drie (2x 15p) modules die ik gekocht heb. 
+
+Varianten:
+
+1) Officiele module van Espressif: "esp32-c6-devkitc-1-n8" (2x 16p)
+https://jlcpcb.com/partdetail/21893411-ESP32_C6_DEVKITC_1N8/C20554022
+
+2) Modules die ik kocht: ???
+
+
+----------------
 
 ## Hoe een dergelijk project eruit ziet (user-ervaring)
 
