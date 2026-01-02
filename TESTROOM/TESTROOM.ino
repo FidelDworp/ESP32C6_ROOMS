@@ -3,14 +3,13 @@
 // Thuis bereikbaar op http://testroom.local of http://192.168.1.36 => Andere controller: Naam (sectie DNS/MDNS) + static IP aanpassen!
 
 // 21dec25 23:00 Pixel nicknames werken VOLLEDIG in /settings en in / (hoofdpagina)! Ga terug naar deze versie als je vastloopt!
-// 22dec25 18:00 Begonnen met volgend plan: "Sensor nicknames" maken naar analogie met pixel nicknames.
-//               Eerste code wijzigingen hebben iets gebroken! We beginnen dus opnieuw van de code van 21dec25 om 2300.
-//         20:30 chatGPT: Uploaded TESTROOM.ino => Captive portal geimplementeerd en gans factory reset proces verbeterd! Thuis getest, werkt nog niet.
-// 30dec25 Pixels persistent gemaakt! (voor Mireille) Maar de UI labels van pixel 0 & 1 worden niet geupdated, tenzij ze refreshed worden! Try again!
+// 22dec25 18:00 Captive portal geimplementeerd en gans factory reset proces verbeterd! Thuis getest, werkt nog niet.
+// 02jan26 21:00 Pixels persistent gemaakt! (voor Mireille) De UI labels van pixel 0 & 1 worden niet geupdated, tenzij ze refreshed worden! Noch ChatGPT noch Grok slaagden erin dit betrouwbaar op te lossen zonder nevenschade. Laat dit zo!
 
 // Volgende opdrachten voor Grok of chatGPT: 
 //                1) Captive portal en gans factory reset proces verbeteren! Thuis testen! Werkt nog niet goed...
 //                2) Correcte serial monitor logging bij opstarten...
+//                3) Nicknames voor sensors die in Matter gebruikt worden: Standaard = Roomname+Sensor, Option: Make own nickname. (zoals de pixels)
 
 
 
@@ -1986,16 +1985,37 @@ void loop() {
       continue;
     }
 
-    // -------- PIXEL 1 : MOV2 of normaal --------
-    if (i == 1 && mov2_enabled && pixel_mode[1] == 0) {
-      bool dark = (light_ldr > LDR_DARK_THRESHOLD);
-      bool movement = (millis() < mov2_off_time);
-      bool on = dark && movement;
 
-      setTargetColor(1, 0, on ? 220 : 0, 0);
-      pixel_on[1] = on;        // <<< SYNC UI
+
+
+    // -------- PIXEL 1 : MOV2 --------
+    if (i == 1 && mov2_enabled) {
+      if (bed == 1) {
+        setTargetColor(1, 0, 0, 0);
+        mov2_light = 0;
+        pixel_on[1] = false;
+      }
+      else if (pixel_mode[1] == 1) {
+        // Manueel AAN
+        setTargetColor(1, neo_r, neo_g, neo_b);
+        mov2_light = 1;
+        pixel_on[1] = true;
+      }
+      else {
+        // AUTO: PIR + LDR
+        bool dark = (light_ldr > LDR_DARK_THRESHOLD);
+        bool movement = (millis() < mov2_off_time);
+        bool on = dark && movement;
+
+        setTargetColor(1, 0, on ? 220 : 0, 0);
+        mov2_light = on;
+        pixel_on[1] = on;
+      }
       continue;
     }
+
+
+
 
     // -------- NORMALE PIXELS --------
     if (pixel_on[i]) {
