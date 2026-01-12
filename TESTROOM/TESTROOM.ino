@@ -5,6 +5,7 @@
 // 21dec25 23:00 Pixel nicknames werken VOLLEDIG in /settings en in / (hoofdpagina)! Ga terug naar deze versie als je vastloopt!
 // 22dec25 18:00 Captive portal geimplementeerd en gans factory reset proces verbeterd! Thuis getest, werkt nog niet.
 // 02jan26 21:00 Pixels persistent gemaakt! (voor Mireille) De UI labels van pixel 0 & 1 worden niet geupdated, tenzij ze refreshed worden! Noch ChatGPT noch Grok slaagden erin dit betrouwbaar op te lossen zonder nevenschade. Laat dit zo!
+// 12jan26 20:00 Endpoint voor JSON string veranderd van /status.json => /json zoals de andere controllers.
 
 // Volgende opdrachten voor Grok of chatGPT: 
 //                1) Captive portal en gans factory reset proces verbeteren! Thuis testen! Werkt nog niet goed...
@@ -832,7 +833,7 @@ void setup() {
     <div class="sidebar">
       <a href="/" class="active">Status</a>
       <a href="/update">OTA</a>
-      <a href="/status.json">JSON</a>
+      <a href="/json">JSON</a>
       <a href="/settings">Settings</a>
     </div>
 
@@ -1010,7 +1011,7 @@ void setup() {
 <script>
   // Live update zonder volledige reload
   function updateValues() {
-    fetch('/status.json?' + new Date().getTime() + Math.random(), {
+    fetch('/json?' + new Date().getTime() + Math.random(), {
       method: 'GET',
       cache: 'no-store'  // Extra forceer no-cache op de request zelf
     })
@@ -1211,7 +1212,7 @@ function submitAjax(form) {
 
 
   // === JSON ENDPOINT ===
-    server.on("/status.json", HTTP_GET, [](AsyncWebServerRequest *request) {
+    server.on("/json", HTTP_GET, [](AsyncWebServerRequest *request) {
     request->send(200, "application/json", getJSON());
   });
 
@@ -1269,7 +1270,7 @@ function submitAjax(form) {
     <div class="sidebar">
       <a href="/">Status &<br>Control</a>
       <a href="/update" class="active">OTA<br>Update</a>
-      <a href="/status.json">JSON<br>Data</a>
+      <a href="/json">JSON<br>Data</a>
       <a href="/settings">Settings</a>
     </div>
     <div class="main">
@@ -1427,7 +1428,7 @@ for (int i = 0; i < pixels_num; i++) {
     <div class="sidebar">
       <a href="/">Status &<br>Control</a>
       <a href="/update">OTA<br>Update</a>
-      <a href="/status.json">JSON<br>Data</a>
+      <a href="/json">JSON<br>Data</a>
       <a href="/settings">Settings</a>
     </div>
     <div class="main">
@@ -1558,7 +1559,7 @@ server.on("/ncsi.txt", HTTP_GET, [](AsyncWebServerRequest *request) {
     <div class="sidebar">
       <a href="/">Status</a>
       <a href="/update">OTA</a>
-      <a href="/status.json">JSON</a>
+      <a href="/json">JSON</a>
       <a href="/settings" class="active">Settings</a>
     </div>
     <div class="main">
