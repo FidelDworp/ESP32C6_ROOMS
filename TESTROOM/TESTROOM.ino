@@ -6,6 +6,7 @@
 // 22dec25 18:00 Captive portal geimplementeerd en gans factory reset proces verbeterd! Thuis getest, werkt nog niet.
 // 02jan26 21:00 Pixels persistent gemaakt! (voor Mireille) De UI labels van pixel 0 & 1 worden niet geupdated, tenzij ze refreshed worden! Noch ChatGPT noch Grok slaagden erin dit betrouwbaar op te lossen zonder nevenschade. Laat dit zo!
 // 12jan26 20:00 Endpoint voor JSON string veranderd van /status.json => /json zoals de andere controllers.
+// 13jan26 20:00 MAC address toegevoegd om Static IP adres in router te kunnen vastleggen.
 
 // Volgende opdrachten voor Grok of chatGPT: 
 //                1) Captive portal en gans factory reset proces verbeteren! Thuis testen! Werkt nog niet goed...
