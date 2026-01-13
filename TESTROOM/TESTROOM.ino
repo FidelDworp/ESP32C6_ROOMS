@@ -1484,18 +1484,11 @@ for (int i = 0; i < pixels_num; i++) {
   });
 
 
-
-
-
-// === SETTINGS PAGE - complete versie, werkende checkboxes ===
-server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
-
-// Apple captive portal detectie (iOS / macOS)
+// === CAPTIVE PORTAL HANDLERS ===
 server.on("/hotspot-detect.html", HTTP_GET, [](AsyncWebServerRequest *request) {
   request->redirect("/settings");
 });
 
-// Android / Windows captive portal checks
 server.on("/generate_204", HTTP_GET, [](AsyncWebServerRequest *request) {
   request->redirect("/settings");
 });
@@ -1504,8 +1497,10 @@ server.on("/ncsi.txt", HTTP_GET, [](AsyncWebServerRequest *request) {
   request->redirect("/settings");
 });
 
+// === SETTINGS PAGE - complete versie, werkende checkboxes ===
+server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
 
-  
+
   // Bouw dynamische pixel nickname velden (buiten rawliteral voor veiligheid)
   String pixelNamesHtml = "";
   for (int i = 0; i < pixels_num; i++) {
