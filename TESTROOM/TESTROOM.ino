@@ -1,8 +1,9 @@
-// ESP32_TESTROOM_Grok.ino = Transition from Photon based to ESP32 based Home automation system
-// Developed together with ChatGPT & Grok in december '25.
-// Thuis bereikbaar op http://testroom.local of http://192.168.1.36 => Andere controller: Naam (sectie DNS/MDNS) + static IP aanpassen!
+// ESP32_ROOM.ino = Photon based, Transition to ESP32C6 based Home automation system
+// Developed by Filip Delannoy in december '25.
+// Bereikbaar op http://eetplaats.local of http://192.168.0.80 => Andere controller: Naam (sectie DNS/MDNS) + static IP aanpassen!
 
-// 21dec25 23:00 Pixel nicknames werken VOLLEDIG in /settings en in / (hoofdpagina)! Ga terug naar deze versie als je vastloopt!
+// 26feb26 19:00 v. 1.2 Fixed IP gebruikt. Set IP zoals in tabel op google drive: vb: EETPL	(Mac = 58:8C:81:32:2F:48)	=> IP = 192.168.0.80
+// 21dec25 23:00 v. 1.1 Pixel nicknames werken VOLLEDIG in /settings en in / (hoofdpagina)! Ga terug naar deze versie als je vastloopt!
 // 22dec25 18:00 Captive portal geimplementeerd en gans factory reset proces verbeterd! Thuis getest, werkt nog niet.
 // 02jan26 21:00 Pixels persistent gemaakt! (voor Mireille) De UI labels van pixel 0 & 1 worden niet geupdated, tenzij ze refreshed worden! Noch ChatGPT noch Grok slaagden erin dit betrouwbaar op te lossen zonder nevenschade. Laat dit zo!
 // 12jan26 20:00 Endpoint voor JSON string veranderd van /status.json => /json zoals de andere controllers.
@@ -12,7 +13,6 @@
 //                1) Captive portal en gans factory reset proces verbeteren! Thuis testen! Werkt nog niet goed...
 //                2) Correcte serial monitor logging bij opstarten...
 //                3) Nicknames voor sensors die in Matter gebruikt worden: Standaard = Roomname+Sensor, Option: Make own nickname. (zoals de pixels)
-
 
 
 #include <WiFi.h>
