@@ -1,4 +1,4 @@
-# Zarlar Matter Integratie — Briefing voor nieuw gesprek
+# Zarlar Matter Integratie — Briefing voor nieuw gesprek - 27feb26
 
 ## Context
 Filip Delannoy, thuisautomatisering "Zarlar" in Zarlardinge (BE).
@@ -17,6 +17,8 @@ Doel: Matter integratie voor Apple HomeKit + Google Home + Amazon Alexa.
 | ESP32_ROOM | 192.168.0.80 | 58:8C:81:5D:B0:88 | Kamer multi-sensor |
 
 Alle drie: ESP32-C6, 16MB flash, Arduino IDE, huge_app partition scheme.
+
+opm: Op dit ogenblik is ESP32_ROOM nog een oudere ESP32-WROOM-32 processor, maar we maakten net een nieuwe sketch voor een C6 processor. Deze moet in de eerstkomende dagen nog getest worden.
 
 ---
 
@@ -128,6 +130,6 @@ Alle drie: ESP32-C6, 16MB flash, Arduino IDE, huge_app partition scheme.
 
 ---
 
-## Openstaande vraag voor start Fase 1
-Heeft Filip een Thread border router (HomePod Mini / Apple TV 4K 2021+)?
-Zo niet: Matter over WiFi als fallback (minder ideaal maar werkbaar).
+## Vraag voor start Fase 1
+Heb je een Thread border router (HomePod Mini / Apple TV 4K 2021+)?
+Antwoord: Jazeker: Beneden een apple tv 4k en een homepod mini, boven idem.
