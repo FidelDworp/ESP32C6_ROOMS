@@ -1,8 +1,9 @@
-// ESP32_ROOM.ino = Photon based, Transition to ESP32C6 based Home automation system
+// ESP32_ROOM_C6.ino = Photon based distributed Home automation system, converted to ESP32C6 controllers.
 // Developed by Filip Delannoy in december '25.
-// Bereikbaar op http://eetplaats.local of http://192.168.0.80 => Andere controller: Naam (sectie DNS/MDNS) + static IP aanpassen!
+// Bereikbaar op (bijvb) http://eetplaats.local of http://192.168.0.80 => Andere controller: Naam (sectie DNS/MDNS) + static IP aanpassen!
 
-// 26feb26 19:00 v. 1.2 Fixed IP gebruikt. Set IP zoals in tabel op google drive: vb: EETPL	(Mac = 58:8C:81:32:2F:48)	=> IP = 192.168.0.80
+// 27feb26 17:30 v. 1.3 C6 compatibel: OneWireNg, pin updates, multi DS18B20 discovery + rescan + /config page expanded & simplified textboxes (Claude)
+// 26feb26 19:00 v. 1.2 Fixed IP geintroduceerd. Set zoals in tabel op google drive: vb: EETPL	(Mac = 58:8C:81:32:2F:48)	=> IP = 192.168.0.80
 // 21dec25 23:00 v. 1.1 Pixel nicknames werken VOLLEDIG in /settings en in / (hoofdpagina)! Ga terug naar deze versie als je vastloopt!
 // 22dec25 18:00 Captive portal geimplementeerd en gans factory reset proces verbeterd! Thuis getest, werkt nog niet.
 // 02jan26 21:00 Pixels persistent gemaakt! (voor Mireille) De UI labels van pixel 0 & 1 worden niet geupdated, tenzij ze refreshed worden! Noch ChatGPT noch Grok slaagden erin dit betrouwbaar op te lossen zonder nevenschade. Laat dit zo!
@@ -22,9 +23,9 @@
 #include <ESPAsyncWebServer.h>
 #include <Update.h>           // Voor OTA update
 #include <DHT.h>
-#include <OneWire.h>
-#include <DallasTemperature.h>
+#include <OneWireNg_CurrentPlatform.h>  // C6 compatibel (vervangt OneWire + DallasTemperature)
 #include <Adafruit_TSL2561_U.h>
+
 #include <Adafruit_NeoPixel.h>
 #include <time.h>
 #include <math.h>            // Voor sin() in dimmer engine
@@ -32,18 +33,20 @@
 #include <string.h>          // Voor memset()
 Preferences preferences;     // Globale Preferences instantie
 
+#define Serial Serial0  // Fix: ESP32-C6 gebruikt Serial0 als hardware serial
 
-#define DHT_PIN       18
-#define ONE_WIRE_PIN   4
-#define PIR_MOV1      17
-#define PIR_MOV2      26
-#define SHARP_LED     19
-#define SHARP_ANALOG  32
-#define LDR_ANALOG    33
-#define CO2_PWM       25
-#define TSTAT_PIN     27
-#define OPTION_LDR    14
-#define NEOPIXEL_PIN  16
+// ============== PIN DEFINITIONS (ESP32-C6 via Photon Shield) ==============
+#define DHT_PIN        6   // IO6  - DHT22 data         (was GPIO18)
+#define ONE_WIRE_PIN   3   // IO3  - DS18B20 OneWire     (was GPIO4)
+#define PIR_MOV1       5   // IO5  - MOV1 PIR            (was GPIO17)
+#define PIR_MOV2      19   // IO19 - MOV2 PIR            (was GPIO26)
+#define SHARP_LED     12   // IO12 - Sharp dust LED out  (was GPIO19)
+#define SHARP_ANALOG   7   // IO7  - Sharp dust analog   (was GPIO32)
+#define LDR_ANALOG     1   // IO1  - LDR1 analog         (was GPIO33, 10k pull-up naar 3V3!)
+#define CO2_PWM       18   // IO18 - CO2 PWM input       (was GPIO25)
+#define TSTAT_PIN     10   // IO10 - TSTAT switch        (was GPIO27)
+#define OPTION_LDR     2   // IO2  - LDR2 analog         (was GPIO14)
+#define NEOPIXEL_PIN   4   // IO4  - Pixels data         (was GPIO16)
 
 
 // NVS keys (const voor netheid en veiligheid)
@@ -78,13 +81,15 @@ const char* NVS_PIXEL_ON_BASE       = "pixel_on_";       // Voor pixel_on[0..29]
 const char* NVS_PIXEL_USER_ON_BASE  = "pixel_user_on_";  // Voor pixel_user_on[0..29]
 const char* NVS_PIXEL_MODE_0        = "pixel_mode_0";    // AUTO/MANUEEL voor MOV1
 const char* NVS_PIXEL_MODE_1        = "pixel_mode_1";    // AUTO/MANUEEL voor MOV2 (alleen als mov2_enabled)
+// DS18B20 multi-sensor (v1.3)
+const char* NVS_DS_COUNT            = "ds_count";        // Aantal gevonden sensoren
+const char* NVS_DS_PRIMARY          = "ds_primary";      // Index van primaire sensor (room_temp)
 
 
 
 // Initialize libraries
 DHT dht(DHT_PIN, DHT22);
-OneWire oneWire(ONE_WIRE_PIN);
-DallasTemperature ds18b20(&oneWire);
+OneWireNg_CurrentPlatform ow(ONE_WIRE_PIN, false);  // C6 compatibel 1-Wire
 Adafruit_TSL2561_Unified tsl = Adafruit_TSL2561_Unified(TSL2561_ADDR_FLOAT, 12345);
 Adafruit_NeoPixel pixels(1, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);  // Tijdelijk 1, lengte wordt in setup() gezet
 AsyncWebServer server(80);
@@ -161,6 +166,14 @@ int beam_alert_new = 0;  // Voor p: BEAMalert (beam_value > 50 ? 1 : 0)
 uint8_t neo_r = 255;       // Voor s: R waarde (hardcoded 255)  
 uint8_t neo_g = 255;       // Voor t: G waarde (hardcoded 255)  
 uint8_t neo_b = 255;       // Voor u: B waarde (hardcoded 255)  
+
+// DS18B20 multi-sensor (v1.3) - max 4 sensors op 1 bus
+#define DS_MAX_SENSORS 4
+int ds_count = 0;                          // Aantal gevonden sensoren
+OneWireNg::Id ds_addrs[DS_MAX_SENSORS];    // 8-byte adressen
+float temp_ds_arr[DS_MAX_SENSORS];         // Temperaturen per sensor
+String ds_nicknames[DS_MAX_SENSORS];       // Nicknames per sensor
+int ds_primary = 0;                        // Index van primaire sensor → room_temp
 
 
 // Pixel specifieke arrays
@@ -296,6 +309,80 @@ int scaleLDR(int r) { return map(constrain(r, 100, 3800), 100, 3800, 100, 0); }
 
 int readDust() { digitalWrite(SHARP_LED, LOW); delayMicroseconds(280); int v = analogRead(SHARP_ANALOG); delayMicroseconds(40); digitalWrite(SHARP_LED, HIGH); delayMicroseconds(9680); return v; }
 
+// ============== DS18B20 MULTI-SENSOR (v1.3) ==============
+
+void scanDS18B20() {
+  Serial.println("DS18B20: scanning 1-Wire bus...");
+  ds_count = 0;
+  for (int i = 0; i < DS_MAX_SENSORS; i++) temp_ds_arr[i] = 0.0;
+
+  OneWireNg::Id id;
+  ow.searchReset();
+  while (ds_count < DS_MAX_SENSORS) {
+    if (ow.search(id) != OneWireNg::EC_SUCCESS) break;
+    if (id[0] != 0x28) continue;
+    memcpy(ds_addrs[ds_count], id, 8);
+    Serial.printf("  Sensor %d: ", ds_count + 1);
+    for (int j = 0; j < 8; j++) Serial.printf("%02X ", id[j]);
+    Serial.println();
+    ds_count++;
+  }
+  Serial.printf("DS18B20: %d sensor(s) gevonden\n", ds_count);
+
+  preferences.putInt(NVS_DS_COUNT, ds_count);
+  for (int i = 0; i < ds_count; i++) {
+    String akey = "ds_addr_" + String(i);
+    preferences.putBytes(akey.c_str(), ds_addrs[i], 8);
+    String nkey = "ds_nick_" + String(i);
+    if (preferences.getString(nkey.c_str(), "").isEmpty()) {
+      String defnick = room_id + " DS " + String(i + 1);
+      preferences.putString(nkey.c_str(), defnick);
+      ds_nicknames[i] = defnick;
+    } else {
+      ds_nicknames[i] = preferences.getString(nkey.c_str(), "DS " + String(i + 1));
+    }
+  }
+  ds_primary = constrain(preferences.getInt(NVS_DS_PRIMARY, 0), 0, max(ds_count - 1, 0));
+  preferences.putInt(NVS_DS_PRIMARY, ds_primary);
+}
+
+void loadDS18B20fromNVS() {
+  ds_count = preferences.getInt(NVS_DS_COUNT, 0);
+  ds_primary = constrain(preferences.getInt(NVS_DS_PRIMARY, 0), 0, max(ds_count - 1, 0));
+  for (int i = 0; i < ds_count; i++) {
+    String akey = "ds_addr_" + String(i);
+    preferences.getBytes(akey.c_str(), ds_addrs[i], 8);
+    String nkey = "ds_nick_" + String(i);
+    ds_nicknames[i] = preferences.getString(nkey.c_str(), room_id + " DS " + String(i + 1));
+    temp_ds_arr[i] = 0.0;
+  }
+}
+
+void readDS18B20temps() {
+  for (int i = 0; i < ds_count; i++) {
+    ow.reset();
+    ow.writeByte(0x55);
+    for (int j = 0; j < 8; j++) ow.writeByte(ds_addrs[i][j]);
+    ow.writeByte(0x44);
+    delay(750);
+
+    ow.reset();
+    ow.writeByte(0x55);
+    for (int j = 0; j < 8; j++) ow.writeByte(ds_addrs[i][j]);
+    ow.writeByte(0xBE);
+
+    uint8_t data[9];
+    for (int j = 0; j < 9; j++) data[j] = ow.touchByte(0xFF);
+
+    int16_t raw = (int16_t)((data[1] << 8) | data[0]);
+    float t = raw / 16.0f;
+    if (t >= -55.0f && t <= 125.0f) temp_ds_arr[i] = t;
+  }
+  temp_ds = (ds_count > 0) ? temp_ds_arr[ds_primary] : 0.0;
+}
+
+// ============== EINDE DS18B20 MULTI-SENSOR ==============
+
 int readCO2() {
   unsigned long h = pulseIn(CO2_PWM, HIGH, 200000);  // Timeout 0.2s i.p.v. 0.1s (i.p.v. 2s vroeger: blocking!)
   unsigned long l = pulseIn(CO2_PWM, LOW, 200000);
@@ -321,10 +408,16 @@ void handleSerialCommands() {
 
 String getJSON() {
   String pixel_on_str = "";
-  String pixel_mode_str = String(pixel_mode[0]) + String(pixel_mode[1]);  // Voor toggle checkboxes
+  String pixel_mode_str = String(pixel_mode[0]) + String(pixel_mode[1]);
 
   for (int i = 0; i < pixels_num; i++) {
     pixel_on_str += pixel_on[i] ? "1" : "0";
+  }
+
+  // DS18B20 extra sensoren
+  String ds_json = "";
+  for (int i = 0; i < ds_count; i++) {
+    ds_json += ",\"ds" + String(i) + "\":" + String(temp_ds_arr[i], 1);
   }
 
   return "{\"a\":" + String(co2) +
@@ -358,7 +451,11 @@ String getJSON() {
          ",\"ac\":" + String(uptime_sec) +
          ",\"ad\":\"" + pixel_on_str + "\"" +
          ",\"ae\":\"" + pixel_mode_str + "\"" +
-         ",\"af\":" + String(home_mode) + "}";
+         ",\"af\":" + String(home_mode) +
+         ",\"ds_count\":" + String(ds_count) +
+         ",\"ds_primary\":" + String(ds_primary) +
+         ds_json +
+         "}";
 }
 
 
@@ -573,10 +670,18 @@ void setup() {
 
 
   dht.begin();
-  ds18b20.begin();
   if (!tsl.begin()) Serial.println("TSL2561 niet gevonden");
   tsl.enableAutoRange(true);
   tsl.setIntegrationTime(TSL2561_INTEGRATIONTIME_13MS);
+
+  // DS18B20: laad uit NVS of scan bij eerste boot
+  if (ds_count == 0 && preferences.getInt(NVS_DS_COUNT, 0) == 0) {
+    Serial.println("Eerste boot of geen sensoren in NVS → scan uitvoeren...");
+    scanDS18B20();
+  } else {
+    loadDS18B20fromNVS();
+    Serial.printf("DS18B20: %d sensor(s) geladen uit NVS\n", ds_count);
+  }
 
 
   pixels.begin();
@@ -669,11 +774,8 @@ void setup() {
     WiFi.mode(WIFI_AP_STA);
     
     String ap_ssid = "ROOM-" + room_id;           // bijv. ROOM-Testroom
-    const char* ap_pass = "roomconfig";            // 10 tekens, duidelijk en veilig genoeg voor config
-    
-    // Start AP met WPA2 beveiliging (standaard is goed)
-    WiFi.softAP(ap_ssid.c_str(), ap_pass);
-    
+    WiFi.softAP(ap_ssid.c_str()); // Open AP (geen wachtwoord) voor eenvoudige configuratie
+
     IPAddress ap_ip(192, 168, 4, 1);
     WiFi.softAPConfig(ap_ip, ap_ip, IPAddress(255, 255, 255, 0));
     
@@ -1570,37 +1672,16 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
       <div style="background:#e6f0ff;border:3px solid #336699;padding:20px;margin:20px;border-radius:8px;text-align:center;">
         <h3 style="margin:0 0 10px 0;color:#336699;">📡 Controller MAC Adres</h3>
         <div style="font-size:20px;font-weight:bold;color:#003366;font-family:monospace;background:#fff;padding:10px;border-radius:4px;display:inline-block;margin:10px 0;border:2px solid #336699;">)rawliteral" + mac_address + R"rawliteral(</div>
-        <div style="font-size:13px;color:#666;margin-top:10px;">💡 Kopieer dit MAC-adres voor DHCP-reservering in je router</div>
-      </div>
-
-      <!-- AANBEVOLEN CONFIGURATIE -->
-      <div style="background:#fffacd;border:2px solid #336699;padding:15px;margin:20px;border-radius:8px;font-size:14px;">
-        <h4 style="margin:0 0 10px 0;color:#336699;">✅ Aanbevolen: DHCP met MAC-reservering</h4>
-        <ol style="margin:10px 0;padding-left:25px;line-height:1.6;">
-          <li>Kopieer het MAC-adres hierboven</li>
-          <li>Log in op je router (meestal 192.168.1.1)</li>
-          <li>Ga naar: LAN → DHCP Server → Manual Assignment</li>
-          <li>Voeg toe: MAC-adres + gewenst IP (bijv. 192.168.1.99)</li>
-          <li>Laat hieronder het "Static IP" veld <strong>LEEG</strong></li>
-          <li>Sla op en reboot deze controller</li>
-        </ol>
+        <div style="font-size:13px;color:#666;margin-top:10px;">💡 Voor eventuele DHCP-reservering in de router</div>
       </div>
 
 
-      <div class="warning">
-        OPGEPAST: Wijzigt permanente instellingen van deze controller!<br>
-        Verkeerde WiFi-instellingen kunnen de controller onbereikbaar maken!<br><br>
-        <strong>Geen verbinding met WiFi?</strong><br>
-        De controller start automatisch een eigen netwerk:<br>
-        • Naam: ROOM-<i>jouw_room_naam</i><br>
-        • Wachtwoord: roomconfig<br><br>
-        Verbind je telefoon met dit netwerk en open:<br>
-        <strong>http://192.168.4.1/settings</strong><br>
-        Stel daar je echte WiFi in en klik "Opslaan & Reboot".<br><br>
-        <strong>Tip voor static IP:</strong><br>
-        Leeg laten = automatisch IP (DHCP, aanbevolen).<br>
-        Voor iPhone hotspot: gebruik een IP in het bereik 172.20.10.10 t/m 172.20.10.14.
+      <div style="background:#fffacd;border:2px solid #cc0000;padding:15px;margin:20px;border-radius:8px;font-size:14px;">
+        <p style="margin:0 0 8px 0;">⚠️ <b>Wijzigt permanente instellingen — verkeerde WiFi-config kan controller onbereikbaar maken!</b></p>
+        <p style="margin:0 0 8px 0;"><b>WiFi:</b> Vul SSID en wachtwoord in. Bij verbindingsfout start de controller automatisch netwerk <code>ROOM-naam</code> (open, geen wachtwoord) → open <code>http://192.168.4.1/settings</code>.</p>
+        <p style="margin:0;"><b>Static IP:</b> Vul een vrij IP in (bijv. <code>192.168.0.80</code>). Gateway wordt automatisch afgeleid. iPhone hotspot: gebruik <code>172.20.10.10</code> t/m <code>.14</code>. Leeg laten = DHCP.</p>
       </div>
+
 
       <form action="/save_settings" method="get" id="settingsForm">
         <table class="form-table">
@@ -1699,6 +1780,63 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
 
           </tr>
         </table>
+
+        <!-- DS18B20 SENSOREN SECTIE (v1.3) -->
+        <h3 style="color:#336699; margin:20px 0 10px 20px;">🌡️ DS18B20 Temperatuursensoren</h3>
+        <div style="background:#e6f0ff;border:2px solid #336699;padding:15px;margin:0 20px 20px 20px;border-radius:8px;">
+          <p style="margin:0 0 10px 0;font-size:14px;color:#333;">)rawliteral";
+  html += String(ds_count) + R"rawliteral( sensor(s) gevonden op de 1-Wire bus.</p>)rawliteral";
+
+  // Toon gevonden sensoren met nickname veld en huidige temperatuur
+  for (int i = 0; i < ds_count; i++) {
+    html += "<div style='margin:8px 0;padding:8px;background:#fff;border-radius:6px;border:1px solid #ccc;'>";
+    html += "<b>Sensor " + String(i+1) + "</b>";
+    html += " &nbsp; <span style='font-family:monospace;font-size:12px;color:#666;'>";
+    for (int j = 0; j < 8; j++) {
+      char buf[4];
+      snprintf(buf, 4, "%02X", ds_addrs[i][j]);
+      html += buf;
+      if (j < 7) html += ":";
+    }
+    html += "</span>";
+    if (temp_ds_arr[i] != 0.0) {
+      html += " &nbsp; <b style='color:#336699;'>" + String(temp_ds_arr[i], 1) + " °C</b>";
+    } else {
+      html += " &nbsp; <span style='color:#999;'>-- °C</span>";
+    }
+    html += "<br><label style='font-size:13px;'>Nickname: <input type='text' name='ds_nick_" + String(i) + "' value='" + ds_nicknames[i] + "' style='width:200px;margin-top:4px;'></label>";
+    html += "</div>";
+  }
+
+  if (ds_count == 0) {
+    html += "<p style='color:#cc0000;'>Geen sensoren gevonden. Controleer bedrading en gebruik Rescan.</p>";
+  }
+
+  html += R"rawliteral(
+          <!-- Primaire sensor keuze -->
+          <div style="margin-top:12px;">
+            <label style="font-weight:bold;color:#336699;">Primaire sensor (room_temp): 
+              <select name="ds_primary" style="margin-left:8px;padding:4px;">)rawliteral";
+  for (int i = 0; i < ds_count; i++) {
+    html += "<option value='" + String(i) + "'" + (i == ds_primary ? " selected" : "") + ">";
+    html += ds_nicknames[i];
+    if (temp_ds_arr[i] != 0.0) html += " (" + String(temp_ds_arr[i], 1) + " °C)";
+    html += "</option>";
+  }
+  html += R"rawliteral(
+              </select>
+            </label>
+          </div>
+          <!-- Rescan knop (aparte actie, buiten het settings form) -->
+          <div style="margin-top:12px;">
+            <a href="/rescan_ds" onclick="return confirm('Rescan uitvoeren? Duurt ~5 seconden.');"
+               style="background:#336699;color:#fff;padding:8px 18px;border-radius:6px;text-decoration:none;font-size:14px;">
+              🔍 Rescan 1-Wire bus
+            </a>
+            <span style="font-size:12px;color:#666;margin-left:10px;">Na rescan: refresh /settings om temperatures te zien en nicknames in te stellen.</span>
+          </div>
+        </div>
+
         <div style="text-align:center;">
           <button type="submit" class="submit-btn">Opslaan & Reboot</button>
           <button type="button" class="reset-btn" onclick="if(confirm('Weet je zeker? Alle instellingen worden gewist!')) location.href='/factory_reset';">Factory Reset</button>
@@ -1718,7 +1856,8 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
             e.preventDefault();
             return false;
           }
-          return confirm('Instellingen opslaan? De controller zal rebooten.');
+          // Geen confirm() - wordt geblokkeerd in captive portal browsers (iOS)
+          return true;
         };
       </script>
 
@@ -1798,11 +1937,27 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     }
   }
 
+  // DS18B20 nicknames en primaire sensor opslaan (v1.3)
+  for (int i = 0; i < DS_MAX_SENSORS; i++) {
+    String argName = "ds_nick_" + String(i);
+    if (request->hasArg(argName.c_str())) {
+      String nick = request->arg(argName.c_str());
+      nick.trim();
+      if (!nick.isEmpty()) {
+        preferences.putString(argName.c_str(), nick);
+      }
+    }
+  }
+  if (request->hasArg("ds_primary")) {
+    int prim = constrain(request->arg("ds_primary").toInt(), 0, DS_MAX_SENSORS - 1);
+    preferences.putInt(NVS_DS_PRIMARY, prim);
+  }
+
   request->send(200, "text/html",
     "<h2 style='text-align:center;padding:50px;color:#336699;'>Instellingen opgeslagen!<br>Rebooting...</h2>");
   delay(800);
   ESP.restart();
-});
+});  // einde save_settings
 
 
 
@@ -1814,6 +1969,18 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     preferences.clear();
     delay(1000);
     ESP.restart();
+  });
+
+  // === RESCAN DS18B20 BUS (v1.3) ===
+  server.on("/rescan_ds", HTTP_GET, [](AsyncWebServerRequest *request) {
+    scanDS18B20();
+    // Lees meteen temperaturen zodat ze zichtbaar zijn in /settings
+    readDS18B20temps();
+    String html = "<h2 style='text-align:center;padding:30px;color:#336699;'>";
+    html += "🔍 Rescan uitgevoerd!<br>";
+    html += String(ds_count) + " sensor(s) gevonden.<br><br>";
+    html += "<a href='/settings' style='color:#336699;'>← Terug naar Settings</a></h2>";
+    request->send(200, "text/html; charset=utf-8", html);
   });
 
 
@@ -2069,7 +2236,7 @@ void loop() {
   humi = dht.readHumidity();
   temp_dht = dht.readTemperature();
   dew = calculateDewPoint(temp_dht, humi);
-  ds18b20.requestTemperatures(); temp_ds = ds18b20.getTempCByIndex(0);
+  readDS18B20temps();  // Lees alle DS18B20 sensoren → temp_ds = primaire sensor
   sensors_event_t e; tsl.getEvent(&e); sun_light = (int)e.light;
   light_ldr = scaleLDR(analogRead(LDR_ANALOG));
   dust = readDust();
