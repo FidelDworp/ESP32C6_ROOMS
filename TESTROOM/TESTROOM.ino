@@ -1,4 +1,4 @@
-// ESP32_ROOM_C6.ino = Photon based distributed Home automation system, converted to ESP32C6 controllers.
+// ESP32-C6_ROOM.ino = Photon based distributed Home automation system, converted to ESP32C6 controllers.
 // Developed by Filip Delannoy in december '25.
 // Bereikbaar op (bijvb) http://eetplaats.local of http://192.168.0.80 => Andere controller: Naam (sectie DNS/MDNS) + static IP aanpassen!
 
