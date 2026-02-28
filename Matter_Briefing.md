@@ -128,6 +128,238 @@ opm: Op dit ogenblik is ESP32_ROOM nog een oudere ESP32-WROOM-32 processor, maar
 - mDNS (.local namen)
 - AP fallback bij WiFi fout
 
+
+-----------------------------------------------------------------
+
+# Integratieplan: TESTROOM → Matter-enabled
+## ESP32_C6_ROOM_MATTER.ino
+**Filip Delannoy – Zarlar thuisautomatisering**
+**28 feb 2026**
+
+---
+
+## 0. HARDWARE VEREISTE — KRITISCH PUNT
+
+**Gebruik uitsluitend de 16MB ESP32-C6 voor dit project.**
+
+De 4MB versie is niet geschikt voor TESTROOM + Matter samen.
+
+### Waarom 16MB de sleuteloplossing is
+
+Met 16MB flash kunnen we een **custom partitietabel** maken die twee problemen tegelijk oplost:
+
+| Probleem | 4MB Huge App | 16MB custom |
+|---|---|---|
+| Voldoende ruimte voor Matter + TESTROOM | ❌ krap/onmogelijk | ✅ ruim |
+| OTA firmware update | ❌ niet mogelijk* | ✅ hersteld |
+
+*Huge App heeft slechts één app-partitie → OTA heeft twee nodig. **OTA is momenteel al kapot in TESTROOM** zodra je Huge App gebruikt — dit is waarschijnlijk nog niet opgemerkt.
+
+### Custom partitietabel voor 16MB (bestand: `partitions_16mb.csv`)
+```
+# Name,   Type, SubType, Offset,   Size,    Flags
+nvs,      data, nvs,     0x9000,   0x5000,
+otadata,  data, ota,     0xe000,   0x2000,
+app0,     app,  ota_0,   0x10000,  0x600000,
+app1,     app,  ota_1,   0x610000, 0x600000,
+spiffs,   data, spiffs,  0xC10000, 0x3F0000,
+```
+- app0 + app1: elk **6MB** → ruim voldoende voor Matter + volledige TESTROOM
+- OTA volledig hersteld
+- SPIFFS: ~4MB voor eventuele toekomstige webpagina's/bestanden
+
+Dit CSV-bestand wordt geplaatst in de schetsmap, Arduino IDE pikt het automatisch op.
+
+---
+
+## 1. CONFLICT: mDNS
+
+**Probleem:** TESTROOM start `ESPmDNS` (→ `eetplaats.local`). Matter start zijn eigen interne mDNS-stack. Twee mDNS-instanties op één chip conflicteren — dit is de oorzaak van de `mdns_service_remove_for_host` errors die al zichtbaar waren.
+
+**Oplossing:** TESTROOM's `MDNS.begin()` en `MDNS.end()` calls volledig verwijderen. Matter's interne mDNS neemt het over. De `.local` hostname zal niet meer werken via deze route — toegang verloopt via het **statisch IP-adres** (dat is al ingesteld) of via de Matter-app.
+
+**Alternatief** als `.local` absoluut nodig blijft: Matter en ESPmDNS kunnen naast elkaar bestaan als ESPmDNS pas gestart wordt *nadat* Matter volledig geïnitialiseerd is. Dit is fragiel en wordt **niet aanbevolen**.
+
+---
+
+## 2. CONFLICT: NVS / Factory Reset
+
+**Probleem:**
+- TESTROOM gebruikt `preferences.begin("room-config")` → namespace `room-config`
+- Matter gebruikt intern zijn eigen namespaces: `chip-factory`, `chip-config`, `chip-counters`
+- `preferences.clear()` in TESTROOM wist **alleen** `room-config` → Matter data blijft intact ✅
+- `nvs_flash_erase()` wist **alles** inclusief `room-config` → TESTROOM verliest alle instellingen ❌
+
+**Oplossing — twee aparte reset commando's:**
+
+```
+Serial commando 'reset-matter'  → wist alleen Matter namespaces + herstart
+Serial commando 'reset-all'     → wist alles (Matter + TESTROOM config) + herstart
+Web UI /factory_reset           → behoudt huidige gedrag (wist TESTROOM config, laat Matter intact)
+```
+
+Matter-namespaces selectief wissen (zonder `nvs_flash_erase()`):
+```cpp
+preferences.begin("chip-factory", false); preferences.clear(); preferences.end();
+preferences.begin("chip-config",  false); preferences.clear(); preferences.end();
+preferences.begin("chip-counters",false); preferences.clear(); preferences.end();
+```
+
+---
+
+## 3. COMMISSIONING — NON-BLOCKING
+
+**Probleem:** De simulatiesketch heeft een `while (!Matter.isDeviceCommissioned())` blokkeerlus. In TESTROOM moet de webserver onmiddellijk draaien — ook als Matter nog niet gepaard is.
+
+**Oplossing:** Geen blokkeerlus. Na `Matter.begin()` gewoon verder. Matter draait in zijn eigen FreeRTOS-taak en pairt op de achtergrond. De endpoints zijn beschikbaar zodra gepaard.
+
+**Pairing code zichtbaar maken zonder serial monitor:**
+Nieuwe webpagina `/matter` toevoegen aan de bestaande webserver:
+- Toont pairingcode als nog niet gepaard
+- Toont "Gepaard ✅" als al gepaard
+- Knop "Matter reset" (wist alleen Matter namespaces)
+
+---
+
+## 4. AP MODE + MATTER
+
+**Situatie:** Als WiFi mislukt gaat TESTROOM naar AP-modus (192.168.4.1 captive portal). Matter heeft een actieve WiFi STA-verbinding nodig en kan in AP-modus niet werken.
+
+**Oplossing:** Matter endpoints en `Matter.begin()` worden **enkel gestart als WiFi STA verbonden is**. In AP-modus: Matter volledig overgeslagen, webserver werkt normaal voor configuratie.
+
+```cpp
+if (!ap_mode_active) {
+  // Matter initialiseren
+}
+```
+
+---
+
+## 5. SETUP VOLGORDE — KRITISCH
+
+De volgorde in `setup()` moet exact zo zijn:
+
+```
+1. Serial.begin()
+2. preferences.begin("room-config") + laden van alle NVS-waarden
+3. WiFi.begin() met geladen credentials
+4. Wacht op WiFi (met AP-mode fallback zoals nu)
+5. ALS WiFi verbonden (niet AP-mode):
+   a. Matter endpoints .begin() + callbacks instellen
+   b. Matter.begin()
+   c. Print pairingcode naar Serial (niet-blokkerend)
+
+BELANGRIJK!
+Voeg optie toe in /settings: "Matter transport: WiFi / Thread" => Opgeslagen in NVS
+-Bij Thread: WiFi-verbinding blijft voor webserver, Matter gebruikt Thread radio
+-Bij WiFi: huidige implementatie
+
+6. GEEN MDNS.begin() meer
+7. Webserver routes instellen (inclusief nieuwe /matter pagina)
+8. Sensor initialisatie (DHT, DS18B20, TSL2561, NeoPixel)
+```
+
+---
+
+## 6. CALLBACKS → BESTAANDE LOGICA BEWAREN
+
+Alle callbacks zijn al ontworpen in de simulatiesketch met de juiste variabelenamen. Bij integratie uitbreiden met NVS-persistentie:
+
+| Callback | Variabele | NVS sleutel |
+|---|---|---|
+| onChangeHeatingSetpoint | heating_setpoint | NVS_HEATING_SETPOINT |
+| onChangeMode | (geen persistentie nodig) | — |
+| onChangeColorHSV | neo_r, neo_g, neo_b | NVS_NEO_R/G/B |
+| onChangeOnOff (bed) | bed | NVS_BED_STATE |
+| onChangeOnOff (thuis) | home_mode | NVS_HOME_MODE_STATE |
+| onChangeOnOff (pir1/2) | pixel_mode[0/1] | NVS_PIXEL_MODE_0/1 |
+
+**Belangrijk:** de thermostat callback overschrijft `heating_setpoint` — maar de echte verwarmingslogica in TESTROOM gebruikt ook `tstat_on`, `heating_mode` en `dew + dew_safety_margin`. Die logica blijft ongewijzigd in de slow-loop. Matter stuurt enkel het setpoint bij.
+
+---
+
+## 7. SENSOR UPDATES INTEGREREN
+
+TESTROOM heeft al een `last_slow` timer (elke 2s). `update_matter_sensors()` wordt daar aan toegevoegd — geen aparte timer nodig:
+
+```cpp
+// In de bestaande slow-loop, na het lezen van sensoren:
+if (!ap_mode_active) {
+  update_matter_sensors();
+}
+```
+
+---
+
+## 8. THREAD SAFETY
+
+Matter callbacks draaien in een eigen FreeRTOS-taak, niet in de Arduino loop-taak. Gedeelde variabelen zoals `neo_r`, `heating_setpoint`, `home_mode` worden vanuit de callback geschreven en vanuit de loop gelezen.
+
+Voor enkelvoudige integer/bool types op ESP32 is dit in de praktijk veilig (atomaire 32-bit lees/schrijfoperaties). Complexe bewerkingen of string-operaties vanuit callbacks worden vermeden. Geen `mutex` nodig voor dit gebruik.
+
+---
+
+## 9. SERIAL OUTPUT — ADVIES
+
+**Jouw vraag:** is de uitgebreide serial tabel overtollig als we alles in de UI kunnen monitoren?
+
+**Antwoord:** De flash-kostprijs van de serial strings is minimaal (~5-10KB). RAM-impact via `F()` macro: nul. Het is **geen significante geheugenbesparing** om de tabel te verwijderen.
+
+**Aanbeveling:** Vervang de huidige TESTROOM serial output (elke 3s, ~30 printf regels zonder consistente `F()`) door de compacte tabel uit de simulatiesketch (elke 15s, consistent `F()`, overzichtelijker). Dit is hoofdzakelijk een **codekwaliteitsverbetering**, niet een geheugenbesparing.
+
+Voeg toe bovenaan de sketch:
+```cpp
+#define SERIAL_VERBOSE   // Uitcommentariëren voor productie → geen statustabel
+```
+
+De echte geheugenbesparing zit in de **custom partitietabel** (zie punt 0) — dat geeft 6MB app-ruimte, wat alle andere optimalisaties overbodig maakt.
+
+---
+
+## 10. PIXEL KLEUR — MEMO INTEGRATIE
+
+`matter_pixels` is een kleurpicker voor `neo_r/g/b`, GEEN aan/uit schakelaar.
+- `onChangeOnOff` wordt genegeerd, switch wordt altijd terug op "aan" gezet
+- `onChangeColorHSV` → converteert HSV naar RGB → schrijft naar `neo_r`, `neo_g`, `neo_b`
+- De bestaande pixelloop in TESTROOM gebruikt `neo_r/g/b` automatisch voor alle `pixel_on[i]==true` pixels
+- Geen wijziging nodig aan de pixelloop zelf
+
+---
+
+## 11. OVERZICHT: WAT WIJZIGT, WAT BLIJFT
+
+| Component | Actie |
+|---|---|
+| Partitietabel | Nieuw: `partitions_16mb.csv` in schetsmap |
+| Arduino IDE board settings | Huge App vervangen door Custom, CSV selecteren |
+| WiFi | Ongewijzigd |
+| ESPmDNS | **Verwijderd** (Matter vervangt) |
+| Webserver + alle routes | Ongewijzigd + nieuwe `/matter` pagina |
+| OTA via webserver | Hersteld dankzij custom partitietabel |
+| Sensor logica slow-loop | Ongewijzigd + `update_matter_sensors()` call |
+| Verwarmingslogica | Ongewijzigd, Matter stuurt enkel setpoint bij |
+| Pixelloop | Ongewijzigd |
+| Factory reset `/factory_reset` | Ongewijzigd (wist TESTROOM config) |
+| Serial commando `reset_nvs` | Hernoemd naar `reset-all` + nieuw `reset-matter` |
+| NVS namespace "room-config" | Ongewijzigd |
+| Serial output | Vervangen door compacte tabel + `#define SERIAL_VERBOSE` |
+
+---
+
+## 12. TESTSTRATEGIE
+
+1. Maak kopie van TESTROOM → `ESP32_C6_ROOM_MATTER.ino`
+2. Maak `partitions_16mb.csv` aan in schetsmap
+3. Integreer Matter stap voor stap (niet alles tegelijk)
+4. Test eerst alleen de sensor-endpoints (read-only, geen callbacks)
+5. Dan de bedieningselementen (callbacks + NVS persistentie)
+6. Valideer dat webserver + Matter gelijktijdig werken
+7. Test factory reset scenario's
+8. Pas toe op één productie-room, dan uitrollen
+
+---
+
+*Plan gereed. Geen code geschreven. Goedkeuring gevraagd voor aanvang implementatie.*
 ---
 
 ## Vraag voor start Fase 1
