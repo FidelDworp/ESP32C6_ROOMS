@@ -357,11 +357,35 @@ De echte geheugenbesparing zit in de **custom partitietabel** (zie punt 0) — d
 7. Test factory reset scenario's
 8. Pas toe op één productie-room, dan uitrollen
 
----
-
-*Plan gereed. Geen code geschreven. Goedkeuring gevraagd voor aanvang implementatie.*
----
+------
 
 ## Vraag voor start Fase 1
 Heb je een Thread border router (HomePod Mini / Apple TV 4K 2021+)?
 Antwoord: Jazeker: Beneden een apple tv 4k en een homepod mini, boven idem.
+
+---------
+
+# Resultaat = 2 bestanden: ESP32_C6_ROOM_MATTER.ino & partitions_16mb.csv
+
+Wat gewijzigd is t.o.v. TESTROOM v1.3:
+
+#include <ESPmDNS.h> en alle MDNS.begin()/end() code volledig verwijderd
+Matter includes en 12 endpoints toegevoegd
+Matter init bloc in setup() — volledig non-blocking, wrapped in if (!ap_mode_active)
+Alle 6 callbacks met NVS persistentie (setpoint, kleur, bed, home_mode, pixel_mode[0/1])
+Web UI handlers (/toggle_home, /toggle_bed, /set_setpoint, pixel toggles) synken nu ook terug naar HomeKit
+reset_nvs → reset-all + reset-matter serial commando's
+update_matter_sensors() toegevoegd aan de slow loop
+serial_verbose en matter_transport als NVS variabelen, beide instelbaar in /settings onder nieuw kopje "Matter & Diagnostiek" — inclusief de border router opmerking bij Thread
+Compacte statusrapport print_status_compact() vervangt de lange tabel, elke 15s, bewaakt door serial_verbose
+Nieuwe /matter pagina met pairingcode of "gepaard" status + Matter reset knop
+"Matter" link toegevoegd aan de sidebar op alle pagina's
+
+Wat ongewijzigd is: pixel loop, verwarmingslogica, sensor logica, alle andere webserver routes, NVS namespace room-config, JSON endpoint, OTA.
+
+------
+
+# TO DO: 
+
+ESP32_C6_ROOM_MATTER.ino
+partitions_16mb.csv
