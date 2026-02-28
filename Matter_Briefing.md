@@ -387,5 +387,26 @@ Wat ongewijzigd is: pixel loop, verwarmingslogica, sensor logica, alle andere we
 
 # TO DO: 
 
-ESP32_C6_ROOM_MATTER.ino
-partitions_16mb.csv
+Praktisch stappenplan:
+
+**1. Bestanden plaatsen**
+Maak een nieuwe schetsmap aan (bijv. `ESP32_C6_ROOM_MATTER`) en plaats beide bestanden daarin — de `.ino` én de `.csv`. Arduino IDE verwacht dat ze samen in dezelfde map zitten.
+
+**2. Arduino IDE instellen**
+- Board: `ESP32C6 Dev Module` (of jouw C6 variant)
+- Partition Scheme: **Custom** → selecteer de `partitions_16mb.csv` uit de schetsmap
+- Flash Size: **16MB**
+- De rest van je board settings (baud, CPU freq) zoals je die al had voor TESTROOM
+
+**3. Eerste keer flashen**
+Doe dit via USB, niet via OTA — het is een nieuwe partitietabel, die kan niet over-the-air gezet worden. Na deze eerste keer is OTA wél hersteld voor toekomstige updates.
+
+**4. Na het flashen**
+- Open de serial monitor (115200 baud)
+- De pairingcode verschijnt in de serial output, of ga naar `http://<IP>/matter`
+- Koppel via Apple Home: **+** → **Accessoire** → **Meer opties** → code invoeren
+
+**5. Aanbevolen testvolgorde** (zoals in het integratieplan punt 12)
+Eerst enkel de read-only sensoren valideren in HomeKit, daarna de callbacks testen, dan factory reset scenario's doorlopen — vóór je het op een productie-room zet.
+
+Eén aandachtspunt: als je de huidige TESTROOM op dit apparaat al gepaard had met een eerder Matter experiment, typ dan eerst `reset-matter` in de serial monitor vóór je koppelt.
