@@ -1,33 +1,41 @@
-// ESP32_C6_MATTER_ROOM.ino v2.2 + Matter/HomeKit integratie
-// Filip Delannoy – Zarlar thuisautomatisering
-//
-// v2.0  28feb26  Matter integratie:
-//   - Matter endpoints: temp, humidity, occupancy, thermostat, color light, on/off lights
-//   - ESPmDNS verwijderd (Matter vervangt intern mDNS)
-//   - Custom partitietabel 16MB vereist (partitions_16mb.csv in schetsmap)
-//   - serial_verbose: NVS toggle, instelbaar via /settings (geen hercompileren)
-//   - matter_transport: WiFi / Thread keuze via /settings
-//   - reset-all / reset-matter serial commando's (was: reset_nvs)
-//   - /matter webpagina: pairing code + Matter reset knop
-//   - Webserver + alle sensor/pixel/verwarmingslogica: ongewijzigd
-//
-// v2.1  01mrt26  Endpoint-types gecorrigeerd + ignore_callbacks:
-//   - MatterOnOffLight matter_bed   → MatterOnOffPlugin
-//       → bed-modus is een logische schakelaar, geen lamp
-//   - MatterOnOffLight matter_thuis → MatterOnOffPlugin
-//       → aanwezigheidsmodus is een logische schakelaar, geen lamp
-//   - matter_pir1_light / matter_pir2_light blijven MatterOnOffLight
-//       → sturen echte NeoPixels aan (pixel_mode[0/1]) → wél lampen
-//   - ignore_callbacks flag toegevoegd (HVAC-patroon)
-//       → voorkomt feedback-loop in matter_pixels.onChangeOnOff
-//          die programmatisch setOnOff(true) terugschrijft
-//
-// v2.2  01mrt26  Matter transport-rij in /settings aangepast.
-//  De dropdown-opties "WiFi (actief)" en "Thread (placeholder)"
-//  Uitleg: WiFi = werkt, Thread = ESP32-C6 heeft de hardware maar arduino-esp32 3.3.2 nog niet productierijp!
-//
-// HARDWARE: ESP32-C6 16MB, arduino-esp32 3.3.2
-// BOARD: Custom partition table → partitions_16mb.csv
+/* ESP32_C6_MATTER_ROOM.ino – Zarlar thuisautomatisering
+// Filip Delannoy
+
+OPGEPAST: HARDWARE: ESP32-C6 16MB, arduino-esp32 3.3.2
+BOARD: Custom partition table → Compileer met "partitions.csv" in de sketchfolder:
+# Name,   Type, SubType, Offset,   Size,    Flags
+nvs,      data, nvs,     0x9000,   0x5000,
+otadata,  data, ota,     0xe000,   0x2000,
+app0,     app,  ota_0,   0x10000,  0x600000,
+app1,     app,  ota_1,   0x610000, 0x600000,
+spiffs,   data, spiffs,  0xC10000, 0x3F0000,
+
+v2.3  03mar26  Matter integrated, nvs correcties
+v2.2  01mrt26  Matter transport-rij in /settings aangepast.
+De dropdown-opties "WiFi (actief)" en "Thread (placeholder)"
+Uitleg: WiFi = werkt, Thread = ESP32-C6 heeft de hardware maar arduino-esp32 3.3.2 nog niet productierijp!
+
+v2.0  28feb26  Matter integratie:
+  - Matter endpoints: temp, humidity, occupancy, thermostat, color light, on/off lights
+  - ESPmDNS verwijderd (Matter vervangt intern mDNS)
+  - Custom partitietabel 16MB vereist (partitions_16mb.csv in schetsmap)
+  - serial_verbose: NVS toggle, instelbaar via /settings (geen hercompileren)
+  - matter_transport: WiFi / Thread keuze via /settings
+  - reset-all / reset-matter serial commando's (was: reset_nvs)
+  - /matter webpagina: pairing code + Matter reset knop
+  - Webserver + alle sensor/pixel/verwarmingslogica: ongewijzigd
+
+v2.1  01mrt26  Endpoint-types gecorrigeerd + ignore_callbacks:
+  - MatterOnOffLight matter_bed   → MatterOnOffPlugin
+      → bed-modus is een logische schakelaar, geen lamp
+  - MatterOnOffLight matter_thuis → MatterOnOffPlugin
+      → aanwezigheidsmodus is een logische schakelaar, geen lamp
+  - matter_pir1_light / matter_pir2_light blijven MatterOnOffLight
+      → sturen echte NeoPixels aan (pixel_mode[0/1]) → wél lampen
+  - ignore_callbacks flag toegevoegd (HVAC-patroon)
+      → voorkomt feedback-loop in matter_pixels.onChangeOnOff
+      die programmatisch setOnOff(true) terugschrijft
+*/
 
 #include <WiFi.h>
 // ESPmDNS VERWIJDERD — Matter neemt intern mDNS over
