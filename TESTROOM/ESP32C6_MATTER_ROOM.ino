@@ -10,10 +10,14 @@ app0,     app,  ota_0,   0x10000,  0x600000,
 app1,     app,  ota_1,   0x610000, 0x600000,
 spiffs,   data, spiffs,  0xC10000, 0x3F0000,
 
-v2.3  03mar26  Matter integrated, nvs correcties
+v2.5  03mar26  Bugfixes compilatie + runtime:
+               lastSerial declaratie verplaatst vóór handleSerialCommands() (compilatiefout)
+               softAP: kanaal 6 expliciet meegegeven (AP niet zichtbaar op iPhone/Mac)
+               tsl.getEvent() bewaakt met sun_light_enabled (I2C NACK-storm + "Laden..." fix)
+
 v2.2  01mrt26  Matter transport-rij in /settings aangepast.
-De dropdown-opties "WiFi (actief)" en "Thread (placeholder)"
-Uitleg: WiFi = werkt, Thread = ESP32-C6 heeft de hardware maar arduino-esp32 3.3.2 nog niet productierijp!
+      De dropdown-opties "WiFi (actief)" en "Thread (placeholder)"
+      Uitleg: WiFi = werkt, Thread = ESP32-C6 heeft de hardware maar arduino-esp32 3.3.2 nog niet productierijp!
 
 v2.0  28feb26  Matter integratie:
   - Matter endpoints: temp, humidity, occupancy, thermostat, color light, on/off lights
@@ -59,6 +63,7 @@ v2.1  01mrt26  Endpoint-types gecorrigeerd + ignore_callbacks:
 #include <MatterEndPoints/MatterThermostat.h>
 #include <MatterEndPoints/MatterColorLight.h>
 #include <MatterEndPoints/MatterOnOffLight.h>
+#include <MatterEndPoints/MatterOnOffPlugin.h>
 
 Preferences preferences;
 
@@ -134,8 +139,8 @@ MatterTemperatureSensor  matter_co2;         // CO2 FAKE (ppm÷100 als °C – h
 MatterTemperatureSensor  matter_lux;         // Lux FAKE (lux÷10 als °C – hernoem naar "Lux ÷10")
 MatterThermostat         matter_thermostat;  // heating_setpoint + room_temp
 MatterColorLight         matter_pixels;      // neo_r/g/b kleurpicker
-MatterOnOffLight         matter_bed;         // bed (0/1)
-MatterOnOffLight         matter_thuis;       // home_mode (0=Weg, 1=Thuis)
+MatterOnOffPlugin        matter_bed;         // bed (0/1)
+MatterOnOffPlugin        matter_thuis;       // home_mode (0=Weg, 1=Thuis)
 MatterOnOffLight         matter_pir1_light;  // pixel_mode[0] (0=AUTO, 1=MANUEEL)
 MatterOnOffLight         matter_pir2_light;  // pixel_mode[1] (0=AUTO, 1=MANUEEL)
 
@@ -420,6 +425,8 @@ void update_matter_sensors() {
 
 
 // ============== SERIAL COMMANDO'S (v2.0) ==============
+unsigned long lastSerial = 0;
+
 void handleSerialCommands() {
   if (Serial.available() > 0) {
     String cmd = Serial.readStringUntil('\n');
@@ -458,8 +465,6 @@ void handleSerialCommands() {
 
 
 // ============== COMPACT STATUSRAPPORT ==============
-unsigned long lastSerial = 0;
-
 void print_status_compact() {
   String upper_room = room_id;
   upper_room.toUpperCase();
@@ -769,7 +774,7 @@ void setup() {
     Serial.println(F("\nWiFi mislukt → Access Point starten"));
     WiFi.mode(WIFI_AP_STA);
     String ap_ssid = "ROOM-" + room_id;
-    WiFi.softAP(ap_ssid.c_str());
+    WiFi.softAP(ap_ssid.c_str(), NULL, 6, 0, 4);  // kanaal 6, niet verborgen, max 4 clients
     IPAddress ap_ip(192, 168, 4, 1);
     WiFi.softAPConfig(ap_ip, ap_ip, IPAddress(255, 255, 255, 0));
     delay(1000);
@@ -1315,7 +1320,7 @@ setInterval(poll, 2000);
     }
 
     String html;
-    html.reserve(16000);
+    html.reserve(10000);
 
     html = R"rawliteral(
 <!DOCTYPE html><html lang="nl"><head>
@@ -1340,7 +1345,6 @@ setInterval(poll, 2000);
     .submit-btn:hover{background:#003366;}
     .reset-btn{background:#cc0000;color:white;padding:12px 30px;border:none;border-radius:6px;font-size:16px;cursor:pointer;margin:20px 10px;}
     .reset-btn:hover{background:#990000;}
-    .section-title{color:#336699;font-size:16px;font-weight:bold;margin:24px 0 8px 0;border-bottom:2px solid #336699;padding-bottom:4px;}
     @media(max-width:800px){.container{flex-direction:column;}.sidebar{width:100%;border-right:none;border-bottom:3px solid #cc0000;padding:10px 0;display:flex;justify-content:center;}.sidebar a{width:80px;margin:0 5px;}.form-table td.hint{display:none;}.form-table td.label,.form-table td.input{width:50%;}}
   </style>
 </head><body>
@@ -1359,21 +1363,13 @@ setInterval(poll, 2000);
     </div>
     <div class="main">
 
-      <!-- MAC ADRES -->
-      <div style="background:#e6f0ff;border:3px solid #336699;padding:20px;margin:0 0 20px 0;border-radius:8px;text-align:center;">
-        <h3 style="margin:0 0 8px 0;color:#336699;">📡 Controller MAC Adres</h3>
-        <div style="font-size:20px;font-weight:bold;color:#003366;font-family:monospace;background:#fff;padding:10px;border-radius:4px;display:inline-block;border:2px solid #336699;">)rawliteral" + mac_address + R"rawliteral(</div>
-        <div style="font-size:13px;color:#666;margin-top:8px;">Voor DHCP-reservering in de router</div>
-      </div>
-
-      <div style="background:#fffacd;border:2px solid #cc0000;padding:12px 15px;margin:0 0 20px 0;border-radius:8px;font-size:14px;">
-        ⚠️ <b>Wijzigt permanente instellingen.</b>
-        Bij WiFi-fout start de controller automatisch AP <code>ROOM-naam</code> → <code>http://192.168.4.1/settings</code>
+      <div style="background:#e6f0ff;border:2px solid #336699;padding:10px 15px;margin:0 0 16px 0;border-radius:6px;font-size:13px;">
+        📡 MAC: <b style="font-family:monospace;">)rawliteral" + mac_address + R"rawliteral(</b>
+        <span style="color:#666;margin-left:8px;">(DHCP-reservering)</span>
       </div>
 
       <form action="/save_settings" method="get" id="settingsForm">
 
-        <div class="section-title">Netwerk & Identiteit</div>
         <table class="form-table">
           <tr>
             <td class="label">Room naam</td>
@@ -1397,7 +1393,6 @@ setInterval(poll, 2000);
           </tr>
         </table>
 
-        <div class="section-title">Klimaat & Ventilatie</div>
         <table class="form-table">
           <tr>
             <td class="label">Heating setpoint (default)</td>
@@ -1426,7 +1421,6 @@ setInterval(poll, 2000);
           </tr>
         </table>
 
-        <div class="section-title">Sensoren & Pixels</div>
         <table class="form-table">
           <tr>
             <td class="label">LDR dark threshold</td>
@@ -1468,7 +1462,6 @@ setInterval(poll, 2000);
           </tr>
         </table>
 
-        <div class="section-title">Matter & Diagnostiek</div>
         <table class="form-table">
           <tr>
             <td class="label">Serial logging</td>
@@ -1486,18 +1479,7 @@ setInterval(poll, 2000);
                 <option value="0")rawliteral" + String(matter_transport == 0 ? " selected" : "") + R"rawliteral(>WiFi (actief)</option>
                 <option value="1")rawliteral" + String(matter_transport == 1 ? " selected" : "") + R"rawliteral(>Thread (placeholder)</option>
               </select>
-              <div style="margin-top:8px;background:#f0f4ff;border:1px solid #336699;border-radius:6px;padding:8px 10px;font-size:12px;line-height:1.6;">
-                <b style="color:#336699;">WiFi</b> — standaard en volledig werkend. Vereist enkel WiFi-router.<br>
-                <b style="color:#336699;">Thread</b> — laag-energie mesh-protocol, ideaal voor batterij-nodes.
-                Vereist <b>border router</b> (Apple TV 4K gen3+ of HomePod 2e gen)
-                én OpenThread-initialisatie in de sketch.<br>
-                <span style="color:#cc0000;">⚠️ Thread is momenteel een <b>placeholder</b> —
-                de ESP32-C6 heeft de hardware (802.15.4 radio), maar
-                arduino-esp32 3.3.2 Thread-support is nog niet productierijp.
-                Deze instelling heeft <b>geen functioneel effect</b>: Matter start altijd via WiFi.
-                Toekomstig werk vereist: OpenThread init + border router aanwezig.</span>
-              </div>
-              <div style="margin-top:4px;font-size:11px;color:#666;">Wijziging van kracht na herstart.</div>
+              <div style="margin-top:6px;font-size:11px;color:#666;">WiFi=actief. Thread=placeholder (hardware aanwezig, arduino-esp32 3.3.2 nog niet productierijp). Wijziging van kracht na herstart.</div>
             </td>
             <td class="hint">Altijd WiFi laten staan</td>
           </tr>
@@ -1505,7 +1487,6 @@ setInterval(poll, 2000);
 
     // DS18B20 sectie (dynamisch)
     html += R"rawliteral(
-        <div class="section-title">🌡️ DS18B20 Temperatuursensoren</div>
         <div style="background:#e6f0ff;border:2px solid #336699;padding:15px;border-radius:8px;margin-bottom:20px;">
           <p style="margin:0 0 10px 0;font-size:14px;">)rawliteral";
     html += String(ds_count) + " sensor(s) gevonden op de 1-Wire bus.</p>";
@@ -1782,7 +1763,7 @@ void loop() {
   temp_dht = dht.readTemperature();
   dew      = calculateDewPoint(temp_dht, humi);
   readDS18B20temps();
-  sensors_event_t e; tsl.getEvent(&e); sun_light = (int)e.light;
+  if (sun_light_enabled) { sensors_event_t e; tsl.getEvent(&e); sun_light = (int)e.light; }
   light_ldr = scaleLDR(analogRead(LDR_ANALOG));
   dust  = readDust();
   co2   = readCO2();
