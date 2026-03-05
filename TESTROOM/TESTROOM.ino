@@ -2,6 +2,7 @@
 // Developed by Filip Delannoy in december '25.
 // Bereikbaar op (bijvb) http://eetplaats.local of http://192.168.0.80 => Andere controller: Naam (sectie DNS/MDNS) + static IP aanpassen!
 
+// 05mar26 18:30 v. 1.9 WDT fix: dust guard (default false), yield() na OneWire, JSON labels ag/ah/ai/aj.
 // 05mar26 18:00 v. 1.8 Serial interval instelbaar in /settings (5-30s), direct actief. Heap monitoring v1.6 hersteld (was verloren bij v1.7 rebase).
 // 05mar26 17:30 v. 1.7 WDT-crash fixes: DS18B20 async (geen delay(750) meer), CO2 read bewaakt met if(co2_enabled). Default co2_enabled=false.
 // 05mar26 16:00 v. 1.6 Heap monitoring op statuspagina: largest free block + kleurcode. /json uitgebreid met heap_largest + heap_min_ever.
@@ -126,7 +127,7 @@ int beam_alert_threshold     = 50;
 
 // Optionele feature enables (default 1 = aan)
 bool co2_enabled   = false;  // v1.7: default false — voorkomt WDT crash bij niet-aangesloten sensor
-bool dust_enabled  = true;
+bool dust_enabled  = false;  // v1.9: default false — delayMicroseconds(9680) kan WDT triggeren als sensor niet aanwezig
 bool sun_light_enabled = true;
 bool mov2_enabled  = true;
 bool tstat_enabled = true;
@@ -368,13 +369,13 @@ void loadDS18B20fromNVS() {
   }
 }
 
-// v1.7: DS18B20 async — conversie en lezen gesplitst, geen delay() meer
 void startDS18B20conversion() {
   if (ds_count == 0) return;
   // Broadcast CONVERT_T naar alle sensoren tegelijk via Skip ROM (0xCC)
   ow.reset();
   ow.writeByte(0xCC);  // Skip ROM — alle sensoren tegelijk
   ow.writeByte(0x44);  // Convert T
+  yield();             // v1.9: geef RTOS/WDT even adem na OneWire operatie
   ds_convert_start = millis();
   ds_converting = true;
 }
@@ -389,6 +390,7 @@ void readDS18B20temps() {
 
     uint8_t data[9];
     for (int j = 0; j < 9; j++) data[j] = ow.touchByte(0xFF);
+    yield();           // v1.9: geef RTOS/WDT even adem na lezen scratchpad
 
     int16_t raw = (int16_t)((data[1] << 8) | data[0]);
     float t = raw / 16.0f;
@@ -469,10 +471,10 @@ String getJSON() {
          ",\"ad\":\"" + pixel_on_str + "\"" +
          ",\"ae\":\"" + pixel_mode_str + "\"" +
          ",\"af\":" + String(home_mode) +
-         ",\"ds_count\":" + String(ds_count) +
-         ",\"ds_primary\":" + String(ds_primary) +
-         ",\"heap_largest\":" + String(ESP.getMaxAllocHeap()) +
-         ",\"heap_min_ever\":" + String(ESP.getMinFreeHeap()) +
+         ",\"ag\":" + String(ds_count) +
+         ",\"ah\":" + String(ds_primary) +
+         ",\"ai\":" + String(ESP.getMaxAllocHeap()) +
+         ",\"aj\":" + String(ESP.getMinFreeHeap()) +
          ds_json +
          "}";
 }
@@ -1149,7 +1151,7 @@ function updateValues(){
       else if(lbl.includes("WiFi kwaliteit")) td.textContent=data.w+" %";
       else if(lbl.includes("Free heap")){
         td.textContent=data.x+" %";
-        var lb=data.heap_largest||0;
+        var lb=data.ai||0;
         var lbKB=Math.round(lb/1024);
         var col=lb>35000?"#0a0":lb>25000?"#f80":"#c00";
         var detail=document.getElementById("heap-lb");
@@ -1955,7 +1957,7 @@ void loop() {
   }
   
   light_ldr = scaleLDR(analogRead(LDR_ANALOG));
-  dust = readDust();
+  if (dust_enabled) dust = readDust();  // v1.9: bewaakt — delayMicroseconds blokkeert WDT als sensor niet aanwezig
   if (co2_enabled) co2 = readCO2();  // v1.7: bewaakt — pulseIn() blokkeert WDT als sensor niet aanwezig
   tstat_on = !digitalRead(TSTAT_PIN);
 
