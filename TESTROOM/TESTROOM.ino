@@ -2,7 +2,8 @@
 // Developed by Filip Delannoy in december '25.
 // Bereikbaar op (bijvb) http://eetplaats.local of http://192.168.0.80 => Andere controller: Naam (sectie DNS/MDNS) + static IP aanpassen!
 
-// 05mar26 20:30 v. 2.1 Verwarmingslogica verbeterd volgens onze verwachtingen..
+// 05mar26 21:30 v. 2.2 RGB kleurkiezer inline op statuspagina (vervangt aparte /neopixel pagina). /neopixel redirect naar /.
+// 05mar26 20:30 v. 2.1 DS18B20: CONVERT_ALL broadcast (minder interrupt-blocking), leesfrequentie 2s→60s (zelfde als ECO/HVAC). Verwarmingslogica: tstat_enabled gerespecteerd, logica buiten 60s-gate voor snelle respons.
 // 05mar26 19:30 v. 2.0 Teruggedraaid: DS18B20 async + esp_int_wdt_deinit verwijderd (veroorzaakten instabiliteit). Enkel echte fixes behouden: CO2/dust guards, serial interval, heap monitoring, MAC in settings.
 // 05mar26 18:30 v. 1.9 WDT fix: dust guard (default false), yield() na OneWire, JSON labels ag/ah/ai/aj.
 // 05mar26 18:00 v. 1.8 Serial interval instelbaar in /settings (5-30s), direct actief. Heap monitoring v1.6 hersteld (was verloren bij v1.7 rebase).
@@ -1020,8 +1021,8 @@ void setup() {
     html += R"rawliteral(
 
 
-    <tr><td class="label">NeoPixel RGB</td><td class="value">)rawliteral" + String(neo_r) + ", " + String(neo_g) + ", " + String(neo_b) + R"rawliteral(</td>
-      <td class="control"><a href="/neopixel" style="color:#336699;text-decoration:underline;">Kleur kiezen</a></td></tr>
+    <tr><td class="label">NeoPixel Kleur</td><td class="value" id="rgb_val">)rawliteral" + String(neo_r) + ", " + String(neo_g) + ", " + String(neo_b) + R"rawliteral(</td>
+      <td class="control"><input type="color" id="colorPicker" value=")rawliteral" + String('#') + (neo_r < 16 ? "0" : "") + String(neo_r, HEX)                   + (neo_g < 16 ? "0" : "") + String(neo_g, HEX)                   + (neo_b < 16 ? "0" : "") + String(neo_b, HEX) + R"rawliteral(" oninput="setNeoColor(this.value)" style="width:48px;height:34px;border:none;cursor:pointer;padding:2px;"></td></tr>
     <tr><td class="label">Bed switch</td><td class="value">)rawliteral" + String(bed ? "AAN" : "UIT") + R"rawliteral(</td>
       <td class="control"><form action="/toggle_bed" method="get" onsubmit="event.preventDefault(); submitAjax(this);"><label class="switch"><input type="checkbox" )rawliteral" + (bed ? "checked" : "") + R"rawliteral( onchange="submitAjax(this.form);"><span class="slider-switch"></span></label></form></td></tr>
     <tr><td class="label">Dim snelheid (s)</td><td class="value">)rawliteral" + String(fade_duration) + R"rawliteral(</td>
@@ -1135,7 +1136,7 @@ function updateValues(){
       else if(lbl.includes("Night mode")) td.textContent=data.q?"JA":"NEE";
       else if(lbl.includes("MOV1 PIR licht")) td.textContent=data.m?"JA":"NEE";
       else if(lbl.includes("MOV2 PIR licht")) td.textContent=data.n?"JA":"NEE";
-      else if(lbl.includes("NeoPixel RGB")) td.textContent=data.s+", "+data.t+", "+data.u;
+      else if(lbl.includes("NeoPixel Kleur")){td.textContent=data.s+", "+data.t+", "+data.u;var cp=document.getElementById('colorPicker');if(cp){var toHex=v=>('0'+Math.round(v).toString(16)).slice(-2);cp.value='#'+toHex(data.s)+toHex(data.t)+toHex(data.u);}}
       else if(lbl.includes("Bed switch")) td.textContent=data.r?"AAN":"UIT";
       else if(lbl.includes("Dim snelheid")) td.textContent=data.ab;
       else if(lbl.includes("MOV1 PIR trig")) td.textContent=data.i;
@@ -1181,7 +1182,13 @@ function submitAjax(form){
   fetch(url).then(r=>{if(r.ok){updateValues();const s=document.getElementById('status');if(s){s.textContent='✓';setTimeout(()=>s.textContent='',1500);}}}).catch(e=>console.error(e));
 }
 window.addEventListener('load',()=>{updateValues();setInterval(updateValues,3000);});
-</script>
+function setNeoColor(hex){
+  var r=parseInt(hex.slice(1,3),16);
+  var g=parseInt(hex.slice(3,5),16);
+  var b=parseInt(hex.slice(5,7),16);
+  document.getElementById('rgb_val').textContent=r+', '+g+', '+b;
+  fetch('/setcolor?r='+r+'&g='+g+'&b='+b);
+}
 </script>
 
 
@@ -1332,106 +1339,8 @@ for (int i = 0; i < pixels_num; i++) {
 
 
   // === NEOPIXEL KLEURKIEZER PAGE ===
-    server.on("/neopixel", HTTP_GET, [](AsyncWebServerRequest *request) {
-    String html;
-    html.reserve(5000);
-    html = R"rawliteral(
-<!DOCTYPE html>
-<html lang="nl">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>NeoPixel Kleur</title>
-  <style>
-    body {font-family:Arial,Helvetica,sans-serif;background:#ffffff;margin:0;padding:0;}
-    .header {
-      display:flex;background:#ffcc00;color:black;padding:10px 20px;
-      font-size:18px;font-weight:bold;align-items:center;
-    }
-    .header-left {flex:1;text-align:left;}
-    .header-right {flex:1;text-align:right;font-size:16px;}
-    .container {display:flex;min-height:calc(100vh - 60px);}
-    .sidebar {
-      width:120px;padding:20px 10px;background:#ffffff;
-      border-right:3px solid #cc0000;box-sizing:border-box;
-    }
-    .sidebar a {
-      display:block;background:#336699;color:white;padding:10px;
-      margin:10px 0;text-decoration:none;font-weight:bold;
-      font-size:14px;border-radius:8px;text-align:center;
-      line-height:1.4;width:70px;box-sizing:border-box;
-    }
-    .sidebar a:hover {background:#003366;}
-    .sidebar a.active {background:#cc0000;}
-    .main {flex:1;padding:40px;text-align:center;}
-    input[type=range] {width:80%;height:30px;}
-    .button {
-      background:#336699;color:white;padding:12px 24px;border:none;
-      border-radius:8px;cursor:pointer;font-size:16px;margin-top:30px;
-    }
-    .button:hover {background:#003366;}
-    #status {margin-top:20px;font-weight:bold;color:#336699;}
-  </style>
-</head>
-<body>
-  <div class="header">
-    <div class="header-left">)rawliteral" + room_id + R"rawliteral(</div>
-    <div class="header-right">
-      )rawliteral" + String(uptime_sec) + " s &nbsp;&nbsp; " + getFormattedDateTime() + R"rawliteral(
-    </div>
-  </div>
-  <div class="container">
-    <div class="sidebar">
-      <a href="/">Status &<br>Control</a>
-      <a href="/update">OTA<br>Update</a>
-      <a href="/json">JSON<br>Data</a>
-      <a href="/settings">Settings</a>
-    </div>
-    <div class="main">
-      <h1 style="color:#336699;">NeoPixel Kleur Instellen</h1>
-      <form id="colorForm">
-        <p>R: <input type="range" name="r" min="0" max="255" value=")rawliteral" + String(neo_r) + R"rawliteral("><span id="r_val"> )rawliteral" + String(neo_r) + R"rawliteral(</span><br><br></p>
-        <p>G: <input type="range" name="g" min="0" max="255" value=")rawliteral" + String(neo_g) + R"rawliteral("><span id="g_val"> )rawliteral" + String(neo_g) + R"rawliteral(</span><br><br></p>
-        <p>B: <input type="range" name="b" min="0" max="255" value=")rawliteral" + String(neo_b) + R"rawliteral("><span id="b_val"> )rawliteral" + String(neo_b) + R"rawliteral(</span><br><br></p>
-        <button type="submit" class="button">Pas kleur toe</button>
-      </form>
-      <div id="status"></div>
-      <br><br><a href="/" style="color:#336699;text-decoration:underline;">← Terug naar Status</a>
-    </div>
-  </div>
-
-<script>
-  document.querySelectorAll('input[type=range]').forEach(slider => {
-    const output = document.getElementById(slider.name + '_val');
-    output.textContent = slider.value;
-    slider.oninput = function() {
-      output.textContent = this.value;
-    }
-  });
-
-  document.getElementById('colorForm').onsubmit = function(e) {
-    e.preventDefault();
-    const params = new URLSearchParams();
-    params.append('r', document.querySelector('input[name=r]').value);
-    params.append('g', document.querySelector('input[name=g]').value);
-    params.append('b', document.querySelector('input[name=b]').value);
-
-    fetch('/setcolor?' + params.toString(), {method: 'GET'})
-      .then(response => response.text())
-      .then(text => {
-        document.getElementById('status').textContent = 'Kleur toegepast!';
-        setTimeout(() => { document.getElementById('status').textContent = ''; }, 2000);
-      })
-      .catch(err => {
-        document.getElementById('status').textContent = 'Fout bij toepassen';
-      });
-  };
-</script>
-
-</body>
-</html>
-)rawliteral";
-    request->send(200, "text/html; charset=utf-8", html);
+  server.on("/neopixel", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->redirect("/");  // Kleurkiezer zit nu inline op statuspagina
   });
 
 
