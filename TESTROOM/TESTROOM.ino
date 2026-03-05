@@ -2,19 +2,16 @@
 // Developed by Filip Delannoy in december '25.
 // Bereikbaar op (bijvb) http://eetplaats.local of http://192.168.0.80 => Andere controller: Naam (sectie DNS/MDNS) + static IP aanpassen!
 
-// 05mar26 12:24 v. 1.6 Heap diagnostics: heap_largest + heap_min_ever in JSON, uitgebreide Free heap rij op statuspagina.
+// 05mar26 17:30 v. 1.7 WDT-crash fixes: DS18B20 async (geen delay(750) meer), CO2 read bewaakt met if(co2_enabled). Default co2_enabled=false.
+// 05mar26 16:00 v. 1.6 Heap monitoring op statuspagina: largest free block + kleurcode. /json uitgebreid met heap_largest + heap_min_ever.
 // 05mar26 12:00 v. 1.5 Lux meting in orde gemaakt: I2C pins gewijzigd naar de voorziene pins. Geen errors meer in serial.
 // 04mar26 12:00 v. 1.4 Lichter gemaakt en vereenvoudigd om heap size maximaal te maken voor matter integratie. (25 => 67% over!)
 // 27feb26 17:30 v. 1.3 C6 compatibel: OneWireNg, pin updates, multi DS18B20 discovery + rescan + /config page expanded & simplified textboxes (Claude)
 // 26feb26 19:00 v. 1.2 Fixed IP geintroduceerd. Set zoals in tabel op google drive: vb: EETPL	(Mac = 58:8C:81:32:2F:48)	=> IP = 192.168.0.80
 // 21dec25 23:00 v. 1.1 Pixel nicknames werken VOLLEDIG in /settings en in / (hoofdpagina)! Ga terug naar deze versie als je vastloopt!
-// 22dec25 18:00 Captive portal geimplementeerd en gans factory reset proces verbeterd! Thuis getest, werkt nog niet.
-// 02jan26 21:00 Pixels persistent gemaakt! (voor Mireille) De UI labels van pixel 0 & 1 worden niet geupdated, tenzij ze refreshed worden! Noch ChatGPT noch Grok slaagden erin dit betrouwbaar op te lossen zonder nevenschade. Laat dit zo!
-// 12jan26 20:00 Endpoint voor JSON string veranderd van /status.json => /json zoals de andere controllers.
-// 13jan26 20:00 MAC address toegevoegd om Static IP adres in router te kunnen vastleggen.
-
+//
 // Volgende opdrachten voor Grok of chatGPT: 
-//                1) Nicknames voor sensors die in Matter gebruikt worden: Standaard = Roomname+Sensor, Option: Make own nickname. (zoals de pixels)
+// 1) Nicknames voor sensors die in Matter gebruikt worden: Standaard = Roomname+Sensor, Option: Make own nickname. (zoals de pixels)
 
 
 #include <WiFi.h>
@@ -122,7 +119,7 @@ int beam_alert_threshold     = 50;
 
 
 // Optionele feature enables (default 1 = aan)
-bool co2_enabled   = true;
+bool co2_enabled   = false;  // v1.7: default false — voorkomt WDT crash bij niet-aangesloten sensor
 bool dust_enabled  = true;
 bool sun_light_enabled = true;
 bool mov2_enabled  = true;
@@ -177,6 +174,9 @@ OneWireNg::Id ds_addrs[DS_MAX_SENSORS];    // 8-byte adressen
 float temp_ds_arr[DS_MAX_SENSORS];         // Temperaturen per sensor
 String ds_nicknames[DS_MAX_SENSORS];       // Nicknames per sensor
 int ds_primary = 0;                        // Index van primaire sensor → room_temp
+// DS18B20 async conversie (v1.7 — geen blocking delay() meer)
+unsigned long ds_convert_start = 0;
+bool ds_converting = false;
 
 
 // Pixel specifieke arrays
@@ -361,18 +361,24 @@ void loadDS18B20fromNVS() {
   }
 }
 
+// v1.7: DS18B20 async — conversie en lezen gesplitst, geen delay() meer
+void startDS18B20conversion() {
+  if (ds_count == 0) return;
+  // Broadcast CONVERT_T naar alle sensoren tegelijk via Skip ROM (0xCC)
+  ow.reset();
+  ow.writeByte(0xCC);  // Skip ROM — alle sensoren tegelijk
+  ow.writeByte(0x44);  // Convert T
+  ds_convert_start = millis();
+  ds_converting = true;
+}
+
 void readDS18B20temps() {
+  // Lees elke sensor individueel na de conversie (750ms na startDS18B20conversion)
   for (int i = 0; i < ds_count; i++) {
     ow.reset();
-    ow.writeByte(0x55);
+    ow.writeByte(0x55);                                      // Match ROM
     for (int j = 0; j < 8; j++) ow.writeByte(ds_addrs[i][j]);
-    ow.writeByte(0x44);
-    delay(750);
-
-    ow.reset();
-    ow.writeByte(0x55);
-    for (int j = 0; j < 8; j++) ow.writeByte(ds_addrs[i][j]);
-    ow.writeByte(0xBE);
+    ow.writeByte(0xBE);                                      // Read Scratchpad
 
     uint8_t data[9];
     for (int j = 0; j < 9; j++) data[j] = ow.touchByte(0xFF);
@@ -382,6 +388,7 @@ void readDS18B20temps() {
     if (t >= -55.0f && t <= 125.0f) temp_ds_arr[i] = t;
   }
   temp_ds = (ds_count > 0) ? temp_ds_arr[ds_primary] : 0.0;
+  ds_converting = false;
 }
 
 // ============== EINDE DS18B20 MULTI-SENSOR ==============
@@ -457,8 +464,6 @@ String getJSON() {
          ",\"af\":" + String(home_mode) +
          ",\"ds_count\":" + String(ds_count) +
          ",\"ds_primary\":" + String(ds_primary) +
-         ",\"heap_largest\":" + String(ESP.getMaxAllocHeap()) +
-         ",\"heap_min_ever\":" + String(ESP.getMinFreeHeap()) +
          ds_json +
          "}";
 }
@@ -1084,14 +1089,7 @@ void setup() {
       <table>
         <tr><td class="label">WiFi RSSI</td><td class="value">)rawliteral" + String(WiFi.RSSI()) + " dBm" + R"rawliteral(</td><td class="control"></td></tr>
         <tr><td class="label">WiFi kwaliteit</td><td class="value">)rawliteral" + String(constrain(2 * (WiFi.RSSI() + 100), 0, 100)) + " %" + R"rawliteral(</td><td class="control"></td></tr>
-        <tr><td class="label">Free heap</td><td class="value" id="heap-pct">)rawliteral" + String((ESP.getFreeHeap() * 100) / ESP.getHeapSize()) + " %" + R"rawliteral(</td>
-        <td class="control" id="heap-lb" style="font-size:12px;">)rawliteral" +
-          [&]() -> String {
-            uint32_t lb = ESP.getMaxAllocHeap();
-            const char* col = lb > 35000 ? "#0a0" : lb > 25000 ? "#f80" : "#c00";
-            return String("largest: <b style='color:") + col + "'>" + String(lb/1024) + " KB</b>";
-          }()
-        + R"rawliteral(</td></tr>
+        <tr><td class="label">Free heap</td><td class="value">)rawliteral" + String((ESP.getFreeHeap() * 100) / ESP.getHeapSize()) + " %" + R"rawliteral(</td><td class="control"></td></tr>
       
 
       </table>
@@ -1132,14 +1130,7 @@ function updateValues(){
       else if(lbl.includes("Beam alert")) td.textContent=data.p?"JA":"NEE";
       else if(lbl.includes("WiFi RSSI")) td.textContent=data.v+" dBm";
       else if(lbl.includes("WiFi kwaliteit")) td.textContent=data.w+" %";
-      else if(lbl.includes("Free heap")){
-        td.textContent=data.x+" %";
-        var lb=data.heap_largest||0;
-        var lbKB=Math.round(lb/1024);
-        var col=lb>35000?"#0a0":lb>25000?"#f80":"#c00";
-        var detail=document.getElementById("heap-lb");
-        if(detail) detail.innerHTML="largest: <b style='color:"+col+"'>"+lbKB+" KB</b>";
-      }
+      else if(lbl.includes("Free heap")) td.textContent=data.x+" %";
       else if(lbl.includes("Pixel")){
         const idx=parseInt(lbl.match(/\d+/)[0]);
         if(idx===0) td.textContent=data.m?"On":"Off";
@@ -1915,6 +1906,10 @@ void loop() {
 
 
 
+  // v1.7: DS18B20 async — lees resultaat zodra conversie klaar is (750ms na start)
+  if (ds_converting && (millis() - ds_convert_start >= 750)) {
+    readDS18B20temps();
+  }
 
   if (millis() - last_slow < 2000) return;
   last_slow = millis();
@@ -1926,7 +1921,7 @@ void loop() {
   humi = dht.readHumidity();
   temp_dht = dht.readTemperature();
   dew = calculateDewPoint(temp_dht, humi);
-  readDS18B20temps();  // Lees alle DS18B20 sensoren → temp_ds = primaire sensor
+  startDS18B20conversion();  // v1.7: async — conversie starten, lezen 750ms later non-blocking in loop()
   
   if (sun_light_enabled) {
     sensors_event_t e; tsl.getEvent(&e); sun_light = (int)e.light;
@@ -1934,7 +1929,7 @@ void loop() {
   
   light_ldr = scaleLDR(analogRead(LDR_ANALOG));
   dust = readDust();
-  co2 = readCO2();
+  if (co2_enabled) co2 = readCO2();  // v1.7: bewaakt — pulseIn() blokkeert WDT als sensor niet aanwezig
   tstat_on = !digitalRead(TSTAT_PIN);
 
   dew_alert = (temp_ds < dew) ? 1 : 0;  
