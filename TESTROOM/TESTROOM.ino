@@ -2,6 +2,8 @@
 // Developed by Filip Delannoy in december '25.
 // Bereikbaar op (bijvb) http://eetplaats.local of http://192.168.0.80 => Andere controller: Naam (sectie DNS/MDNS) + static IP aanpassen!
 
+// 05mar26 20:30 v. 2.1 Verwarmingslogica verbeterd volgens onze verwachtingen..
+// 05mar26 19:30 v. 2.0 Teruggedraaid: DS18B20 async + esp_int_wdt_deinit verwijderd (veroorzaakten instabiliteit). Enkel echte fixes behouden: CO2/dust guards, serial interval, heap monitoring, MAC in settings.
 // 05mar26 18:30 v. 1.9 WDT fix: dust guard (default false), yield() na OneWire, JSON labels ag/ah/ai/aj.
 // 05mar26 18:00 v. 1.8 Serial interval instelbaar in /settings (5-30s), direct actief. Heap monitoring v1.6 hersteld (was verloren bij v1.7 rebase).
 // 05mar26 17:30 v. 1.7 WDT-crash fixes: DS18B20 async (geen delay(750) meer), CO2 read bewaakt met if(co2_enabled). Default co2_enabled=false.
@@ -182,9 +184,6 @@ OneWireNg::Id ds_addrs[DS_MAX_SENSORS];    // 8-byte adressen
 float temp_ds_arr[DS_MAX_SENSORS];         // Temperaturen per sensor
 String ds_nicknames[DS_MAX_SENSORS];       // Nicknames per sensor
 int ds_primary = 0;                        // Index van primaire sensor → room_temp
-// DS18B20 async conversie (v1.7 — geen blocking delay() meer)
-unsigned long ds_convert_start = 0;
-bool ds_converting = false;
 
 
 // Pixel specifieke arrays
@@ -369,35 +368,31 @@ void loadDS18B20fromNVS() {
   }
 }
 
-void startDS18B20conversion() {
-  if (ds_count == 0) return;
-  // Broadcast CONVERT_T naar alle sensoren tegelijk via Skip ROM (0xCC)
-  ow.reset();
-  ow.writeByte(0xCC);  // Skip ROM — alle sensoren tegelijk
-  ow.writeByte(0x44);  // Convert T
-  yield();             // v1.9: geef RTOS/WDT even adem na OneWire operatie
-  ds_convert_start = millis();
-  ds_converting = true;
-}
-
 void readDS18B20temps() {
-  // Lees elke sensor individueel na de conversie (750ms na startDS18B20conversion)
+  if (ds_count == 0) return;
+
+  // Stap 1: Start conversie voor ALLE sensoren tegelijk via SKIP ROM (broadcast)
+  // Slechts 1x interrupt-blokkering voor de conversie-opdracht i.p.v. N keer
+  ow.reset();
+  ow.writeByte(0xCC);  // SKIP ROM - alle sensoren tegelijk
+  ow.writeByte(0x44);  // CONVERT T
+  delay(750);          // Een wacht voor alle sensoren - FreeRTOS-friendly
+
+  // Stap 2: Lees elke sensor individueel via MATCH ROM
   for (int i = 0; i < ds_count; i++) {
     ow.reset();
-    ow.writeByte(0x55);                                      // Match ROM
+    ow.writeByte(0x55);  // MATCH ROM
     for (int j = 0; j < 8; j++) ow.writeByte(ds_addrs[i][j]);
-    ow.writeByte(0xBE);                                      // Read Scratchpad
+    ow.writeByte(0xBE);  // READ SCRATCHPAD
 
     uint8_t data[9];
     for (int j = 0; j < 9; j++) data[j] = ow.touchByte(0xFF);
-    yield();           // v1.9: geef RTOS/WDT even adem na lezen scratchpad
 
     int16_t raw = (int16_t)((data[1] << 8) | data[0]);
     float t = raw / 16.0f;
     if (t >= -55.0f && t <= 125.0f) temp_ds_arr[i] = t;
   }
-  temp_ds = (ds_count > 0) ? temp_ds_arr[ds_primary] : 0.0;
-  ds_converting = false;
+  temp_ds = temp_ds_arr[ds_primary];
 }
 
 // ============== EINDE DS18B20 MULTI-SENSOR ==============
@@ -1499,9 +1494,9 @@ input[type=text],input[type=password],input[type=number],select{width:100%;paddi
     <a href="/settings" class="active">Settings</a>
   </div>
   <div class="main">
-    <p style="font-size:12px;color:#666;margin:0 0 8px 0;">MAC: <code>)rawliteral" + mac_address + R"rawliteral(</code></p>
     <form action="/save_settings" method="get" id="sf">
     <table>
+      <tr><td class="lbl">MAC adres</td><td class="inp"><code>)rawliteral" + mac_address + R"rawliteral(</code></td></tr>
       <tr><td class="lbl">Room naam</td><td class="inp"><input type="text" name="room_id" value=")rawliteral" + room_id + R"rawliteral(" required></td></tr>
       <tr><td class="lbl">WiFi SSID</td><td class="inp"><input type="text" name="wifi_ssid" value=")rawliteral" + wifi_ssid + R"rawliteral(" required></td></tr>
       <tr><td class="lbl">WiFi wachtwoord</td><td class="inp"><input type="password" name="wifi_pass" value=")rawliteral" + wifi_pass + R"rawliteral("></td></tr>
@@ -1935,12 +1930,22 @@ void loop() {
 
 
 
-  // v1.7: DS18B20 async — lees resultaat zodra conversie klaar is (750ms na start)
-  if (ds_converting && (millis() - ds_convert_start >= 750)) {
-    readDS18B20temps();
+  // Thermostaat pinlezing + verwarmingslogica — buiten 60s-gate voor snelle respons
+  tstat_on = !digitalRead(TSTAT_PIN);
+  {
+    float effective_setpoint = max((float)heating_setpoint, dew + dew_safety_margin);
+    if (heating_mode == 1) {  // MANUEEL
+      heating_on = 1;
+    } else {  // AUTO
+      if (home_mode == 1 && tstat_enabled) {  // Thuis + thermostaat aanwezig → volg hardware
+        heating_on = tstat_on;
+      } else {  // Thuis zonder thermostaat, of Weg → ESP regelt met anti-condens bescherming
+        heating_on = (room_temp < (effective_setpoint - 0.5f)) ? 1 : 0;
+      }
+    }
   }
 
-  if (millis() - last_slow < 2000) return;
+  if (millis() - last_slow < 60000) return;
   last_slow = millis();
   uptime_sec = millis() / 1000;
 
@@ -1950,7 +1955,7 @@ void loop() {
   humi = dht.readHumidity();
   temp_dht = dht.readTemperature();
   dew = calculateDewPoint(temp_dht, humi);
-  startDS18B20conversion();  // v1.7: async — conversie starten, lezen 750ms later non-blocking in loop()
+  readDS18B20temps();  // Lees alle DS18B20 sensoren → temp_ds = primaire sensor
   
   if (sun_light_enabled) {
     sensors_event_t e; tsl.getEvent(&e); sun_light = (int)e.light;
@@ -1959,8 +1964,6 @@ void loop() {
   light_ldr = scaleLDR(analogRead(LDR_ANALOG));
   if (dust_enabled) dust = readDust();  // v1.9: bewaakt — delayMicroseconds blokkeert WDT als sensor niet aanwezig
   if (co2_enabled) co2 = readCO2();  // v1.7: bewaakt — pulseIn() blokkeert WDT als sensor niet aanwezig
-  tstat_on = !digitalRead(TSTAT_PIN);
-
   dew_alert = (temp_ds < dew) ? 1 : 0;  
   night = (light_ldr > 50) ? 1 : 0;  
   // bed blijft voorlopig hardcoded 0, tot toggle in webserver  
@@ -1977,21 +1980,6 @@ void loop() {
     if (isnan(temp_dht) || temp_dht < 5.0 || temp_dht > 40.0) {
       room_temp = 0.0;
       temp_melding = "Beide temp sensoren defect!";
-    }
-  }
-
-
-
-  // Heating logica met Thuis/Uit + anti-condens (slider wijzigt setpoint, geen mode-switch)
-  float effective_setpoint = max((float)heating_setpoint, dew + dew_safety_margin);
-
-  if (heating_mode == 1) {  // MANUEEL
-    heating_on = 1;  // Altijd aan, ongeacht Thuis/Uit
-  } else {  // AUTO
-    if (home_mode == 1) {  // Thuis → volg hardware thermostaat
-      heating_on = tstat_on;
-    } else {  // Uit → ESP regelt met anti-condens bescherming
-      heating_on = (room_temp < (effective_setpoint - 0.5f)) ? 1 : 0;
     }
   }
 
