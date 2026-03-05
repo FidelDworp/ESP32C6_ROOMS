@@ -2,7 +2,7 @@
 // Developed by Filip Delannoy in december '25.
 // Bereikbaar op (bijvb) http://eetplaats.local of http://192.168.0.80 => Andere controller: Naam (sectie DNS/MDNS) + static IP aanpassen!
 
-// 05mar26 18:00 v. 1.8 Serial interval instelbaar in /settings (5-30s), direct actief zonder reboot.
+// 05mar26 18:00 v. 1.8 Serial interval instelbaar in /settings (5-30s), direct actief. Heap monitoring v1.6 hersteld (was verloren bij v1.7 rebase).
 // 05mar26 17:30 v. 1.7 WDT-crash fixes: DS18B20 async (geen delay(750) meer), CO2 read bewaakt met if(co2_enabled). Default co2_enabled=false.
 // 05mar26 16:00 v. 1.6 Heap monitoring op statuspagina: largest free block + kleurcode. /json uitgebreid met heap_largest + heap_min_ever.
 // 05mar26 12:00 v. 1.5 Lux meting in orde gemaakt: I2C pins gewijzigd naar de voorziene pins. Geen errors meer in serial.
@@ -471,6 +471,8 @@ String getJSON() {
          ",\"af\":" + String(home_mode) +
          ",\"ds_count\":" + String(ds_count) +
          ",\"ds_primary\":" + String(ds_primary) +
+         ",\"heap_largest\":" + String(ESP.getMaxAllocHeap()) +
+         ",\"heap_min_ever\":" + String(ESP.getMinFreeHeap()) +
          ds_json +
          "}";
 }
@@ -1097,7 +1099,14 @@ void setup() {
       <table>
         <tr><td class="label">WiFi RSSI</td><td class="value">)rawliteral" + String(WiFi.RSSI()) + " dBm" + R"rawliteral(</td><td class="control"></td></tr>
         <tr><td class="label">WiFi kwaliteit</td><td class="value">)rawliteral" + String(constrain(2 * (WiFi.RSSI() + 100), 0, 100)) + " %" + R"rawliteral(</td><td class="control"></td></tr>
-        <tr><td class="label">Free heap</td><td class="value">)rawliteral" + String((ESP.getFreeHeap() * 100) / ESP.getHeapSize()) + " %" + R"rawliteral(</td><td class="control"></td></tr>
+        <tr><td class="label">Free heap</td><td class="value" id="heap-pct">)rawliteral" + String((ESP.getFreeHeap() * 100) / ESP.getHeapSize()) + " %" + R"rawliteral(</td>
+        <td class="control" id="heap-lb" style="font-size:12px;">)rawliteral" +
+          [&]() -> String {
+            uint32_t lb = ESP.getMaxAllocHeap();
+            const char* col = lb > 35000 ? "#0a0" : lb > 25000 ? "#f80" : "#c00";
+            return String("largest: <b style='color:") + col + "'>" + String(lb/1024) + " KB</b>";
+          }()
+        + R"rawliteral(</td></tr>
       
 
       </table>
@@ -1138,7 +1147,14 @@ function updateValues(){
       else if(lbl.includes("Beam alert")) td.textContent=data.p?"JA":"NEE";
       else if(lbl.includes("WiFi RSSI")) td.textContent=data.v+" dBm";
       else if(lbl.includes("WiFi kwaliteit")) td.textContent=data.w+" %";
-      else if(lbl.includes("Free heap")) td.textContent=data.x+" %";
+      else if(lbl.includes("Free heap")){
+        td.textContent=data.x+" %";
+        var lb=data.heap_largest||0;
+        var lbKB=Math.round(lb/1024);
+        var col=lb>35000?"#0a0":lb>25000?"#f80":"#c00";
+        var detail=document.getElementById("heap-lb");
+        if(detail) detail.innerHTML="largest: <b style='color:"+col+"'>"+lbKB+" KB</b>";
+      }
       else if(lbl.includes("Pixel")){
         const idx=parseInt(lbl.match(/\d+/)[0]);
         if(idx===0) td.textContent=data.m?"On":"Off";
