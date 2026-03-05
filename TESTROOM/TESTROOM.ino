@@ -1932,16 +1932,14 @@ void loop() {
 
   // Thermostaat pinlezing + verwarmingslogica — buiten 60s-gate voor snelle respons
   tstat_on = !digitalRead(TSTAT_PIN);
-  {
-    float effective_setpoint = max((float)heating_setpoint, dew + dew_safety_margin);
-    if (heating_mode == 1) {  // MANUEEL
-      heating_on = 1;
-    } else {  // AUTO
-      if (home_mode == 1 && tstat_enabled) {  // Thuis + thermostaat aanwezig → volg hardware
-        heating_on = tstat_on;
-      } else {  // Thuis zonder thermostaat, of Weg → ESP regelt met anti-condens bescherming
-        heating_on = (room_temp < (effective_setpoint - 0.5f)) ? 1 : 0;
-      }
+  float effective_setpoint = max((float)heating_setpoint, dew + dew_safety_margin);
+  if (heating_mode == 1) {  // MANUEEL
+    heating_on = 1;
+  } else {  // AUTO
+    if (home_mode == 1 && tstat_enabled) {  // Thuis + thermostaat aanwezig → volg hardware
+      heating_on = tstat_on;
+    } else {  // Thuis zonder thermostaat, of Weg → ESP regelt met anti-condens bescherming
+      heating_on = (room_temp < (effective_setpoint - 0.5f)) ? 1 : 0;
     }
   }
 
