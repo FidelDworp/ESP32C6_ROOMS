@@ -2,6 +2,7 @@
 // Developed by Filip Delannoy in december '25.
 // Bereikbaar op (bijvb) http://eetplaats.local of http://192.168.0.80 => Andere controller: Naam (sectie DNS/MDNS) + static IP aanpassen!
 
+// 05mar26 12:00 v. 1.5 Lux meting in orde gemaakt: I2C pins gewijzigd naar de voorziene pins. Geen errors meer in serial.
 // 04mar26 12:00 v. 1.4 Lichter gemaakt en vereenvoudigd om heap size maximaal te maken voor matter integratie. (25 => 67% over!)
 // 27feb26 17:30 v. 1.3 C6 compatibel: OneWireNg, pin updates, multi DS18B20 discovery + rescan + /config page expanded & simplified textboxes (Claude)
 // 26feb26 19:00 v. 1.2 Fixed IP geintroduceerd. Set zoals in tabel op google drive: vb: EETPL	(Mac = 58:8C:81:32:2F:48)	=> IP = 192.168.0.80
@@ -12,9 +13,7 @@
 // 13jan26 20:00 MAC address toegevoegd om Static IP adres in router te kunnen vastleggen.
 
 // Volgende opdrachten voor Grok of chatGPT: 
-//                1) Captive portal en gans factory reset proces verbeteren! Thuis testen! Werkt nog niet goed...
-//                2) Correcte serial monitor logging bij opstarten...
-//                3) Nicknames voor sensors die in Matter gebruikt worden: Standaard = Roomname+Sensor, Option: Make own nickname. (zoals de pixels)
+//                1) Nicknames voor sensors die in Matter gebruikt worden: Standaard = Roomname+Sensor, Option: Make own nickname. (zoals de pixels)
 
 
 #include <WiFi.h>
@@ -693,11 +692,14 @@ void setup() {
   pinMode(TSTAT_PIN, INPUT_PULLUP);
   pinMode(OPTION_LDR, INPUT);
 
-
+  // TSL2561:
   dht.begin();
-  if (!tsl.begin()) Serial.println("TSL2561 niet gevonden");
-  tsl.enableAutoRange(true);
-  tsl.setIntegrationTime(TSL2561_INTEGRATIONTIME_13MS);
+  if (sun_light_enabled) {
+    Wire.begin(13, 11);  // SDA=IO13, SCL=IO11
+    if (!tsl.begin()) Serial.println("TSL2561 niet gevonden");
+    tsl.enableAutoRange(true);
+    tsl.setIntegrationTime(TSL2561_INTEGRATIONTIME_13MS);
+  }
 
   // DS18B20: laad uit NVS of scan bij eerste boot
   if (ds_count == 0 && preferences.getInt(NVS_DS_COUNT, 0) == 0) {
@@ -1908,7 +1910,11 @@ void loop() {
   temp_dht = dht.readTemperature();
   dew = calculateDewPoint(temp_dht, humi);
   readDS18B20temps();  // Lees alle DS18B20 sensoren → temp_ds = primaire sensor
-  sensors_event_t e; tsl.getEvent(&e); sun_light = (int)e.light;
+  
+  if (sun_light_enabled) {
+    sensors_event_t e; tsl.getEvent(&e); sun_light = (int)e.light;
+  }
+  
   light_ldr = scaleLDR(analogRead(LDR_ANALOG));
   dust = readDust();
   co2 = readCO2();
