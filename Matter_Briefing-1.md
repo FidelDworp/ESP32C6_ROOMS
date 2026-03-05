@@ -1,4 +1,23 @@
-# Zarlar Matter Integratie — Briefing voor nieuw gesprek - 27feb26
+Lees dit eerst: Dit is een document dat in verschillende stappen is gegroeid: 
+
+Deel 1: Achtergrond voor de eerste matter integratie.
+
+Dit bevat instructies en info voor we de eerste matter integratie deden voor de drie sketches. Het resultaat was dat de matter versie van mijn eenvoudigste sketch (ECO-boiler) sketch vrij goed draait en stabiel genoeg is, zowel in de UI als op apple home.
+De andere twee daarentegen (TESTROOM en HVAC) werken beide vrij goed zowel in de UI als in apple home, maar de heap is te klein. Dat resulteert in weinig betrouwbare werking van de UI. Ook werden door problemen met de Claude tools enkele essentiele stukken functionaliteit beschadigd of weggelaten. Dit is een ramp! 
+
+Deel 2:  Instructies voor de tweede grondigere poging tot matter integratie met maximale heap. (= vanaf "HANDOVER DOCUMENT — Matter Integratie to do!"
+
+Omwille van bovenstaande problemen werd besloten om een stap terug te nemen en opnieuw te beginnen vanaf de basisversies zonder matter, en te proberen van die sketches eerst opnieuw te testen en te verbeteren, vooral op gebied van free heap.
+
+Ik geef voor een nieuw gesprek aan Claude dus telkens 3 documenten mee:
+
+1) Dit complete briefing document (met de 2 delen)
+2) De huidige versie van sketch zonder matter, als vertrekpunt om stap voor stap matter toe te voegen en de heap evolutie te evalueren.
+3) De vorige matter sketch om te leren hoe we dit deden, niet klakkeloos over te nemen.
+
+----------------
+
+# Matter Integratie — Briefing voor nieuw gesprek - 05mar26
 
 ## Context
 Filip Delannoy, thuisautomatisering "Zarlar" in Zarlardinge (BE).
@@ -410,3 +429,243 @@ Doe dit via USB, niet via OTA — het is een nieuwe partitietabel, die kan niet 
 Eerst enkel de read-only sensoren valideren in HomeKit, daarna de callbacks testen, dan factory reset scenario's doorlopen — vóór je het op een productie-room zet.
 
 Eén aandachtspunt: als je de huidige TESTROOM op dit apparaat al gepaard had met een eerder Matter experiment, typ dan eerst `reset-matter` in de serial monitor vóór je koppelt.
+
+-------------
+
+## HANDOVER DOCUMENT — Matter Integratie to do! (5mar26)
+
+**Bijgewerkt: 5 maart 2026 | Versie 3 — na heap monitoring implementatie**
+
+---
+
+## 1. Controller Status
+
+| Bestand | Status | Versie | Opmerking |
+|---|---|---|---|
+| ESP32-C6_TESTROOM_v3.1 / v1.6 | ✅ Klaar voor SPIFFS | v1.6 (5mar_1600) | Heap monitoring actief, 232 KB largest block |
+| ESP32_HVAC.ino | ⚠️ HTML compressie nodig | v1.6+ | Ventilatie fixes toegepast, white screen slider open |
+| ESP32-C6_MATTER_ROOM.ino | 📁 Referentie | 3mar_2200 | Oude Matter poging — voor herbruik callbacks |
+
+---
+
+## 2. Gemeten Heap Baseline — ROOM v1.6
+
+Gemeten op 5 maart 2026, na WiFi stabilisatie, alle sensoren actief:
+
+| Metric | Waarde | Status |
+|---|---|---|
+| Vrij heap (totaal) | 67% (~339 KB) | ✅ Goed |
+| Largest free block | 232 KB | ✅ 🟢 Uitstekend |
+| Min ever (na boot) | te meten | |
+| Core Debug Level | Default (nog niet None) | ⚠️ Kan 20-30 KB besparen |
+
+---
+
+## 3. Heap Evolutietabel — Integratielog
+
+Na elke stap invullen. **Largest free block is het echte meetcriterium.**
+
+| Stap | Actie | Largest block | Delta | Status |
+|---|---|---|---|---|
+| Baseline | ROOM v1.6 — alle sensoren, WiFi | 232 KB | — | ✅ 5 mrt 2026 |
+| 2a | Core Debug Level = None (IDE) | — KB | — | ⏳ |
+| 2b | SPIFFS migratie — alle pagina's | — KB | — | ⏳ |
+| 2c | RGB kleurkiezer inline (vervangt /neopixel) | — KB | — | ⏳ |
+| 2d | Serial interval instelbaar in /settings | — KB | — | ⏳ |
+| 3.1 | Matter.begin() — geen endpoints | — KB | — | ⏳ |
+| 3.2 | OnOffPlugin (1x) | — KB | — | ⏳ |
+| 3.3 | Thermostat endpoint | — KB | — | ⏳ |
+| 3.4 | ColorLight (RGB) | — KB | — | ⏳ |
+| 3.5 | Temp + Humidity sensoren | — KB | — | ⏳ |
+| 3.6 | CO2 + Lux (fake Temp) | — KB | — | ⏳ |
+| 3.7 | Occupancy MOV1 + MOV2 | — KB | — | ⏳ |
+| 3.8 | pir1_light + pir2_light OnOffLight | — KB | — | ⏳ |
+| 3.9 | Plugins: bed, thuis, pixels_on | — KB | — | ⏳ |
+| EINDE | Alle 13 endpoints actief | — KB | — | ⏳ |
+
+> 🔴 **Stop als largest free block < 25 KB** — evalueer SPIFFS of endpoint-schrapping.
+
+---
+
+## 4. To-Do Basisversie (vóór Github + Matter)
+
+Scope: alleen wat géén Matter is. Na afwerking → commit naar Github als veilige basis.
+
+### 4.1 Core Debug Level = None
+
+Instelling in Arduino IDE: **Tools → Core Debug Level → None**  
+Besparing: 20-30 KB — grootste gratis winst, kost nul code.
+
+**⚠️ Herinnering in sketch header — voeg toe bovenaan .ino:**
+
+```cpp
+// ============================================================
+// COMPILATIE-INSTELLINGEN (Arduino IDE → Tools)
+// Board:            ESP32-C6 Dev Module
+// Partition:        Huge App (3MB no OTA / 1MB SPIFFS)  ← VEREIST
+// Core Debug Level: None                                ← HEAP BESPARING
+// Na firmware flash: Tools → ESP32 Sketch Data Upload   ← SPIFFS DATA
+// ============================================================
+```
+
+### 4.2 SPIFFS Migratie — alle pagina's
+
+Bestanden in `/data/` map naast `.ino` plaatsen. Voordeel: **~27 KB heap vrijgemaakt.**
+
+> ⚠️ Na elke firmware flash ook **Tools → ESP32 Sketch Data Upload** uitvoeren!
+
+| Pagina | Route | Huidige heap | Na SPIFFS | Aanpak |
+|---|---|---|---|---|
+| Hoofdpagina | `/` | ~12 KB | 0 KB | Volledig statisch — data via `/json` |
+| NeoPixel picker | `/neopixel` | ~5 KB | 0 KB | Vervalt — kleurkiezer inline op `/` |
+| OTA Update | `/update` | ~2 KB | 0 KB | Volledig statisch |
+| /settings | `/settings` | ~10 KB | ~2 KB | Statisch skelet in SPIFFS, dynamisch deel via `/json_settings` |
+| **Totaal** | | **~29 KB** | **~2 KB** | **~27 KB vrijgemaakt** |
+
+Settings pagina dynamisch deel via `fetch('/json_settings')` bij page load.  
+Velden: `room_id`, pixel nicknames, DS18B20 sensor namen, `serial_interval`.
+
+### 4.3 RGB Kleurkiezer inline op statuspagina
+
+Aparte `/neopixel` pagina verdwijnt. Kleurkiezer komt onder de 'Pixel RGB' rij in de tabel.
+
+- Native `<input type="color">` — compact, werkt op iOS/Android
+- `/neopixel` route blijft als redirect naar `/` voor bestaande bookmarks
+- Winst: ~5 KB heap + één handler minder
+
+### 4.4 Serial Logging Interval instelbaar via /settings
+
+Huidig: hardcoded 15s. Nieuw: instelbaar in /settings UI, opgeslagen in NVS/Preferences.
+
+- Variabele: `serial_interval` (int, seconden)
+- Bereik: 5s – 300s, default 15s
+- Veld toevoegen aan `/json_settings` response
+- Settings pagina: numeriek inputveld met label
+
+---
+
+## 5. Reeds Gedaan in Basisversie
+
+| Item | Versie | Status | Opmerking |
+|---|---|---|---|
+| HTML compressie (reserve + gzip-like) | v3.1 | ✅ | Heap van ~50% naar 67% |
+| TSL2561 init conditioneel op `sun_light_enabled` | v3.1 | ✅ | Geen crash bij uitgeschakelde sensor |
+| Serial logging interval 15s | v3.1 | ✅ | Was 3s, gecorrigeerd |
+| Heap monitoring op statuspagina | v1.6 | ✅ | Largest block + kleurcode, `/json` uitgebreid |
+| I2C pin fix TSL2561 | v1.6 | ✅ | SDA=GPIO6, SCL=GPIO7 correct |
+| CO2 sensor 5V power geïdentificeerd | — | 📋 | Hardware fix nodig, niet code |
+
+---
+
+## 6. Matter Integratie — Volgorde (ROOM)
+
+> Pas starten **nadat** basisversie naar Github gepusht is en hernoemd naar `ESP32-C6_ROOM_MATTER_5mar_hhhh.ino`
+
+| Stap | Actie | Type | Heap verwacht |
+|---|---|---|---|
+| 3.1 | Matter.begin() — nul endpoints, meten | Matter baseline | −130 KB verwacht |
+| 3.2 | OnOffPlugin (1x) — meten | Licht | −3-5 KB |
+| 3.3 | Thermostat endpoint — meten | Zwaarste! | −25 KB verwacht |
+| 3.4 | ColorLight (RGB) endpoint — meten | Zwaar | −15 KB verwacht |
+| 3.5 | Temp + Humidity sensoren — meten | Licht | −4-6 KB |
+| 3.6 | CO2 + Lux (fake TemperatureSensor) — meten | Conditioneel | −2-3 KB elk |
+| 3.7 | Occupancy MOV1 + MOV2 — meten | Licht | −3-4 KB elk |
+| 3.8 | pir1_light + pir2_light OnOffLight — meten | Bidirectioneel | −5 KB elk |
+| 3.9 | Plugins: bed, thuis, pixels_on — meten | Licht | −3-5 KB elk |
+
+Na elke stap: largest free block invullen in tabel §3. Stop bij < 25 KB.
+
+---
+
+## 7. Matter Endpoints — ROOM (definitief)
+
+| Naam | Type | Conditioneel | Gedrag |
+|---|---|---|---|
+| matter_temp | TemperatureSensor | Nee | room_temp (DS18B20 primair) |
+| matter_humidity | HumiditySensor | Nee | humi (DHT22) |
+| matter_thermostat | Thermostat | Nee | setpoint lezen/schrijven |
+| matter_co2 | TemperatureSensor (fake) | co2_enabled | ppm ÷ 100 als °C |
+| matter_lux | TemperatureSensor (fake) | sun_light_enabled | lux ÷ 10 als °C |
+| matter_motion1 | OccupancySensor | Nee | MOV1 PIR |
+| matter_motion2 | OccupancySensor | mov2_enabled && pixels_num > 1 | MOV2 PIR |
+| matter_pir1_light | OnOffLight | Nee | AAN = pixel_mode[0]=1 (manueel), UIT = auto/PIR |
+| matter_pir2_light | OnOffLight | pixels_num > 1 | AAN = pixel_mode[1]=1, UIT = auto/PIR |
+| matter_pixels_rgb | ColorLight | Nee | RGB kleur alle pixels |
+| matter_pixels_on | OnOffPlugin | Nee | Pixels 2+ aan/uit (groep) |
+| matter_bed | OnOffPlugin | Nee | Bed schakelaar |
+| matter_thuis | OnOffPlugin | Nee | Thuis/Uit modus |
+
+Totaal: 10 vaste + max 3 conditionele = **max 13 endpoints**
+
+---
+
+## 8. Technische Referentie
+
+### 8.1 Kritische lessen
+
+- `Matter.begin()` returns void — geen `if(Matter.begin())` gebruiken
+- `F("text")` + String concatenatie is illegaal — plain string literals gebruiken
+- Blocking `while(!Matter.isDeviceCommissioned())` — altijd timeout toevoegen
+- `html.reserve()` vóór alle `+=` — voorkomt realloc fragmentatie
+- 12 Matter endpoints = praktische limiet op ESP32-C6 met volledige web UI
+- Scenes cluster: **AAN** laten (~10-15 KB, nodig voor Apple Home scenes)
+- Groups cluster: **UIT** — Apple Home gebruikt controller-side grouping
+
+### 8.2 Matter auto-recovery (defer tot Matter-versie)
+
+Patroon uit HVAC v1.6 — overnemen bij stap 3.1:
+
+```cpp
+Matter.begin(); delay(200);
+if (!Matter.isDeviceCommissioned() && Matter.getManualPairingCode().length() < 5) {
+  // Auto-erase corrupt NVS + restart
+}
+```
+
+### 8.3 Reporting aanpak
+
+- Altijd push vanuit `loop()` — geen automatische Matter reporting timers
+- Centrale `update_matter()` functie, interval 5-10 sec via `millis()`
+- Geen min/max interval reporting activeren
+
+### 8.4 Heap drempelwaarden
+
+| Largest block | Status | Actie |
+|---|---|---|
+| > 35 KB | 🟢 Comfortabel | Geen actie |
+| 25-35 KB | 🟡 Werkbaar | Nauwlettend opvolgen |
+| < 25 KB | 🔴 Instabiel | **STOP** — evalueer SPIFFS of endpoint-schrapping |
+
+---
+
+## 9. HVAC Controller — Openstaande Issues
+
+| Prio | Issue | Actie |
+|---|---|---|
+| P1 | White screen op iPhone bij ventilatieslider | HTML compressie — zelfde aanpak als ROOM v3.1 |
+| P1 | SPIFFS migratie hoofdpagina | Vóór nieuwe Matter tests |
+| P2 | Heap monitoring toevoegen | Zelfde implementatie als ROOM v1.6 |
+
+HVAC Matter endpoints zijn reeds werkend in v1.6 — zie vorig document voor volledige lijst.
+
+---
+
+## 10. Workflow — Nieuw Gesprek Starten
+
+### Upload bestanden
+
+| Bestand | Rol |
+|---|---|
+| `ESP32-C6_TESTROOM_5mar_1600.ino` (v1.6) | Huidige basisversie — startpunt optimalisatie |
+| `ESP32-C6_MATTER_ROOM_3mar_2200.ino` | Matter referentie — callbacks hergebruiken |
+| Dit handover document (v3) | Volledige context |
+
+### Eerste opdracht voor nieuw gesprek
+
+1. Header comment toevoegen met compilatie-instellingen
+2. SPIFFS migratie — alle pagina's (`/`, `/neopixel`, `/update`, `/settings` skelet)
+3. RGB kleurkiezer inline op statuspagina
+4. Serial interval instelbaar in `/settings`
+5. Heap meten → invullen in tabel §3 → commit naar Github
+6. Kopie hernoemen → Matter integratie beginnen
+
