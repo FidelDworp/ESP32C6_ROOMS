@@ -2,6 +2,7 @@
 // Developed by Filip Delannoy in december '25.
 // Bereikbaar op (bijvb) http://eetplaats.local of http://192.168.0.80 => Andere controller: Naam (sectie DNS/MDNS) + static IP aanpassen!
 
+// 05mar26 18:00 v. 1.8 Serial interval instelbaar in /settings (5-30s), direct actief zonder reboot.
 // 05mar26 17:30 v. 1.7 WDT-crash fixes: DS18B20 async (geen delay(750) meer), CO2 read bewaakt met if(co2_enabled). Default co2_enabled=false.
 // 05mar26 16:00 v. 1.6 Heap monitoring op statuspagina: largest free block + kleurcode. /json uitgebreid met heap_largest + heap_min_ever.
 // 05mar26 12:00 v. 1.5 Lux meting in orde gemaakt: I2C pins gewijzigd naar de voorziene pins. Geen errors meer in serial.
@@ -9,9 +10,13 @@
 // 27feb26 17:30 v. 1.3 C6 compatibel: OneWireNg, pin updates, multi DS18B20 discovery + rescan + /config page expanded & simplified textboxes (Claude)
 // 26feb26 19:00 v. 1.2 Fixed IP geintroduceerd. Set zoals in tabel op google drive: vb: EETPL	(Mac = 58:8C:81:32:2F:48)	=> IP = 192.168.0.80
 // 21dec25 23:00 v. 1.1 Pixel nicknames werken VOLLEDIG in /settings en in / (hoofdpagina)! Ga terug naar deze versie als je vastloopt!
-//
+// 22dec25 18:00 Captive portal geimplementeerd en gans factory reset proces verbeterd! Thuis getest, werkt nog niet.
+// 02jan26 21:00 Pixels persistent gemaakt! (voor Mireille) De UI labels van pixel 0 & 1 worden niet geupdated, tenzij ze refreshed worden! Noch ChatGPT noch Grok slaagden erin dit betrouwbaar op te lossen zonder nevenschade. Laat dit zo!
+// 12jan26 20:00 Endpoint voor JSON string veranderd van /status.json => /json zoals de andere controllers.
+// 13jan26 20:00 MAC address toegevoegd om Static IP adres in router te kunnen vastleggen.
+
 // Volgende opdrachten voor Grok of chatGPT: 
-// 1) Nicknames voor sensors die in Matter gebruikt worden: Standaard = Roomname+Sensor, Option: Make own nickname. (zoals de pixels)
+//                1) Nicknames voor sensors die in Matter gebruikt worden: Standaard = Roomname+Sensor, Option: Make own nickname. (zoals de pixels)
 
 
 #include <WiFi.h>
@@ -72,6 +77,7 @@ const char* NVS_NEO_B               = "neo_b";
 const char* NVS_PIXELS_NUM          = "pixels_num";
 const char* NVS_BED_STATE           = "bed_state";       // bool: bed AAN/UIT
 const char* NVS_SERIAL_VERBOSE      = "serial_verbose";  // bool: statusrapport aan/uit
+const char* NVS_SERIAL_INTERVAL     = "serial_intv";     // int: interval serial rapport in seconden
 const char* NVS_CURRENT_SETPOINT    = "curr_setpoint";   // int: huidige gekozen temperatuur
 const char* NVS_FADE_DURATION       = "fade_duration";   // int: dim-snelheid in seconden (1-10)
 const char* NVS_HOME_MODE_STATE     = "home_mode_state"; // int: 0 = Uit, 1 = Thuis
@@ -126,6 +132,7 @@ bool mov2_enabled  = true;
 bool tstat_enabled = true;
 bool beam_enabled  = true;
 bool serial_verbose = true;   // Statusrapport elke 15s via serial
+int  serial_interval = 15;   // v1.8: interval serial rapport in seconden (instelbaar in /settings, 5-30s)
 int pixels_num     = 8;     // Default. Configureerbaar via NVS (1-30)
 int num_mov_pixels = 2;     // Wordt in setup() aangepast op basis van mov2_enabled
 
@@ -606,6 +613,7 @@ void setup() {
   tstat_enabled    = preferences.getBool(NVS_TSTAT_ENABLED, true);
   beam_enabled     = preferences.getBool(NVS_BEAM_ENABLED, true);
   serial_verbose   = preferences.getBool(NVS_SERIAL_VERBOSE, true);
+  serial_interval  = constrain(preferences.getInt(NVS_SERIAL_INTERVAL, 15), 5, 30);
   neo_r = preferences.getUChar(NVS_NEO_R, 255);
   neo_g = preferences.getUChar(NVS_NEO_G, 255);
   neo_b = preferences.getUChar(NVS_NEO_B, 255);
@@ -1506,6 +1514,7 @@ input[type=text],input[type=password],input[type=number],select{width:100%;paddi
       </td></tr>
       <tr><td class="lbl">Serial logging</td><td class="inp">
         <label><input type="checkbox" name="serial_verbose")rawliteral" + String(serial_verbose ? " checked" : "") + R"rawliteral(> Aan</label>
+        &nbsp;&nbsp;interval: <input type="number" name="serial_interval" min="5" max="30" value=")rawliteral" + String(serial_interval) + R"rawliteral(" style="width:50px;"> s
       </td></tr>
     </table>)rawliteral";
 
@@ -1578,6 +1587,8 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
   preferences.putBool(NVS_TSTAT_ENABLED, request->hasArg("tstat"));
   preferences.putBool(NVS_BEAM_ENABLED, request->hasArg("beam"));
   preferences.putBool(NVS_SERIAL_VERBOSE, request->hasArg("serial_verbose"));
+  preferences.putInt(NVS_SERIAL_INTERVAL, constrain(arg("serial_interval","15").toInt(), 5, 30));
+  serial_interval = constrain(arg("serial_interval","15").toInt(), 5, 30); // direct actief, geen reboot nodig
 
   // NeoPixels
 
@@ -1981,7 +1992,7 @@ void loop() {
 
 
   // Serial rapport (elke 15s, alleen als serial_verbose aan)
-    if (serial_verbose && !ap_mode_active && millis() - lastSerial > 15000) {
+    if (serial_verbose && !ap_mode_active && millis() - lastSerial > (unsigned long)(serial_interval * 1000)) {
     lastSerial = millis();
 
     String upper_room = room_id;           // Kopieer de room_id
