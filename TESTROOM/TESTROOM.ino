@@ -2,6 +2,7 @@
 // Developed by Filip Delannoy in december '25.
 // Bereikbaar op (bijvb) http://eetplaats.local of http://192.168.0.80 => Andere controller: Naam (sectie DNS/MDNS) + static IP aanpassen!
 
+// 05mar26 22:00 v. 2.3 btStop() (BLE uitschakelen) teruggedraaid — veroorzaakte fragmentatie op C6. Heap-rapport behouden aan einde setup().
 // 05mar26 21:30 v. 2.2 RGB kleurkiezer inline op statuspagina (vervangt aparte /neopixel pagina). /neopixel redirect naar /.
 // 05mar26 20:30 v. 2.1 DS18B20: CONVERT_ALL broadcast (minder interrupt-blocking), leesfrequentie 2s→60s (zelfde als ECO/HVAC). Verwarmingslogica: tstat_enabled gerespecteerd, logica buiten 60s-gate voor snelle respons.
 // 05mar26 19:30 v. 2.0 Teruggedraaid: DS18B20 async + esp_int_wdt_deinit verwijderd (veroorzaakten instabiliteit). Enkel echte fixes behouden: CO2/dust guards, serial interval, heap monitoring, MAC in settings.
@@ -1681,7 +1682,10 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
 
 
   server.begin();
-  Serial.printf("HTTP server gestart – http://%s.local of http://%s\n", mdns_name.c_str(), WiFi.localIP().toString().c_str());
+  Serial.printf("HTTP server gestart op http://%s\n", WiFi.localIP().toString().c_str());
+  Serial.printf("\n=== Setup klaar ===\n");
+  Serial.printf("Free heap     : %d%% (%d bytes)\n", (ESP.getFreeHeap() * 100) / ESP.getHeapSize(), ESP.getFreeHeap());
+  Serial.printf("Largest block : %d KB\n", ESP.getMaxAllocHeap() / 1024);
 }
 
 unsigned long lastSerial = 0;
