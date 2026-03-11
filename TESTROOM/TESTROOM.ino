@@ -2,7 +2,10 @@
 // Developed by Filip Delannoy in december '25.
 // Bereikbaar op (bijvb) http://eetplaats.local of http://192.168.0.80 => Andere controller: Naam (sectie DNS/MDNS) + static IP aanpassen!
 
-// 05mar26 22:00 v. 2.3 btStop() (BLE uitschakelen) teruggedraaid — veroorzaakte fragmentatie op C6. Heap-rapport behouden aan einde setup().
+// 11mar26 v2.4  8 fixes: getJSON reserve(800), kleurkiezer oninput→onchange, first_boot co2/dust default false,
+//               num_mov_pixels shadowing fix, rescan_ds async-safe (vlag), DS18B20 CRC-validatie,
+//               crash-logging NVS (heap-bewaking + weergave in /settings + wis-knop), WiFi reconnect, printf typo.
+// 05mar26 22:00 v. 2.3 btStop() teruggedraaid — veroorzaakte fragmentatie op C6. Heap-rapport behouden aan einde setup().
 // 05mar26 21:30 v. 2.2 RGB kleurkiezer inline op statuspagina (vervangt aparte /neopixel pagina). /neopixel redirect naar /.
 // 05mar26 20:30 v. 2.1 DS18B20: CONVERT_ALL broadcast (minder interrupt-blocking), leesfrequentie 2s→60s (zelfde als ECO/HVAC). Verwarmingslogica: tstat_enabled gerespecteerd, logica buiten 60s-gate voor snelle respons.
 // 05mar26 19:30 v. 2.0 Teruggedraaid: DS18B20 async + esp_int_wdt_deinit verwijderd (veroorzaakten instabiliteit). Enkel echte fixes behouden: CO2/dust guards, serial interval, heap monitoring, MAC in settings.
@@ -150,6 +153,7 @@ const byte DNS_PORT = 53;
 
 bool mdns_running = false;
 wl_status_t last_wifi_status = WL_IDLE_STATUS;
+bool rescan_ds_requested = false;  // v2.4 FIX 5: vlag voor async-safe rescan vanuit loop()
 
 
 
@@ -390,6 +394,15 @@ void readDS18B20temps() {
     uint8_t data[9];
     for (int j = 0; j < 9; j++) data[j] = ow.touchByte(0xFF);
 
+    // v2.4 FIX 6: CRC-validatie — byte 8 is CRC over bytes 0–7.
+    // Zonder CRC levert een 1-Wire glitch temperaturen van -127°C of 850°C op
+    // die downstream (verwarming, dauwpunt, fallback) fout aansturen.
+    uint8_t crc = OneWireNg::crc8(data, 8);
+    if (crc != data[8]) {
+      Serial.printf("[DS18B20] CRC fout sensor %d — gemeten waarde genegeerd\n", i);
+      continue;  // Bewaar vorige waarde — beter dan fout getal gebruiken
+    }
+
     int16_t raw = (int16_t)((data[1] << 8) | data[0]);
     float t = raw / 16.0f;
     if (t >= -55.0f && t <= 125.0f) temp_ds_arr[i] = t;
@@ -424,6 +437,9 @@ void handleSerialCommands() {
 
 String getJSON() {
   String pixel_on_str = "";
+  // v2.4 FIX 1: reserve() voorkomt heap-realloc bij elke /json aanvraag (elke 3s)
+  // Zonder reserve doet elke += een potentiële realloc op een gesegmenteerde heap
+  pixel_on_str.reserve(32);
   String pixel_mode_str = String(pixel_mode[0]) + String(pixel_mode[1]);
 
   for (int i = 0; i < pixels_num; i++) {
@@ -436,7 +452,9 @@ String getJSON() {
     ds_json += ",\"ds" + String(i) + "\":" + String(temp_ds_arr[i], 1);
   }
 
-  return "{\"a\":" + String(co2) +
+  String out;
+  out.reserve(800);  // v2.4 FIX 1: JSON is ~650-750 bytes, reserve voorkomt realloc-cascade
+  out = "{\"a\":" + String(co2) +
          ",\"b\":" + String(dust) +
          ",\"c\":" + String(dew,1) +
          ",\"d\":" + String((int)round(humi)) +
@@ -468,12 +486,13 @@ String getJSON() {
          ",\"ad\":\"" + pixel_on_str + "\"" +
          ",\"ae\":\"" + pixel_mode_str + "\"" +
          ",\"af\":" + String(home_mode) +
-         ",\"ag\":" + String(ds_count) +
+  out += ",\"ag\":" + String(ds_count) +
          ",\"ah\":" + String(ds_primary) +
          ",\"ai\":" + String(ESP.getMaxAllocHeap()) +
          ",\"aj\":" + String(ESP.getMinFreeHeap()) +
          ds_json +
          "}";
+  return out;
 }
 
 
@@ -504,7 +523,21 @@ void setup() {
   Serial.begin(115200);
   delay(1500);
   while (Serial.available()) Serial.read();  // flush
-  Serial.println("\n\n=== ROOM Controller v3.1 ===");
+  Serial.println("\n\n=== ROOM Controller v2.4 ===");
+
+  // v2.4 FIX 7: Crash-logging — lees vorige crash uit NVS bij elke boot
+  {
+    Preferences crashPrefs;
+    crashPrefs.begin("crash-log", true);  // read-only
+    String lastCrash  = crashPrefs.getString("reason", "geen");
+    uint32_t crashCnt = crashPrefs.getUInt("count", 0);
+    crashPrefs.end();
+    if (crashCnt > 0) {
+      Serial.printf("[BOOT] ⚠️  Vorige crash (#%u): %s\n", crashCnt, lastCrash.c_str());
+    } else {
+      Serial.println("[BOOT] Geen crashes geregistreerd.");
+    }
+  }
   Serial.println("Commando's: 'R' = NVS reset, 'reset_nvs', 'status'");
   Serial.println("\nType 'R' binnen 5 sec voor NVS reset...");
   unsigned long boot_start = millis();
@@ -565,8 +598,10 @@ void setup() {
     preferences.putInt(NVS_BEAM_THRESHOLD, 50);
     
     // Alle optionele features default aan
-    preferences.putBool(NVS_CO2_ENABLED, true);
-    preferences.putBool(NVS_DUST_ENABLED, true);
+    // v2.4 FIX 3: co2 en dust default FALSE — veilige default (globale variabelen staan ook op false)
+    // Risico: bij eerste boot met niet-aangesloten sensoren veroorzaakten true-defaults WDT crashes
+    preferences.putBool(NVS_CO2_ENABLED, false);
+    preferences.putBool(NVS_DUST_ENABLED, false);
     preferences.putBool(NVS_SUN_ENABLED, true);
     preferences.putBool(NVS_MOV2_ENABLED, true);
     preferences.putBool(NVS_TSTAT_ENABLED, true);
@@ -610,7 +645,7 @@ void setup() {
   dust_enabled     = preferences.getBool(NVS_DUST_ENABLED, true);
   sun_light_enabled= preferences.getBool(NVS_SUN_ENABLED, true);
   mov2_enabled     = preferences.getBool(NVS_MOV2_ENABLED, true);
-  int num_mov_pixels = 1 + (mov2_enabled ? 1 : 0);  // 1 of 2 MOV-pixels
+  num_mov_pixels = 1 + (mov2_enabled ? 1 : 0);  // v2.4 FIX 4: 'int' verwijderd — was lokale shadowing van globale variabele → globale bleef altijd 2
   tstat_enabled    = preferences.getBool(NVS_TSTAT_ENABLED, true);
   beam_enabled     = preferences.getBool(NVS_BEAM_ENABLED, true);
   serial_verbose   = preferences.getBool(NVS_SERIAL_VERBOSE, true);
@@ -1023,7 +1058,7 @@ void setup() {
 
 
     <tr><td class="label">NeoPixel Kleur</td><td class="value" id="rgb_val">)rawliteral" + String(neo_r) + ", " + String(neo_g) + ", " + String(neo_b) + R"rawliteral(</td>
-      <td class="control"><input type="color" id="colorPicker" value=")rawliteral" + String('#') + (neo_r < 16 ? "0" : "") + String(neo_r, HEX)                   + (neo_g < 16 ? "0" : "") + String(neo_g, HEX)                   + (neo_b < 16 ? "0" : "") + String(neo_b, HEX) + R"rawliteral(" oninput="setNeoColor(this.value)" style="width:48px;height:34px;border:none;cursor:pointer;padding:2px;"></td></tr>
+      <td class="control"><input type="color" id="colorPicker" value=")rawliteral" + String('#') + (neo_r < 16 ? "0" : "") + String(neo_r, HEX)                   + (neo_g < 16 ? "0" : "") + String(neo_g, HEX)                   + (neo_b < 16 ? "0" : "") + String(neo_b, HEX) + R"rawliteral(" onchange="setNeoColor(this.value)" style="width:48px;height:34px;border:none;cursor:pointer;padding:2px;"></td></tr>
     <tr><td class="label">Bed switch</td><td class="value">)rawliteral" + String(bed ? "AAN" : "UIT") + R"rawliteral(</td>
       <td class="control"><form action="/toggle_bed" method="get" onsubmit="event.preventDefault(); submitAjax(this);"><label class="switch"><input type="checkbox" )rawliteral" + (bed ? "checked" : "") + R"rawliteral( onchange="submitAjax(this.form);"><span class="slider-switch"></span></label></form></td></tr>
     <tr><td class="label">Dim snelheid (s)</td><td class="value">)rawliteral" + String(fade_duration) + R"rawliteral(</td>
@@ -1407,6 +1442,25 @@ input[type=text],input[type=password],input[type=number],select{width:100%;paddi
     <form action="/save_settings" method="get" id="sf">
     <table>
       <tr><td class="lbl">MAC adres</td><td class="inp"><code>)rawliteral" + mac_address + R"rawliteral(</code></td></tr>
+      )rawliteral";
+
+  // v2.4 FIX 7: Crash-log weergave in settings
+  {
+    Preferences crashPrefs;
+    crashPrefs.begin("crash-log", true);
+    uint32_t crashCnt = crashPrefs.getUInt("count", 0);
+    String crashReason = crashPrefs.getString("reason", "geen");
+    crashPrefs.end();
+    String crashColor = crashCnt > 0 ? "#c00" : "#0a0";
+    html += "<tr><td class=\"lbl\">Crashteller</td><td class=\"inp\"><b style=\"color:" + crashColor + "\">" + String(crashCnt) + "</b>";
+    if (crashCnt > 0) {
+      html += " &nbsp; <a href=\"/clear_crash_log\" style=\"font-size:12px;color:#369;\" onclick=\"return confirm('Crash-log wissen?');\">Wissen</a>";
+    }
+    html += "</td></tr>";
+    html += "<tr><td class=\"lbl\">Laatste crash</td><td class=\"inp\"><code style=\"font-size:12px;\">" + crashReason + "</code></td></tr>";
+  }
+
+  html += R"rawliteral(
       <tr><td class="lbl">Room naam</td><td class="inp"><input type="text" name="room_id" value=")rawliteral" + room_id + R"rawliteral(" required></td></tr>
       <tr><td class="lbl">WiFi SSID</td><td class="inp"><input type="text" name="wifi_ssid" value=")rawliteral" + wifi_ssid + R"rawliteral(" required></td></tr>
       <tr><td class="lbl">WiFi wachtwoord</td><td class="inp"><input type="password" name="wifi_pass" value=")rawliteral" + wifi_pass + R"rawliteral("></td></tr>
@@ -1586,16 +1640,29 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     ESP.restart();
   });
 
+  // v2.4 FIX 7: Crash-log wissen via webUI
+  server.on("/clear_crash_log", HTTP_GET, [](AsyncWebServerRequest *request) {
+    Preferences crashPrefs;
+    crashPrefs.begin("crash-log", false);
+    crashPrefs.putUInt("count", 0);
+    crashPrefs.putString("reason", "geen");
+    crashPrefs.end();
+    Serial.println("[CRASH-LOG] Gewist via webUI");
+    request->redirect("/settings");
+  });
+
   // === RESCAN DS18B20 BUS (v1.3) ===
+  // v2.4 FIX 5: scanDS18B20() + readDS18B20temps() bevatten delay(750) — NOOIT aanroepen
+  // vanuit een AsyncWebServer handler (blokkeert AsyncTCP-taak 750ms → crashes bij gelijktijdige requests).
+  // Oplossing: vlag zetten, loop() voert de scan uit, response geeft een wacht-pagina die daarna redirect.
   server.on("/rescan_ds", HTTP_GET, [](AsyncWebServerRequest *request) {
-    scanDS18B20();
-    // Lees meteen temperaturen zodat ze zichtbaar zijn in /settings
-    readDS18B20temps();
-    String html = "<h2 style='text-align:center;padding:30px;color:#336699;'>";
-    html += "🔍 Rescan uitgevoerd!<br>";
-    html += String(ds_count) + " sensor(s) gevonden.<br><br>";
-    html += "<a href='/settings' style='color:#336699;'>← Terug naar Settings</a></h2>";
-    request->send(200, "text/html; charset=utf-8", html);
+    rescan_ds_requested = true;
+    request->send(200, "text/html; charset=utf-8",
+      "<h2 style='text-align:center;padding:30px;color:#336699;'>"
+      "🔍 Rescan gestart...<br><br>"
+      "<a href='/settings' style='color:#336699;'>← Terug naar Settings</a>"
+      "</h2>"
+      "<script>setTimeout(()=>location.href='/settings',2500);</script>");
   });
 
 
@@ -1730,6 +1797,12 @@ void loop() {
       Serial.println("mDNS gestopt (WiFi disconnect)");
     }
 
+    // v2.4 FIX 8: WiFi herverbinding — controller herstelt zichzelf na router reboot of tijdelijke storing
+    if (current_status != WL_CONNECTED && !ap_mode_active) {
+      Serial.println("[WiFi] Verbinding verloren — herverbinden...");
+      WiFi.reconnect();
+    }
+
     last_wifi_status = current_status;
   }
 
@@ -1856,9 +1929,33 @@ void loop() {
     }
   }
 
+  // v2.4 FIX 5: Rescan DS18B20 vanuit loop() (async-safe — delay(750) is hier WDT-safe)
+  if (rescan_ds_requested) {
+    rescan_ds_requested = false;
+    scanDS18B20();
+    readDS18B20temps();
+    Serial.printf("[RESCAN] DS18B20: %d sensor(s) gevonden\n", ds_count);
+  }
+
   if (millis() - last_slow < 60000) return;
   last_slow = millis();
   uptime_sec = millis() / 1000;
+
+  // v2.4 FIX 7: Heap-bewaking — schrijf naar NVS als largest block < 25 KB
+  // Zo is er na een crash bewijs van wat er voorafging
+  {
+    uint32_t lb = ESP.getMaxAllocHeap();
+    if (lb < 25000) {
+      Preferences crashPrefs;
+      crashPrefs.begin("crash-log", false);
+      uint32_t cnt = crashPrefs.getUInt("count", 0) + 1;
+      crashPrefs.putUInt("count", cnt);
+      String reason = "heap " + String(lb / 1024) + "KB @ " + String(uptime_sec) + "s";
+      crashPrefs.putString("reason", reason);
+      crashPrefs.end();
+      Serial.printf("[HEAP] ⚠️  Largest block %u KB — crash-log geschreven (#%u)\n", lb / 1024, cnt);
+    }
+  }
 
 
 
@@ -1940,7 +2037,7 @@ void loop() {
     if (co2_enabled) {
       Serial.printf("CO₂                  : %d ppm\n", co2);
     }
-    Serial.printf("Ventilatie snelheid  %         : %d %%\n", vent_percent);
+    Serial.printf("Ventilatie snelheid %%         : %d %%\n", vent_percent);
     Serial.printf("Ventilation mode     : %s\n", vent_mode == 0 ? "AUTO" : "MANUEEL");
     if (sun_light_enabled) {
       Serial.printf("Zonlicht             : %d lux\n", sun_light);
