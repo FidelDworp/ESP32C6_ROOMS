@@ -309,7 +309,7 @@ int LDR_DARK_THRESHOLD = 40;  // Wordt overschreven door NVS waarde
 unsigned long MOV_WINDOW_MS = 60000;  // Wordt overschreven door NVS (in ms)
 
 
-#define MOV_BUF_SIZE 50
+#define MOV_BUF_SIZE 20  // v2.10: 50→20 — 20 triggers/min is ruim voldoende, spaart 240 bytes BSS
 unsigned long mov1Times[MOV_BUF_SIZE] = {0};
 unsigned long mov2Times[MOV_BUF_SIZE] = {0};
 
@@ -649,27 +649,8 @@ const char* getFormattedDateTime() {
 
 
 
-// ============== MATTER HELPER FUNCTIES (v2.9) ==============
-
-// HSV → RGB conversie (Matter stuurt kleur als Hue 0-255, Sat 0-255, Val 0-255)
-// Nodig voor MatterEnhancedColorLight → neo_r/g/b
-void hsvToRgb(uint8_t h, uint8_t s, uint8_t v, uint8_t &r, uint8_t &g, uint8_t &b) {
-  if (s == 0) { r = g = b = v; return; }
-  uint16_t hue = (uint16_t)h * 360 / 255;
-  uint8_t  reg = hue / 60;
-  uint8_t  rem = (hue - reg * 60) * 255 / 60;
-  uint8_t  p   = (uint32_t)v * (255 - s)                            / 255;
-  uint8_t  q   = (uint32_t)v * (255 - ((uint32_t)s * rem)     / 255) / 255;
-  uint8_t  t   = (uint32_t)v * (255 - ((uint32_t)s * (255-rem))/ 255) / 255;
-  switch (reg) {
-    case 0: r=v; g=t; b=p; break;
-    case 1: r=q; g=v; b=p; break;
-    case 2: r=p; g=v; b=t; break;
-    case 3: r=p; g=q; b=v; break;
-    case 4: r=t; g=p; b=v; break;
-    default:r=v; g=p; b=q; break;
-  }
-}
+// ============== MATTER HELPER FUNCTIES (v2.10) ==============
+// hsvToRgb() verwijderd — MatterColorLight doet eigen HSV conversie via HsvColor_t callback
 
 // Push actuele sensorwaarden + schakelaarstaten naar Matter/HomeKit (elke 5s)
 // v2.10: MatterColorLight altijd aan — on/off alleen via SW1/SW2/SW3
@@ -1553,11 +1534,11 @@ void setup() {
       }
       const char* val  = pixel_on[i] ? "On" : "Off";
       const char* chkd = pixel_on[i] ? "checked" : "";
-      char action[32];
+      char action[40];
       if (i == 0 || (i == 1 && mov2_enabled))
-        snprintf(action, sizeof(action), "/toggle_pixel_mode%d", i);
+        snprintf(action, sizeof(action), "/toggle_pixel_mode?idx=%d", i);
       else
-        snprintf(action, sizeof(action), "/toggle_pixel%d", i);
+        snprintf(action, sizeof(action), "/toggle_pixel?idx=%d", i);
       p->printf("<tr><td class=\"label\">%s</td><td class=\"value\">%s</td>"
         "<td class=\"control\"><form action=\"%s\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\"><label class=\"switch\">"
         "<input type=\"checkbox\" %s onchange=\"submitAjax(this.form);\"><span class=\"slider-switch\"></span></label></form></td></tr>",
@@ -1818,38 +1799,26 @@ void setup() {
 
 
 
-// Dynamische toggles voor pixels:
-// Pixel 0  → altijd MODE (MOV1)
-// Pixel 1  → MODE alleen als mov2_enabled
-// Pixel 2+ → altijd ON/OFF
-for (int i = 0; i < pixels_num; i++) {
+// v2.10: N pixel-handlers → 2 universele handlers met ?idx= parameter
+// Spaart (pixels_num - 2) × ~200 bytes handler-heap (bijv. 5 pixels = 3 handlers minder = ~600 bytes)
+// Pad: /toggle_pixel_mode?idx=N  en  /toggle_pixel?idx=N
+server.on("/toggle_pixel_mode", HTTP_GET, [](AsyncWebServerRequest *request) {
+  if (!request->hasParam("idx")) { request->send(400, "text/plain", "idx?"); return; }
+  int i = constrain(request->getParam("idx")->value().toInt(), 0, 1);
+  pixel_mode[i] = 1 - pixel_mode[i];
+  const char* key = (i == 0) ? NVS_PIXEL_MODE_0 : NVS_PIXEL_MODE_1;
+  preferences.putInt(key, pixel_mode[i]);
+  request->send(200, "text/plain", "OK");
+});
 
-  bool is_mode_pixel =
-    (i == 0) ||
-    (i == 1 && mov2_enabled);
-
-  // v2.7: char[] i.p.v. String path — geen heap-alloc bij setup
-  char path[32];
-  if (is_mode_pixel)
-    snprintf(path, sizeof(path), "/toggle_pixel_mode%d", i);
-  else
-    snprintf(path, sizeof(path), "/toggle_pixel%d", i);
-
-  server.on(path, HTTP_GET, [i, is_mode_pixel](AsyncWebServerRequest *request) {
-
-    if (is_mode_pixel) {
-      pixel_mode[i] = 1 - pixel_mode[i];
-      const char* key = (i == 0) ? NVS_PIXEL_MODE_0 : NVS_PIXEL_MODE_1;
-      preferences.putInt(key, pixel_mode[i]);
-    } else {
-      pixel_on[i] = !pixel_on[i];
-      char pokey[24]; snprintf(pokey, sizeof(pokey), "%s%d", NVS_PIXEL_ON_BASE, i);
-      preferences.putBool(pokey, pixel_on[i]);
-    }
-
-    request->send(200, "text/plain", "OK");
-  });
-}
+server.on("/toggle_pixel", HTTP_GET, [](AsyncWebServerRequest *request) {
+  if (!request->hasParam("idx")) { request->send(400, "text/plain", "idx?"); return; }
+  int i = constrain(request->getParam("idx")->value().toInt(), 0, pixels_num - 1);
+  pixel_on[i] = !pixel_on[i];
+  char pokey[24]; snprintf(pokey, sizeof(pokey), "%s%d", NVS_PIXEL_ON_BASE, i);
+  preferences.putBool(pokey, pixel_on[i]);
+  request->send(200, "text/plain", "OK");
+});
 
 
 
@@ -1860,19 +1829,18 @@ for (int i = 0; i < pixels_num; i++) {
     request->redirect("/");  // Kleurkiezer zit nu inline op statuspagina
   });
 
-
-// === CAPTIVE PORTAL HANDLERS ===
-server.on("/hotspot-detect.html", HTTP_GET, [](AsyncWebServerRequest *request) {
-  request->redirect("/settings");
-});
-
-server.on("/generate_204", HTTP_GET, [](AsyncWebServerRequest *request) {
-  request->redirect("/settings");
-});
-
-server.on("/ncsi.txt", HTTP_GET, [](AsyncWebServerRequest *request) {
-  request->redirect("/settings");
-});
+// === CAPTIVE PORTAL HANDLERS — alleen registreren in AP mode (v2.10: heap besparing) ===
+if (ap_mode_active) {
+  server.on("/hotspot-detect.html", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->redirect("/settings");
+  });
+  server.on("/generate_204", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->redirect("/settings");
+  });
+  server.on("/ncsi.txt", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->redirect("/settings");
+  });
+}
 
 // === SETTINGS PAGE - v2.5 AsyncResponseStream ===
 server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
