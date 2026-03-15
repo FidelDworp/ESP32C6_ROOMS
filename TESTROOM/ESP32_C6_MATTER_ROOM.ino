@@ -10,7 +10,14 @@
 //   app1,     app,  ota_1,   0x610000, 0x600000,
 //   spiffs,   data, spiffs,  0xC10000, 0x3F0000,
 //
-// 15mar26 v2.10 Matter fixes:
+// 15mar26 v2.10 Matter fixes + heap-optimalisatie (String → char[]):
+//               pixel_nicknames[30]: String[] → char[30][32] (~1.5KB heap gewonnen)
+//               ds_nicknames[4]: String[] → char[4][48]
+//               room_id, wifi_ssid, wifi_pass, static_ip_str, mac_address: String → char[]
+//               mdns_name volledig verwijderd (ongebruikt na MDNS.begin() verwijdering v2.9)
+//               getFormattedDateTime(): String return → const char* static buf
+//               matterNuclearReset() bk_nick[30]: String[] → char[30][32]
+//               Alle .c_str(), .isEmpty(), .toLowerCase() etc. → char[]-equivalenten
 //               MatterEnhancedColorLight → MatterColorLight (kleurpicker only, altijd aan)
 //               MatterOnOffPlugin → MatterOnOffLight voor SW1/SW2/SW3 (lamp-type → aparte tegels)
 //               HSV callback: espHsvColor_t → HsvColor_t (MatterColorLight API, zoals oude sketch)
@@ -199,14 +206,16 @@ AsyncWebServer server(80);
 
 
 
+
 // Room-specifieke instellingen (worden uit NVS geladen)
-String room_id              = "Testroom";      // Default bij eerste flash
-String mdns_name            = "Testroom";      // Identiek aan room_id
-String wifi_ssid            = "netwerknaam";
-String wifi_pass            = "paswoord";
-String static_ip_str        = "192.168.xx.xx"; // Wordt omgezet naar IPAddress
-String pixel_nicknames[30];                    // Runtime Array voor pixel nicknames
-String mac_address          = "";              // Voor display in settings
+// v2.10: String → char[] (BSS i.p.v. heap) — patroon uit HVAC v1.11
+char room_id[32]           = "Testroom";      // Default bij eerste flash
+// mdns_name verwijderd (v2.10) — ongebruikt na MDNS.begin() verwijdering in v2.9
+char wifi_ssid[64]         = "netwerknaam";
+char wifi_pass[64]         = "paswoord";
+char static_ip_str[20]     = "192.168.xx.xx"; // Wordt omgezet naar IPAddress
+char pixel_nicknames[30][32];                  // v2.10: char[30][32] i.p.v. String[30] — ~1.5KB heap bespaard
+char mac_address[20]       = "";              // Voor display in settings
 
 
 
@@ -276,7 +285,7 @@ uint8_t neo_b = 255;       // Voor u: B waarde (hardcoded 255)
 int ds_count = 0;                          // Aantal gevonden sensoren
 OneWireNg::Id ds_addrs[DS_MAX_SENSORS];    // 8-byte adressen
 float temp_ds_arr[DS_MAX_SENSORS];         // Temperaturen per sensor
-String ds_nicknames[DS_MAX_SENSORS];       // Nicknames per sensor
+char ds_nicknames[DS_MAX_SENSORS][48];     // v2.10: char[4][48] i.p.v. String[4]
 int ds_primary = 0;                        // Index van primaire sensor → room_temp
 
 
@@ -438,13 +447,13 @@ void scanDS18B20() {
     char akey[16]; snprintf(akey, sizeof(akey), "ds_addr_%d", i);
     preferences.putBytes(akey, ds_addrs[i], 8);
     char nkey[16]; snprintf(nkey, sizeof(nkey), "ds_nick_%d", i);
-    if (preferences.getString(nkey, "").isEmpty()) {
-      char defnick[48]; snprintf(defnick, sizeof(defnick), "%s DS %d", room_id.c_str(), i+1);
+    String existing = preferences.getString(nkey, "");
+    if (existing.isEmpty()) {
+      char defnick[48]; snprintf(defnick, sizeof(defnick), "%s DS %d", room_id, i+1);
       preferences.putString(nkey, defnick);
-      ds_nicknames[i] = defnick;
+      strlcpy(ds_nicknames[i], defnick, sizeof(ds_nicknames[i]));
     } else {
-      char fallback[16]; snprintf(fallback, sizeof(fallback), "DS %d", i+1);
-      ds_nicknames[i] = preferences.getString(nkey, fallback);
+      strlcpy(ds_nicknames[i], existing.c_str(), sizeof(ds_nicknames[i]));
     }
   }
   ds_primary = constrain(preferences.getInt(NVS_DS_PRIMARY, 0), 0, max(ds_count - 1, 0));
@@ -458,8 +467,9 @@ void loadDS18B20fromNVS() {
     char akey[16]; snprintf(akey, sizeof(akey), "ds_addr_%d", i);
     preferences.getBytes(akey, ds_addrs[i], 8);
     char nkey[16]; snprintf(nkey, sizeof(nkey), "ds_nick_%d", i);
-    char defnick[48]; snprintf(defnick, sizeof(defnick), "%s DS %d", room_id.c_str(), i+1);
-    ds_nicknames[i] = preferences.getString(nkey, defnick);
+    char defnick[48]; snprintf(defnick, sizeof(defnick), "%s DS %d", room_id, i+1);
+    String tmp = preferences.getString(nkey, defnick);
+    strlcpy(ds_nicknames[i], tmp.c_str(), sizeof(ds_nicknames[i]));
     temp_ds_arr[i] = 0.0;
   }
 }
@@ -621,21 +631,18 @@ const char* getJSON() {
 
 
 
-// Voor date - time stempel
-String getFormattedDateTime() {
+// v2.10: const char* met static buf — geen heap-alloc bij elke aanroep
+const char* getFormattedDateTime() {
+  static char buf[32];
   time_t now;
   time(&now);
-
   if (now < 1700000000) {
     return "tijd nog niet gesynchroniseerd";
   }
-
   struct tm tm;
   localtime_r(&now, &tm);
-
-  char buf[32];
   strftime(buf, sizeof(buf), "%d-%m-%Y %H:%M:%S", &tm);
-  return String(buf);
+  return buf;
 }
 
 
@@ -700,10 +707,11 @@ void matterNuclearReset() {
 
   // Laad alle room-config sleutels die we willen bewaren
   preferences.begin("room-config", true);
-  String bk_room_id      = preferences.getString(NVS_ROOM_ID,          room_id);
-  String bk_ssid         = preferences.getString(NVS_WIFI_SSID,        wifi_ssid);
-  String bk_pass         = preferences.getString(NVS_WIFI_PASS,        wifi_pass);
-  String bk_ip           = preferences.getString(NVS_STATIC_IP,        "");
+  // v2.10: char[] i.p.v. String — geen heap-fragmentatie bij nuclear reset
+  char bk_room_id[32]; { String t = preferences.getString(NVS_ROOM_ID,  room_id);   strlcpy(bk_room_id, t.c_str(), 32); }
+  char bk_ssid[64];    { String t = preferences.getString(NVS_WIFI_SSID, wifi_ssid); strlcpy(bk_ssid,    t.c_str(), 64); }
+  char bk_pass[64];    { String t = preferences.getString(NVS_WIFI_PASS, wifi_pass); strlcpy(bk_pass,    t.c_str(), 64); }
+  char bk_ip[20];      { String t = preferences.getString(NVS_STATIC_IP, "");        strlcpy(bk_ip,      t.c_str(), 20); }
   int    bk_heat_sp      = preferences.getInt   (NVS_HEATING_SETPOINT, 20);
   float  bk_dew_margin   = preferences.getFloat (NVS_DEW_MARGIN,       2.0);
   int    bk_home_mode    = preferences.getInt   (NVS_HOME_MODE,        0);
@@ -724,17 +732,18 @@ void matterNuclearReset() {
   bool   bk_serial_verb  = preferences.getBool  (NVS_SERIAL_VERBOSE,  true);
   int    bk_setpoint     = preferences.getInt   (NVS_CURRENT_SETPOINT,20);
   int    bk_fade         = preferences.getInt   (NVS_FADE_DURATION,   2);
-  // Pixel nicknames (0..29)
-  String bk_nick[30];
+  // Pixel + DS nicknames in char[] — geen 30 String-objecten op heap
+  char bk_nick[30][32];
   for (int i = 0; i < 30; i++) {
     char k[24]; snprintf(k, sizeof(k), "%s%d", NVS_PIXEL_NICK_BASE, i);
-    bk_nick[i] = preferences.getString(k, "");
+    String t = preferences.getString(k, "");
+    strlcpy(bk_nick[i], t.c_str(), 32);
   }
-  // DS18B20 nicknames
-  String bk_ds_nick[DS_MAX_SENSORS];
+  char bk_ds_nick[DS_MAX_SENSORS][48];
   for (int i = 0; i < DS_MAX_SENSORS; i++) {
     char k[16]; snprintf(k, sizeof(k), "ds_nick_%d", i);
-    bk_ds_nick[i] = preferences.getString(k, "");
+    String t = preferences.getString(k, "");
+    strlcpy(bk_ds_nick[i], t.c_str(), 48);
   }
   preferences.end();
   Serial.println(F("  Settings in RAM."));
@@ -774,13 +783,13 @@ void matterNuclearReset() {
   preferences.putInt   (NVS_CURRENT_SETPOINT,bk_setpoint);
   preferences.putInt   (NVS_FADE_DURATION,   bk_fade);
   for (int i = 0; i < 30; i++) {
-    if (!bk_nick[i].isEmpty()) {
+    if (bk_nick[i][0] != '\0') {
       char k[24]; snprintf(k, sizeof(k), "%s%d", NVS_PIXEL_NICK_BASE, i);
       preferences.putString(k, bk_nick[i]);
     }
   }
   for (int i = 0; i < DS_MAX_SENSORS; i++) {
-    if (!bk_ds_nick[i].isEmpty()) {
+    if (bk_ds_nick[i][0] != '\0') {
       char k[16]; snprintf(k, sizeof(k), "ds_nick_%d", i);
       preferences.putString(k, bk_ds_nick[i]);
     }
@@ -804,11 +813,13 @@ void setup() {
   {
     Preferences crashPrefs;
     crashPrefs.begin("crash-log", true);  // read-only
-    String lastCrash  = crashPrefs.getString("reason", "geen");
+    char lastCrash[48];
+    String tmp = crashPrefs.getString("reason", "geen");
+    strlcpy(lastCrash, tmp.c_str(), sizeof(lastCrash));
     uint32_t crashCnt = crashPrefs.getUInt("count", 0);
     crashPrefs.end();
     if (crashCnt > 0) {
-      Serial.printf("[BOOT] ⚠️  Vorige crash (#%u): %s\n", crashCnt, lastCrash.c_str());
+      Serial.printf("[BOOT] ⚠️  Vorige crash (#%u): %s\n", crashCnt, lastCrash);
     } else {
       Serial.println("[BOOT] Geen crashes geregistreerd.");
     }
@@ -872,9 +883,6 @@ void setup() {
     preferences.putInt(NVS_LDR_DARK, 50);
     preferences.putInt(NVS_BEAM_THRESHOLD, 50);
     
-    // Alle optionele features default aan
-    // v2.4 FIX 3: co2 en dust default FALSE — veilige default (globale variabelen staan ook op false)
-    // Risico: bij eerste boot met niet-aangesloten sensoren veroorzaakten true-defaults WDT crashes
     preferences.putBool(NVS_CO2_ENABLED, false);
     preferences.putBool(NVS_DUST_ENABLED, false);
     preferences.putBool(NVS_SUN_ENABLED, true);
@@ -885,27 +893,25 @@ void setup() {
     preferences.putUChar(NVS_NEO_G, 255);
     preferences.putUChar(NVS_NEO_B, 255);
     preferences.putInt(NVS_PIXELS_NUM, 8);
-    // Pixel states defaults: alles uit, modes AUTO
     for (int i = 0; i < 30; i++) {
       char pbkey[24]; snprintf(pbkey, sizeof(pbkey), "%s%d", NVS_PIXEL_ON_BASE, i);
       preferences.putBool(pbkey, false);
     }
-    preferences.putInt(NVS_PIXEL_MODE_0, 0);  // AUTO
-    preferences.putInt(NVS_PIXEL_MODE_1, 0);  // AUTO
-
-
-    
+    preferences.putInt(NVS_PIXEL_MODE_0, 0);
+    preferences.putInt(NVS_PIXEL_MODE_1, 0);
     Serial.println("Defaults opgeslagen in NVS. Configureer via webinterface /settings");
   }
   
-  // Laad alles uit NVS (ook na eerste boot)
-  room_id = preferences.getString(NVS_ROOM_ID, "Testroom");
-    mdns_name = room_id;              // Kopieer room_id
-    mdns_name.toLowerCase();          // Alles lowercase
-    mdns_name.replace(" ", "-");      // Spaties vervangen door -
-  wifi_ssid             = preferences.getString(NVS_WIFI_SSID, "netwerknaam");
-  wifi_pass             = preferences.getString(NVS_WIFI_PASS, "paswoord");
-  static_ip_str         = preferences.getString(NVS_STATIC_IP, "192.168.xx.xx");
+  // Laad alles uit NVS — v2.10: strlcpy naar char[] i.p.v. String=
+  { String tmp = preferences.getString(NVS_ROOM_ID, "Testroom");
+    strlcpy(room_id, tmp.c_str(), sizeof(room_id)); }
+  // mdns_name verwijderd (v2.10) — ongebruikt na MDNS.begin() verwijdering
+  { String tmp = preferences.getString(NVS_WIFI_SSID, "netwerknaam");
+    strlcpy(wifi_ssid, tmp.c_str(), sizeof(wifi_ssid)); }
+  { String tmp = preferences.getString(NVS_WIFI_PASS, "paswoord");
+    strlcpy(wifi_pass, tmp.c_str(), sizeof(wifi_pass)); }
+  { String tmp = preferences.getString(NVS_STATIC_IP, "192.168.xx.xx");
+    strlcpy(static_ip_str, tmp.c_str(), sizeof(static_ip_str)); }
   
   heating_setpoint_default = preferences.getInt(NVS_HEATING_SETPOINT, 20);
   vent_request_default     = preferences.getInt(NVS_VENT_REQUEST, 0);
@@ -933,14 +939,16 @@ void setup() {
 
 
   // === PIXEL NICKNAMES INITIALISEREN ===
+  // v2.10: char[30][32] — geen heap-alloc per nickname
   for (int i = 0; i < 30; i++) {
     char nickkey[24]; snprintf(nickkey, sizeof(nickkey), "%s%d", NVS_PIXEL_NICK_BASE, i);
-    pixel_nicknames[i] = preferences.getString(nickkey, "");
-    
-    // Als leeg (eerste boot of na factory reset) → genereer default
-    if (pixel_nicknames[i].isEmpty()) {
-      pixel_nicknames[i] = room_id + " Pixel " + String(i);
-      preferences.putString(nickkey, pixel_nicknames[i].c_str());
+    String tmp = preferences.getString(nickkey, "");
+    if (tmp.isEmpty()) {
+      // Genereer default nickname
+      snprintf(pixel_nicknames[i], sizeof(pixel_nicknames[i]), "%s Pixel %d", room_id, i);
+      preferences.putString(nickkey, pixel_nicknames[i]);
+    } else {
+      strlcpy(pixel_nicknames[i], tmp.c_str(), sizeof(pixel_nicknames[i]));
     }
   }
   
@@ -967,7 +975,7 @@ void setup() {
 
   // Als aantal pixels gewijzigd is, zorg dat nieuwe pixels een default krijgen
   for (int i = pixels_num; i < 30; i++) {
-    pixel_nicknames[i] = "";  // Niet gebruiken
+    pixel_nicknames[i][0] = '\0';  // Niet gebruiken
   }
 
 
@@ -1005,8 +1013,8 @@ void setup() {
 
 
   
-  Serial.printf("Room ID: %s\n", room_id.c_str());
-  Serial.printf("mDNS naam: %s.local\n", mdns_name.c_str());
+  Serial.printf("Room ID: %s\n", room_id);
+  // mDNS naam niet meer getoond (MDNS verwijderd v2.9)
   
   if (first_boot) {
     Serial.println("Typ 'reset_nvs' in serial monitor voor factory reset");
@@ -1149,11 +1157,11 @@ void setup() {
   // Verbind met WiFi uit NVS
   Serial.print("Verbinden met WiFi SSID: ");
   Serial.println(wifi_ssid);
-  WiFi.begin(wifi_ssid.c_str(), wifi_pass.c_str());
+  WiFi.begin(wifi_ssid, wifi_pass);
 
   // Haal MAC op NA WiFi.begin voor betere compatibiliteit
-  mac_address = WiFi.macAddress();
-  Serial.println("MAC adres: " + mac_address);
+  { String tmp = WiFi.macAddress(); strlcpy(mac_address, tmp.c_str(), sizeof(mac_address)); }
+  Serial.printf("MAC adres: %s\n", mac_address);
 
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 40) {  // 20 seconden timeout
@@ -1173,14 +1181,15 @@ void setup() {
     
     WiFi.mode(WIFI_AP_STA);
     
-    String ap_ssid = "ROOM-" + room_id;           // bijv. ROOM-Testroom
-    WiFi.softAP(ap_ssid.c_str()); // Open AP (geen wachtwoord) voor eenvoudige configuratie
+    char ap_ssid[48];
+    snprintf(ap_ssid, sizeof(ap_ssid), "ROOM-%s", room_id);
+    WiFi.softAP(ap_ssid);
 
     IPAddress ap_ip(192, 168, 4, 1);
     WiFi.softAPConfig(ap_ip, ap_ip, IPAddress(255, 255, 255, 0));
     
     Serial.println("\n=== ACCESS POINT GESTART ===");
-    Serial.printf("SSID: %s\n", ap_ssid.c_str());
+    Serial.printf("SSID: %s\n", ap_ssid);
     Serial.println("Wachtwoord: roomconfig");
     Serial.println("IP: http://192.168.4.1");
     Serial.println("Ga naar http://192.168.4.1/settings om je WiFi in te stellen");
@@ -1535,12 +1544,12 @@ void setup() {
     // Dynamische pixels loop — v2.7: char[] i.p.v. String label/action (geen heap-alloc per pixel)
     for (int i = 0; i < pixels_num; i++) {
       char label[48];
-      if (pixel_nicknames[i].isEmpty()) {
+      if (pixel_nicknames[i][0] == '\0') {
         if      (i == 0)               snprintf(label, sizeof(label), "Pixel %d (MOV1)", i);
         else if (i == 1 && mov2_enabled) snprintf(label, sizeof(label), "Pixel %d (MOV2)", i);
         else                           snprintf(label, sizeof(label), "Pixel %d", i);
       } else {
-        snprintf(label, sizeof(label), "%s", pixel_nicknames[i].c_str());
+        snprintf(label, sizeof(label), "%s", pixel_nicknames[i]);
       }
       const char* val  = pixel_on[i] ? "On" : "Off";
       const char* chkd = pixel_on[i] ? "checked" : "";
@@ -1966,7 +1975,7 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
   p->print(F("<tr><td class=\"lbl\">Pixel namen</td><td class=\"inp\">"));
   for (int i = 0; i < pixels_num; i++) {
     p->printf("<label style=\"display:block;margin:4px 0;\">P%d: <input type=\"text\" name=\"pixel_nick_%d\" value=\"%s\" style=\"width:200px;\"></label>",
-      i, i, pixel_nicknames[i].c_str());
+      i, i, pixel_nicknames[i]);
   }
   p->print(F("</td></tr>"));
 
@@ -2007,12 +2016,12 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     }
     p->printf("<br><label style=\"font-size:13px;\">Nickname: "
       "<input type=\"text\" name=\"ds_nick_%d\" value=\"%s\" style=\"width:180px;margin-top:3px;\"></label></div>",
-      i, ds_nicknames[i].c_str());
+      i, ds_nicknames[i]);
   }
 
   p->print(F("<div style=\"margin:8px 0;\"><label><b>Primaire sensor: </b><select name=\"ds_primary\" style=\"padding:4px;\">"));
   for (int i = 0; i < ds_count; i++) {
-    p->printf("<option value='%d'%s>%s", i, i == ds_primary ? " selected" : "", ds_nicknames[i].c_str());
+    p->printf("<option value='%d'%s>%s", i, i == ds_primary ? " selected" : "", ds_nicknames[i]);
     if (temp_ds_arr[i] != 0.0) p->printf(" (%.1f \xC2\xB0""C)", temp_ds_arr[i]);
     p->print(F("</option>"));
   }
@@ -2039,75 +2048,66 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
 
 // === SAVE SETTINGS ===
 server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
-  auto arg = [&](const char* n, const String& d="") {
-    return request->hasArg(n) ? request->arg(n) : d;
-  };
+  // v2.10: geen String= toewijzing aan globals meer — char[] direct
 
   // Basisinstellingen
-  preferences.putString(NVS_ROOM_ID, arg("room_id", room_id));
-  preferences.putString(NVS_WIFI_SSID, arg("wifi_ssid", wifi_ssid));
-  preferences.putString(NVS_WIFI_PASS, arg("wifi_pass", wifi_pass));
-  preferences.putString(NVS_STATIC_IP, arg("static_ip", ""));
+  preferences.putString(NVS_ROOM_ID,   request->hasArg("room_id")   ? request->arg("room_id").c_str()   : room_id);
+  preferences.putString(NVS_WIFI_SSID, request->hasArg("wifi_ssid") ? request->arg("wifi_ssid").c_str() : wifi_ssid);
+  preferences.putString(NVS_WIFI_PASS, request->hasArg("wifi_pass") ? request->arg("wifi_pass").c_str() : wifi_pass);
+  preferences.putString(NVS_STATIC_IP, request->hasArg("static_ip") ? request->arg("static_ip").c_str() : "");
 
-  preferences.putInt(NVS_HEATING_SETPOINT, arg("heat_sp","20").toInt());
-  preferences.putInt(NVS_VENT_REQUEST, arg("vent_req","0").toInt());
-  preferences.putFloat(NVS_DEW_MARGIN, arg("dew_margin","2.0").toFloat());
-  preferences.putInt(NVS_HOME_MODE, arg("home_mode","0").toInt());
-  preferences.putInt(NVS_LDR_DARK, arg("ldr_dark","50").toInt());
-  preferences.putInt(NVS_BEAM_THRESHOLD, arg("beam_thresh","50").toInt());
+  preferences.putInt(NVS_HEATING_SETPOINT, request->hasArg("heat_sp")        ? request->arg("heat_sp").toInt()        : 20);
+  preferences.putInt(NVS_VENT_REQUEST,     request->hasArg("vent_req")        ? request->arg("vent_req").toInt()       : 0);
+  preferences.putFloat(NVS_DEW_MARGIN,     request->hasArg("dew_margin")      ? request->arg("dew_margin").toFloat()   : 2.0);
+  preferences.putInt(NVS_HOME_MODE,        request->hasArg("home_mode")       ? request->arg("home_mode").toInt()      : 0);
+  preferences.putInt(NVS_LDR_DARK,        request->hasArg("ldr_dark")        ? request->arg("ldr_dark").toInt()       : 50);
+  preferences.putInt(NVS_BEAM_THRESHOLD,  request->hasArg("beam_thresh")      ? request->arg("beam_thresh").toInt()    : 50);
 
-  // Checkboxes betrouwbaar
-  preferences.putBool(NVS_CO2_ENABLED, request->hasArg("co2"));
-  preferences.putBool(NVS_DUST_ENABLED, request->hasArg("dust"));
-  preferences.putBool(NVS_SUN_ENABLED, request->hasArg("sun"));
-  preferences.putBool(NVS_MOV2_ENABLED, request->hasArg("mov2"));
-  preferences.putBool(NVS_TSTAT_ENABLED, request->hasArg("tstat"));
-  preferences.putBool(NVS_BEAM_ENABLED, request->hasArg("beam"));
+  // Checkboxes
+  preferences.putBool(NVS_CO2_ENABLED,    request->hasArg("co2"));
+  preferences.putBool(NVS_DUST_ENABLED,   request->hasArg("dust"));
+  preferences.putBool(NVS_SUN_ENABLED,    request->hasArg("sun"));
+  preferences.putBool(NVS_MOV2_ENABLED,   request->hasArg("mov2"));
+  preferences.putBool(NVS_TSTAT_ENABLED,  request->hasArg("tstat"));
+  preferences.putBool(NVS_BEAM_ENABLED,   request->hasArg("beam"));
   preferences.putBool(NVS_SERIAL_VERBOSE, request->hasArg("serial_verbose"));
-  preferences.putInt(NVS_SERIAL_INTERVAL, constrain(arg("serial_interval","15").toInt(), 5, 30));
-  serial_interval = constrain(arg("serial_interval","15").toInt(), 5, 30); // direct actief, geen reboot nodig
+  int new_interval = request->hasArg("serial_interval") ? constrain(request->arg("serial_interval").toInt(), 5, 30) : 15;
+  preferences.putInt(NVS_SERIAL_INTERVAL, new_interval);
+  serial_interval = new_interval;
 
   // NeoPixels
-
-  // NeoPixels aantal wijzigen + nieuwe pixels resetten naar uit
-  int new_pixels = arg("pixels","8").toInt();
-  new_pixels = constrain(new_pixels, 1, 30);
-  int old_pixels = pixels_num;  // huidige waarde (nog niet herladen, maar we weten het nog niet – wacht, we laden niet her, maar we rebooten toch)
+  int new_pixels = constrain(request->hasArg("pixels") ? request->arg("pixels").toInt() : 8, 1, 30);
+  int old_pixels = pixels_num;
   preferences.putInt(NVS_PIXELS_NUM, new_pixels);
-
-  // Als aantal verhoogd: nieuwe pixels default uit zetten in NVS
   if (new_pixels > old_pixels) {
     for (int i = old_pixels; i < new_pixels; i++) {
       char pbkey[24]; snprintf(pbkey, sizeof(pbkey), "%s%d", NVS_PIXEL_ON_BASE, i);
       preferences.putBool(pbkey, false);
     }
   }
+  preferences.putUChar(NVS_NEO_R, request->hasArg("neo_r") ? request->arg("neo_r").toInt() : 255);
+  preferences.putUChar(NVS_NEO_G, request->hasArg("neo_g") ? request->arg("neo_g").toInt() : 255);
+  preferences.putUChar(NVS_NEO_B, request->hasArg("neo_b") ? request->arg("neo_b").toInt() : 255);
 
-  // NeoPixels kleur bewaren!
-  preferences.putUChar(NVS_NEO_R, arg("neo_r","255").toInt());
-  preferences.putUChar(NVS_NEO_G, arg("neo_g","255").toInt());
-  preferences.putUChar(NVS_NEO_B, arg("neo_b","255").toInt());
-
-
-  // Opslaan pixel nicknames
+  // Pixel nicknames — tijdelijke String voor trim(), dan strlcpy naar char[]
   for (int i = 0; i < 30; i++) {
     char argName[20]; snprintf(argName, sizeof(argName), "pixel_nick_%d", i);
     if (request->hasArg(argName)) {
       String nick = request->arg(argName);
       nick.trim();
-      if (nick.isEmpty()) {
-        char defnick[48]; snprintf(defnick, sizeof(defnick), "%s Pixel %d", room_id.c_str(), i);
-        nick = defnick;
-      }
       char nickkey[24]; snprintf(nickkey, sizeof(nickkey), "%s%d", NVS_PIXEL_NICK_BASE, i);
-      preferences.putString(nickkey, nick.c_str());
-      if (i < pixels_num) {
-        pixel_nicknames[i] = nick;  // Update runtime array
+      if (nick.isEmpty()) {
+        char defnick[48]; snprintf(defnick, sizeof(defnick), "%s Pixel %d", room_id, i);
+        preferences.putString(nickkey, defnick);
+        if (i < pixels_num) strlcpy(pixel_nicknames[i], defnick, sizeof(pixel_nicknames[i]));
+      } else {
+        preferences.putString(nickkey, nick.c_str());
+        if (i < pixels_num) strlcpy(pixel_nicknames[i], nick.c_str(), sizeof(pixel_nicknames[i]));
       }
     }
   }
 
-  // DS18B20 nicknames en primaire sensor opslaan (v1.3)
+  // DS18B20 nicknames
   for (int i = 0; i < DS_MAX_SENSORS; i++) {
     char argName[16]; snprintf(argName, sizeof(argName), "ds_nick_%d", i);
     if (request->hasArg(argName)) {
@@ -2115,6 +2115,7 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
       nick.trim();
       if (!nick.isEmpty()) {
         preferences.putString(argName, nick.c_str());
+        strlcpy(ds_nicknames[i], nick.c_str(), sizeof(ds_nicknames[i]));
       }
     }
   }
@@ -2571,7 +2572,7 @@ void loop() {
 
     // v2.7: Serial rapport zonder String-allocaties (upper_room, divider, concatenaties → char[]/printf)
     char upper_room[32];
-    snprintf(upper_room, sizeof(upper_room), "%s", room_id.c_str());
+    snprintf(upper_room, sizeof(upper_room), "%s", room_id);
     for (int k = 0; upper_room[k]; k++) upper_room[k] = toupper((unsigned char)upper_room[k]);
     char uptime_buf[12];
     snprintf(uptime_buf, sizeof(uptime_buf), "%lu", (unsigned long)uptime_sec);
