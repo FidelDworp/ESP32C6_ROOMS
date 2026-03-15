@@ -10,6 +10,24 @@
 //   app1,     app,  ota_1,   0x610000, 0x600000,
 //   spiffs,   data, spiffs,  0xC10000, 0x3F0000,
 //
+// 15mar26 v2.10 Matter fixes:
+//               MatterEnhancedColorLight → MatterColorLight (kleurpicker only, altijd aan)
+//               MatterOnOffPlugin → MatterOnOffLight voor SW1/SW2/SW3 (lamp-type → aparte tegels)
+//               HSV callback: espHsvColor_t → HsvColor_t (MatterColorLight API, zoals oude sketch)
+//               Pixel 6-8 fix: pixels.updateLength(30)+clear+show bij boot → alle fysieke LEDs uit
+//               pixels_num grens strict in alle SW3 callbacks (nooit > geconfigureerd aantal)
+//               MatterOnOffLight → MatterOnOffPlugin voor SW1/SW2/SW3 (aparte tegels in Apple Home)
+//               Thermostat onChangeMode callback: mode OFF → manueel stop, HEAT → auto hervat
+//               onChangeBrightness callback op color light: dim alle actieve pixels via fade engine
+//               pixels_num grens strict gerespecteerd in alle callbacks (nooit > geconfigureerd aantal)
+//               SW2 fix: werkt ook als mov2 uitgeschakeld (pixel 1 als gewone pixel)
+//               8 endpoints: Thermostat, HumiditySensor, 2× OccupancySensor (MOV1 altijd, MOV2 optioneel),
+//               EnhancedColorLight (globale RGB powerpixels), 3× OnOffLight (pixel 0 / pixel 1 / pixels 2+)
+//               HSV→RGB conversie voor Apple Home kleurkiezer → neo_r/g/b
+//               update_matter_sensors() elke 5s, matterNuclearReset() bewaart room-config
+//               /matter pagina: "klaar voor integratie + code" of "gepaard" + rode resetknop
+//               Sidebar "Matter" op alle pagina's
+//               #define Serial Serial0 verwijderd: niet nodig bij CDCOnBoot=default (breekt compile)
 // 15mar26 v2.8  Sensor health indicators in UI: sensorWarn() C++ helper + sw() JS helper
 //               Abnormale sensorwaarden tonen ⚠ symbool (rood=kritiek, oranje=verdacht)
 //               Optionele sensors (co2/dust/sun/mov2/beam/tstat): geen indicator als uitgeschakeld
@@ -60,8 +78,11 @@
 //                1) Nicknames voor sensors die in Matter gebruikt worden: Standaard = Roomname+Sensor, Option: Make own nickname. (zoals de pixels)
 
 
+
+// v2.9 FIX: Verplicht voor ESP32-C6 (RISC-V) in Arduino IDE — zonder dit werkt Serial niet correct
+#define Serial Serial0
+
 #include <WiFi.h>
-#include <ESPmDNS.h>
 #include <DNSServer.h>        // Toegevoegd om captive portal toe te voegen
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
@@ -75,9 +96,34 @@
 #include <math.h>            // Voor sin() in dimmer engine
 #include <Preferences.h>     // NVS library voor Preferences
 #include <string.h>          // Voor memset()
+#include <nvs.h>
+#include <nvs_flash.h>
+#include <Matter.h>
+#include <MatterEndPoints/MatterThermostat.h>
+#include <MatterEndPoints/MatterHumiditySensor.h>
+#include <MatterEndPoints/MatterOccupancySensor.h>
+#include <MatterEndPoints/MatterColorLight.h>     // Zoals oude sketch: kleurpicker only, geen brightness
+#include <MatterEndPoints/MatterOnOffLight.h>     // Voor pixel-switches (echte lampen → aparte tegels)
+#include <MatterEndPoints/MatterOnOffPlugin.h>    // Behouden voor eventuele logische switches
 Preferences preferences;     // Globale Preferences instantie
 
-#define Serial Serial0  // Fix: ESP32-C6 gebruikt Serial0 als hardware serial
+// ============== MATTER ENDPOINTS (v2.10) ==============
+// Patroon uit oude sketch (v2.1 3mar26) — werkt wél als aparte tegels in Apple Home:
+// MatterColorLight voor kleurpicker (altijd aan, on/off negeren)
+// MatterOnOffLight voor echte pixel-switches (zijn lichten → aparte tegels)
+MatterThermostat         matter_thermostat;   // EP1: temp + setpoint + heating
+MatterHumiditySensor     matter_humidity;     // EP2: DHT22 vochtigheid
+MatterOccupancySensor    matter_mov1;         // EP3: MOV1 PIR aanwezigheid
+MatterOccupancySensor    matter_mov2_ep;      // EP4: MOV2 PIR (alleen als mov2_enabled)
+MatterColorLight         matter_color;        // EP5: RGB kleurpicker voor alle powerpixels
+MatterOnOffLight         matter_sw1;          // EP6: pixel 0 override (MOV1) — lamp → aparte tegel
+MatterOnOffLight         matter_sw2;          // EP7: pixel 1 override (MOV2) — lamp → aparte tegel
+MatterOnOffLight         matter_sw3;          // EP8: pixels 2+ samen — lamp → aparte tegel
+
+// Matter runtime flags
+bool matter_ignore_cb = false;               // Voorkomt callback-loops bij programmatisch updaten
+bool matter_nuclear_reset_requested = false; // Vlag: loop() voert reset uit (async-safe)
+unsigned long last_matter_update = 0;        // Throttle: Matter update elke 5s
 
 // ============== PIN DEFINITIONS (ESP32-C6 via Photon Shield) ==============
 #define DHT_PIN        6   // IO6  - DHT22 data         (was GPIO18)
@@ -194,8 +240,6 @@ bool ap_mode_active = false;  // Track of we in AP fallback zitten
 DNSServer dnsServer;
 const byte DNS_PORT = 53;
 
-
-bool mdns_running = false;
 wl_status_t last_wifi_status = WL_IDLE_STATUS;
 bool rescan_ds_requested = false;  // v2.4 FIX 5: vlag voor async-safe rescan vanuit loop()
 
@@ -598,8 +642,159 @@ String getFormattedDateTime() {
 
 
 
-void setup() {
+// ============== MATTER HELPER FUNCTIES (v2.9) ==============
 
+// HSV → RGB conversie (Matter stuurt kleur als Hue 0-255, Sat 0-255, Val 0-255)
+// Nodig voor MatterEnhancedColorLight → neo_r/g/b
+void hsvToRgb(uint8_t h, uint8_t s, uint8_t v, uint8_t &r, uint8_t &g, uint8_t &b) {
+  if (s == 0) { r = g = b = v; return; }
+  uint16_t hue = (uint16_t)h * 360 / 255;
+  uint8_t  reg = hue / 60;
+  uint8_t  rem = (hue - reg * 60) * 255 / 60;
+  uint8_t  p   = (uint32_t)v * (255 - s)                            / 255;
+  uint8_t  q   = (uint32_t)v * (255 - ((uint32_t)s * rem)     / 255) / 255;
+  uint8_t  t   = (uint32_t)v * (255 - ((uint32_t)s * (255-rem))/ 255) / 255;
+  switch (reg) {
+    case 0: r=v; g=t; b=p; break;
+    case 1: r=q; g=v; b=p; break;
+    case 2: r=p; g=v; b=t; break;
+    case 3: r=p; g=q; b=v; break;
+    case 4: r=t; g=p; b=v; break;
+    default:r=v; g=p; b=q; break;
+  }
+}
+
+// Push actuele sensorwaarden + schakelaarstaten naar Matter/HomeKit (elke 5s)
+// v2.10: MatterColorLight altijd aan — on/off alleen via SW1/SW2/SW3
+void update_matter_sensors() {
+  matter_thermostat.setLocalTemperature((float)room_temp);
+  matter_ignore_cb = true;
+  matter_thermostat.setHeatingSetpoint((double)heating_setpoint);
+  matter_ignore_cb = false;
+
+  if (!isnan(humi)) matter_humidity.setHumidity((float)humi);
+
+  matter_mov1.setOccupancy(mov1_light == 1);
+  if (mov2_enabled) matter_mov2_ep.setOccupancy(mov2_light == 1);
+
+  // MatterColorLight: altijd aan houden (is kleurpicker, geen aan/uit schakelaar)
+  matter_ignore_cb = true;
+  matter_color.setOnOff(true);
+  matter_ignore_cb = false;
+
+  // SW1/SW2/SW3 sync naar HomeKit — pixel_on[] is de authoritative state
+  matter_ignore_cb = true;
+  matter_sw1.setOnOff(pixel_on[0]);
+  matter_sw2.setOnOff(pixels_num > 1 && pixel_on[1]);
+  bool sw3_on = false;
+  for (int i = 2; i < pixels_num; i++) if (pixel_on[i]) { sw3_on = true; break; }
+  matter_sw3.setOnOff(sw3_on);
+  matter_ignore_cb = false;
+}
+
+// Nuclear Matter reset — wist Matter NVS (pairing) maar bewaart room-config settings
+// Patroon uit HVAC v1.10: backup → nvs_flash_erase() → nvs_flash_init() → restore → reboot
+void matterNuclearReset() {
+  Serial.println(F("\n=== MATTER NUCLEAR RESET ==="));
+  Serial.println(F("Stap 1: Settings laden naar RAM..."));
+
+  // Laad alle room-config sleutels die we willen bewaren
+  preferences.begin("room-config", true);
+  String bk_room_id      = preferences.getString(NVS_ROOM_ID,          room_id);
+  String bk_ssid         = preferences.getString(NVS_WIFI_SSID,        wifi_ssid);
+  String bk_pass         = preferences.getString(NVS_WIFI_PASS,        wifi_pass);
+  String bk_ip           = preferences.getString(NVS_STATIC_IP,        "");
+  int    bk_heat_sp      = preferences.getInt   (NVS_HEATING_SETPOINT, 20);
+  float  bk_dew_margin   = preferences.getFloat (NVS_DEW_MARGIN,       2.0);
+  int    bk_home_mode    = preferences.getInt   (NVS_HOME_MODE,        0);
+  int    bk_home_state   = preferences.getInt   (NVS_HOME_MODE_STATE,  0);
+  int    bk_ldr_dark     = preferences.getInt   (NVS_LDR_DARK,        50);
+  int    bk_beam_thresh  = preferences.getInt   (NVS_BEAM_THRESHOLD,  50);
+  bool   bk_co2          = preferences.getBool  (NVS_CO2_ENABLED,     false);
+  bool   bk_dust         = preferences.getBool  (NVS_DUST_ENABLED,    false);
+  bool   bk_sun          = preferences.getBool  (NVS_SUN_ENABLED,     true);
+  bool   bk_mov2         = preferences.getBool  (NVS_MOV2_ENABLED,    true);
+  bool   bk_tstat        = preferences.getBool  (NVS_TSTAT_ENABLED,   true);
+  bool   bk_beam         = preferences.getBool  (NVS_BEAM_ENABLED,    true);
+  uint8_t bk_r           = preferences.getUChar (NVS_NEO_R,           255);
+  uint8_t bk_g           = preferences.getUChar (NVS_NEO_G,           255);
+  uint8_t bk_b           = preferences.getUChar (NVS_NEO_B,           255);
+  int    bk_pixels_num   = preferences.getInt   (NVS_PIXELS_NUM,      8);
+  int    bk_serial_intv  = preferences.getInt   (NVS_SERIAL_INTERVAL, 15);
+  bool   bk_serial_verb  = preferences.getBool  (NVS_SERIAL_VERBOSE,  true);
+  int    bk_setpoint     = preferences.getInt   (NVS_CURRENT_SETPOINT,20);
+  int    bk_fade         = preferences.getInt   (NVS_FADE_DURATION,   2);
+  // Pixel nicknames (0..29)
+  String bk_nick[30];
+  for (int i = 0; i < 30; i++) {
+    char k[24]; snprintf(k, sizeof(k), "%s%d", NVS_PIXEL_NICK_BASE, i);
+    bk_nick[i] = preferences.getString(k, "");
+  }
+  // DS18B20 nicknames
+  String bk_ds_nick[DS_MAX_SENSORS];
+  for (int i = 0; i < DS_MAX_SENSORS; i++) {
+    char k[16]; snprintf(k, sizeof(k), "ds_nick_%d", i);
+    bk_ds_nick[i] = preferences.getString(k, "");
+  }
+  preferences.end();
+  Serial.println(F("  Settings in RAM."));
+
+  Serial.println(F("Stap 2: nvs_flash_erase()..."));
+  esp_err_t err = nvs_flash_erase();
+  Serial.printf("  %s\n", esp_err_to_name(err));
+
+  Serial.println(F("Stap 3: nvs_flash_init()..."));
+  err = nvs_flash_init();
+  Serial.printf("  %s\n", esp_err_to_name(err));
+
+  Serial.println(F("Stap 4: Settings terugschrijven..."));
+  preferences.begin("room-config", false);
+  preferences.putString(NVS_ROOM_ID,          bk_room_id);
+  preferences.putString(NVS_WIFI_SSID,        bk_ssid);
+  preferences.putString(NVS_WIFI_PASS,        bk_pass);
+  preferences.putString(NVS_STATIC_IP,        bk_ip);
+  preferences.putInt   (NVS_HEATING_SETPOINT, bk_heat_sp);
+  preferences.putFloat (NVS_DEW_MARGIN,       bk_dew_margin);
+  preferences.putInt   (NVS_HOME_MODE,        bk_home_mode);
+  preferences.putInt   (NVS_HOME_MODE_STATE,  bk_home_state);
+  preferences.putInt   (NVS_LDR_DARK,        bk_ldr_dark);
+  preferences.putInt   (NVS_BEAM_THRESHOLD,  bk_beam_thresh);
+  preferences.putBool  (NVS_CO2_ENABLED,     bk_co2);
+  preferences.putBool  (NVS_DUST_ENABLED,    bk_dust);
+  preferences.putBool  (NVS_SUN_ENABLED,     bk_sun);
+  preferences.putBool  (NVS_MOV2_ENABLED,    bk_mov2);
+  preferences.putBool  (NVS_TSTAT_ENABLED,   bk_tstat);
+  preferences.putBool  (NVS_BEAM_ENABLED,    bk_beam);
+  preferences.putUChar (NVS_NEO_R,           bk_r);
+  preferences.putUChar (NVS_NEO_G,           bk_g);
+  preferences.putUChar (NVS_NEO_B,           bk_b);
+  preferences.putInt   (NVS_PIXELS_NUM,      bk_pixels_num);
+  preferences.putInt   (NVS_SERIAL_INTERVAL, bk_serial_intv);
+  preferences.putBool  (NVS_SERIAL_VERBOSE,  bk_serial_verb);
+  preferences.putInt   (NVS_CURRENT_SETPOINT,bk_setpoint);
+  preferences.putInt   (NVS_FADE_DURATION,   bk_fade);
+  for (int i = 0; i < 30; i++) {
+    if (!bk_nick[i].isEmpty()) {
+      char k[24]; snprintf(k, sizeof(k), "%s%d", NVS_PIXEL_NICK_BASE, i);
+      preferences.putString(k, bk_nick[i]);
+    }
+  }
+  for (int i = 0; i < DS_MAX_SENSORS; i++) {
+    if (!bk_ds_nick[i].isEmpty()) {
+      char k[16]; snprintf(k, sizeof(k), "ds_nick_%d", i);
+      preferences.putString(k, bk_ds_nick[i]);
+    }
+  }
+  preferences.end();
+  Serial.println(F("  Settings teruggeschreven."));
+  Serial.println(F("Stap 5: Reboot — Matter start ongepaard op."));
+  delay(500);
+  ESP.restart();
+}
+
+
+
+void setup() {
   Serial.begin(115200);
   delay(1500);
   while (Serial.available()) Serial.read();  // flush
@@ -887,7 +1082,10 @@ void setup() {
 
 
   pixels.begin();
-    pixels.updateLength(pixels_num);  // Nu correct na laden pixels_num
+    pixels.updateLength(30);   // Tijdelijk max → stuurt zwart naar ALLE fysieke LEDs
+    pixels.clear();
+    pixels.show();             // Zet LEDs 6+ ook uit (anders blijven ze hangen)
+    pixels.updateLength(pixels_num);  // Terugzetten naar geconfigureerd aantal
     pixels.clear();
     pixels.show();
     initFadeEngine();
@@ -1017,18 +1215,151 @@ void setup() {
 
   Serial.println("\nIP: " + WiFi.localIP().toString());
 
-  // mDNS alleen starten bij geldige STA-verbinding
-  if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
-    if (MDNS.begin(room_id.c_str())) {
-      Serial.print("mDNS gestart: http://");
-      Serial.print(room_id);
-      Serial.println(".local");
-    } else {
-      Serial.println("mDNS start mislukt");
+  // mDNS verwijderd (v2.9) — veroorzaakt conflict met Matter's interne mDNS-stack
+  // Gebruik static IP of hostnaam in router-DHCP voor toegang (bijv. http://192.168.0.80)
+
+  // ── Matter initialisatie (alleen als WiFi verbonden — niet in AP mode) ─────
+  if (!ap_mode_active) {
+    Serial.println(F("\n── Matter initialisatie (v2.10) ─────────────────────────"));
+
+    // EP1: Thermostat — setpoint + temp + mode (HEAT/OFF)
+    matter_thermostat.begin(MatterThermostat::THERMOSTAT_SEQ_OP_HEATING);
+    matter_thermostat.setLocalTemperature((float)room_temp);
+    matter_thermostat.setHeatingSetpoint((double)heating_setpoint);
+
+    matter_thermostat.onChangeHeatingSetpoint([](double sp) -> bool {
+      if (matter_ignore_cb) return true;
+      heating_setpoint = constrain((int)round(sp), 10, 30);
+      preferences.putInt(NVS_CURRENT_SETPOINT, heating_setpoint);
+      Serial.printf(F("[HomeKit] Thermostat setpoint → %d °C\n"), heating_setpoint);
+      return true;
+    });
+    // Mode UIT → manueel stop; mode HEAT → auto hervat
+    matter_thermostat.onChangeMode([](uint8_t mode) -> bool {
+      if (matter_ignore_cb) return true;
+      if (mode == MatterThermostat::THERMOSTAT_MODE_OFF) {
+        heating_mode = 1; heating_on = 0;
+        Serial.println(F("[HomeKit] Thermostat → UIT (manueel stop)"));
+      } else {
+        heating_mode = 0;
+        Serial.println(F("[HomeKit] Thermostat → HEAT (auto hervat)"));
+      }
+      return true;
+    });
+
+    // EP2: Humidity
+    matter_humidity.begin();
+
+    // EP3+4: Occupancy
+    matter_mov1.begin();
+    if (mov2_enabled) matter_mov2_ep.begin();
+
+
+    // EP5: ColorLight — kleurpicker only (patroon uit oude sketch v2.1)
+    // On/off wordt genegeerd en altijd op "aan" gehouden — kleur is het enige doel
+    matter_color.begin();
+    matter_color.setOnOff(true);  // Altijd aan
+    matter_color.onChangeOnOff([](bool on) -> bool {
+      // Negeer on/off op kleurpicker — gebruik SW1/SW2/SW3 voor aan/uit controle
+      matter_ignore_cb = true;
+      matter_color.setOnOff(true);
+      matter_ignore_cb = false;
+      Serial.println(F("[HomeKit] Color on/off genegeerd (kleurpicker only)"));
+      return true;
+    });
+    // HSV → RGB: gebruik HsvColor_t (MatterColorLight API)
+    matter_color.onChangeColorHSV([](HsvColor_t hsv) -> bool {
+      // Zelfde conversie als oude sketch
+      float h = (hsv.h / 254.0f) * 360.0f;
+      float s = hsv.s / 254.0f;
+      float v = hsv.v / 254.0f;
+      float c = v*s, x = c*(1.0f - fabsf(fmodf(h/60.0f, 2.0f) - 1.0f)), m = v - c;
+      float rr, gg, bb;
+      if      (h < 60)  { rr=c; gg=x; bb=0; }
+      else if (h < 120) { rr=x; gg=c; bb=0; }
+      else if (h < 180) { rr=0; gg=c; bb=x; }
+      else if (h < 240) { rr=0; gg=x; bb=c; }
+      else if (h < 300) { rr=x; gg=0; bb=c; }
+      else              { rr=c; gg=0; bb=x; }
+      neo_r = (uint8_t)((rr+m)*255);
+      neo_g = (uint8_t)((gg+m)*255);
+      neo_b = (uint8_t)((bb+m)*255);
+      preferences.putUChar(NVS_NEO_R, neo_r);
+      preferences.putUChar(NVS_NEO_G, neo_g);
+      preferences.putUChar(NVS_NEO_B, neo_b);
+      Serial.printf(F("[HomeKit] Kleur → R=%d G=%d B=%d\n"), neo_r, neo_g, neo_b);
+      return true;
+    });
+
+    // EP6: OnOffLight SW1 → pixel 0 (MOV1 manueel override)
+    // OnOffLight = lamp-type → Apple Home toont als aparte licht-tegel
+    matter_sw1.begin(pixel_mode[0] == 1);
+    matter_sw1.onChangeOnOff([](bool on) -> bool {
+      if (matter_ignore_cb) return true;
+      pixel_mode[0] = on ? 1 : 0;
+      preferences.putInt(NVS_PIXEL_MODE_0, pixel_mode[0]);
+      Serial.printf(F("[HomeKit] SW1 pixel 0 (MOV1) → %s\n"), on ? "MANUEEL AAN" : "AUTO");
+      return true;
+    });
+
+    // EP7: OnOffLight SW2 → pixel 1 (MOV2 of gewone pixel)
+    matter_sw2.begin(pixels_num > 1 && pixel_on[1]);
+    matter_sw2.onChangeOnOff([](bool on) -> bool {
+      if (matter_ignore_cb) return true;
+      if (pixels_num < 2) return true;
+      if (mov2_enabled) {
+        pixel_mode[1] = on ? 1 : 0;
+        preferences.putInt(NVS_PIXEL_MODE_1, pixel_mode[1]);
+      } else {
+        pixel_on[1] = on; pixel_user_on[1] = on;
+        char k[24]; snprintf(k, sizeof(k), "%s1", NVS_PIXEL_ON_BASE);
+        preferences.putBool(k, on);
+      }
+      Serial.printf(F("[HomeKit] SW2 pixel 1 → %s\n"), on ? "AAN" : "auto");
+      return true;
+    });
+
+    // EP8: OnOffLight SW3 → pixels 2..pixels_num-1 (STRICT grens!)
+    {
+      bool sw3_init = false;
+      for (int i = 2; i < pixels_num; i++) if (pixel_on[i]) { sw3_init = true; break; }
+      matter_sw3.begin(sw3_init);
+      matter_sw3.onChangeOnOff([](bool on) -> bool {
+        if (matter_ignore_cb) return true;
+        for (int i = 2; i < pixels_num; i++) {  // Nooit voorbij pixels_num!
+          pixel_on[i] = on; pixel_user_on[i] = on;
+          char k[24]; snprintf(k, sizeof(k), "%s%d", NVS_PIXEL_ON_BASE, i);
+          preferences.putBool(k, on);
+        }
+        Serial.printf(F("[HomeKit] SW3 pixels 2..%d → %s\n"), pixels_num-1, on ? "AAN" : "UIT");
+        return true;
+      });
     }
-  } else {
-    Serial.println("mDNS niet gestart (geen geldige STA-IP)");
+
+    // Heap meten vóór/na Matter.begin()
+    uint32_t heap_pre = ESP.getFreeHeap();
+    Serial.printf("[HEAP pre-Matter]  free=%uKB  largest=%uKB\n", heap_pre/1024, ESP.getMaxAllocHeap()/1024);
+    Matter.begin();
+    delay(200);
+    Serial.printf("[HEAP post-Matter] free=%uKB  largest=%uKB  kost:-%uKB\n",
+      ESP.getFreeHeap()/1024, ESP.getMaxAllocHeap()/1024, (heap_pre-ESP.getFreeHeap())/1024);
+
+    if (!Matter.isDeviceCommissioned() && Matter.getManualPairingCode().length() < 5) {
+      Serial.println(F("[MATTER] NVS corrupt → nuclear reset..."));
+      matterNuclearReset();
+    }
+
+    Serial.println(F("\n══════════════════════════════════════════"));
+    if (!Matter.isDeviceCommissioned()) {
+      Serial.println(F("MATTER: Nog niet gepaard."));
+      Serial.print(F("► Code: ")); Serial.println(Matter.getManualPairingCode());
+      Serial.print(F("► http://")); Serial.print(WiFi.localIP().toString()); Serial.println(F("/matter"));
+    } else {
+      Serial.println(F("MATTER: Al gepaard. Ga naar /matter voor reset."));
+    }
+    Serial.println(F("══════════════════════════════════════════\n"));
   }
+  // ── Einde Matter initialisatie ─────────────────────────────────────────────
 
 
   DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
@@ -1093,6 +1424,7 @@ void setup() {
       "<div class=\"container\">"
       "<div class=\"sidebar\">"
       "<a href=\"/\" class=\"active\">Status</a>"
+      "<a href=\"/matter\">Matter</a>"
       "<a href=\"/update\">OTA</a>"
       "<a href=\"/json\">JSON</a>"
       "<a href=\"/settings\">Settings</a>"
@@ -1410,6 +1742,7 @@ void setup() {
       "<div class=\"container\">"
       "<div class=\"sidebar\">"
       "<a href=\"/\">Status</a>"
+      "<a href=\"/matter\">Matter</a>"
       "<a href=\"/update\" class=\"active\">OTA</a>"
       "<a href=\"/json\">JSON</a>"
       "<a href=\"/settings\">Settings</a>"
@@ -1567,6 +1900,7 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     "<div class=\"container\">"
     "<div class=\"sidebar\">"
     "<a href=\"/\">Status</a>"
+    "<a href=\"/matter\">Matter</a>"
     "<a href=\"/update\">OTA</a>"
     "<a href=\"/json\">JSON</a>"
     "<a href=\"/settings\" class=\"active\">Settings</a>"
@@ -1915,6 +2249,72 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
 
 
 
+  // === MATTER PAGINA (v2.9) ===
+  server.on("/matter", HTTP_GET, [](AsyncWebServerRequest *request) {
+    AsyncResponseStream *p = request->beginResponseStream("text/html; charset=utf-8");
+    p->print(F("<!DOCTYPE html><html><head><meta charset='utf-8'>"
+      "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+      "<title>Matter</title><style>"
+      "body{font-family:Arial,sans-serif;background:#fff;margin:0;padding:0;}"
+      ".header{display:flex;background:#ffcc00;color:#000;padding:10px 15px;font-size:18px;font-weight:bold;align-items:center;}"
+      ".header-left{flex:1;}.header-right{flex:1;text-align:right;font-size:15px;}"
+      ".container{display:flex;min-height:calc(100vh - 60px);}"
+      ".sidebar{width:80px;padding:10px 5px;background:#fff;border-right:3px solid #c00;box-sizing:border-box;flex-shrink:0;}"
+      ".sidebar a{display:block;background:#369;color:#fff;padding:8px;margin:8px auto;text-decoration:none;font-weight:bold;font-size:12px;border-radius:6px;text-align:center;width:60px;}"
+      ".sidebar a:hover{background:#036;}.sidebar a.active{background:#c00;}"
+      ".main{flex:1;padding:30px;}"
+      ".card{background:#e6f0ff;border:2px solid #369;border-radius:10px;padding:25px;max-width:520px;margin:20px 0;}"
+      ".code{font-family:monospace;font-size:30px;font-weight:bold;color:#003366;background:#fff;padding:14px 22px;border-radius:6px;border:2px solid #369;display:inline-block;letter-spacing:4px;margin:14px 0;}"
+      ".ok{color:#060;font-size:22px;font-weight:bold;margin-bottom:10px;}"
+      ".btn-reset{background:#c00;color:#fff;padding:11px 26px;border:none;border-radius:6px;font-size:15px;cursor:pointer;margin-top:18px;}"
+      ".btn-reset:hover{background:#900;}"
+      ".hint{font-size:13px;color:#666;margin-top:8px;}"
+      "@media(max-width:600px){.container{flex-direction:column;}"
+      ".sidebar{width:100%;border-right:none;border-bottom:3px solid #c00;display:flex;justify-content:center;}"
+      ".sidebar a{margin:0 3px;}}"
+      "</style></head><body>"
+      "<div class='header'><div class='header-left'>"));
+    p->print(room_id);
+    p->print(F("</div><div class='header-right'>Matter / HomeKit</div></div>"
+      "<div class='container'><div class='sidebar'>"
+      "<a href='/'>Status</a>"
+      "<a href='/matter' class='active'>Matter</a>"
+      "<a href='/update'>OTA</a>"
+      "<a href='/json'>JSON</a>"
+      "<a href='/settings'>Settings</a>"
+      "</div><div class='main'><div class='card'>"));
+    if (Matter.isDeviceCommissioned()) {
+      p->print(F("<div class='ok'>&#x2705; Matter gepaard</div>"
+        "<p>Deze controller is verbonden met Apple Home (of ander Matter-platform).</p>"));
+    } else {
+      p->print(F("<h2 style='color:#369;margin-top:0;'>Matter klaar voor integratie</h2>"
+        "<p><b>1.</b> Open de <b>Apple Home</b> app</p>"
+        "<p><b>2.</b> Tik op <b>+</b> &rarr; <b>Accessoire toevoegen</b> &rarr; <b>Meer opties</b></p>"
+        "<p><b>3.</b> Voer de onderstaande code in:</p>"
+        "<div class='code'>"));
+      p->print(Matter.getManualPairingCode());
+      p->print(F("</div>"
+        "<p class='hint'>Of scan de QR-code via Apple Home &rarr; <b>Voeg toe via code</b>.</p>"));
+    }
+    p->print(F("<br><button class='btn-reset' "
+      "onclick=\"if(confirm('Matter pairing wissen? ROOM-instellingen blijven intact.')) location.href='/matter_reset';\">"
+      "Matter reset (pairing wissen)</button>"
+      "<p class='hint'>Reset wist enkel de HomeKit/Matter koppeling. Alle ROOM-instellingen, pixels en sensor-config blijven bewaard.</p>"
+      "</div></div></div></body></html>"));
+    request->send(p);
+  });
+
+  // Nuclear reset via vlag — handler zet vlag, main loop() voert uit (async-safe: geen NVS-race)
+  server.on("/matter_reset", HTTP_GET, [](AsyncWebServerRequest *request) {
+    matter_nuclear_reset_requested = true;
+    request->send(200, "text/html",
+      "<h2 style='text-align:center;padding:40px;color:#c00;'>"
+      "Matter nuclear reset gestart...<br>"
+      "<small style='font-size:16px;color:#666;'>ROOM-instellingen worden bewaard. Rebooting...</small>"
+      "</h2>");
+    Serial.println(F("\n[WEB] Matter nuclear reset aangevraagd via /matter_reset"));
+  });
+
   server.begin();
   Serial.printf("HTTP server gestart op http://%s\n", WiFi.localIP().toString().c_str());
   Serial.printf("\n=== Setup klaar ===\n");
@@ -1934,43 +2334,21 @@ unsigned long last_slow = 0;
 
 void loop() {
 
-  // WiFi status change detectie voor mDNS
+  // WiFi status bewaken — herverbinden bij verlies (v2.9: mDNS verwijderd, conflict met Matter)
   wl_status_t current_status = WiFi.status();
-
   if (current_status != last_wifi_status) {
-
-    if (current_status == WL_CONNECTED &&
-        WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
-
-      if (mdns_running) {
-        MDNS.end();
-        mdns_running = false;
-        Serial.println("mDNS gestopt (herstart wegens WiFi connect)");
-      }
-
-      if (MDNS.begin(room_id.c_str())) {
-        mdns_running = true;
-        Serial.print("mDNS opnieuw gestart: http://");
-        Serial.print(room_id);
-        Serial.println(".local");
-      } else {
-        Serial.println("mDNS herstart mislukt");
-      }
-    }
-
-    if (current_status != WL_CONNECTED && mdns_running) {
-      MDNS.end();
-      mdns_running = false;
-      Serial.println("mDNS gestopt (WiFi disconnect)");
-    }
-
-    // v2.4 FIX 8: WiFi herverbinding — controller herstelt zichzelf na router reboot of tijdelijke storing
     if (current_status != WL_CONNECTED && !ap_mode_active) {
       Serial.println("[WiFi] Verbinding verloren — herverbinden...");
       WiFi.reconnect();
     }
-
     last_wifi_status = current_status;
+  }
+
+  // v2.9: Matter nuclear reset — vlag gezet door /matter_reset handler, uitvoering hier (async-safe)
+  if (matter_nuclear_reset_requested) {
+    matter_nuclear_reset_requested = false;
+    delay(200);  // Geef async response tijd om te verzenden
+    matterNuclearReset();
   }
 
 
@@ -2264,6 +2642,13 @@ void loop() {
     Serial.printf("WiFi RSSI            : %d dBm\n", WiFi.RSSI());
     Serial.printf("WiFi kwaliteit       : %d %%\n", constrain(2 * (WiFi.RSSI() + 100), 0, 100));
     Serial.printf("Free heap            : %d %%\n", (ESP.getFreeHeap() * 100) / ESP.getHeapSize());
+    Serial.printf("Matter gepaard       : %s\n", Matter.isDeviceCommissioned() ? "JA" : "NEE");
     Serial.println("─────────────────────────────────────\n");
+  }
+
+  // v2.9: Matter sensor-update elke 5s (buiten AP-mode)
+  if (!ap_mode_active && millis() - last_matter_update > 5000) {
+    last_matter_update = millis();
+    update_matter_sensors();
   }
 }
