@@ -2,6 +2,31 @@
 // Developed by Filip Delannoy in december '25.
 // Bereikbaar op (bijvb) http://eetplaats.local of http://192.168.0.80 => Andere controller: Naam (sectie DNS/MDNS) + static IP aanpassen!
 
+// 15mar26 v2.8  Sensor health indicators in UI: sensorWarn() C++ helper + sw() JS helper
+//               Abnormale sensorwaarden tonen ⚠ symbool (rood=kritiek, oranje=verdacht)
+//               Optionele sensors (co2/dust/sun/mov2/beam/tstat): geen indicator als uitgeschakeld
+//               #defines voor drempelwaarden — aanpasbaar per kamer
+// 15mar26 v2.7b getJSON(): NaN-guards voor temp_dht(e), temp_ds(f), humi(h), dew(i)
+//               zonder guard: NaN float→"nan" in JSON, NaN→int = INT_MAX (2147483647)
+// 15mar26 v2.7  Resterende String-allocaties in recurring paden weggewerkt (Focus 1 — licht & stabiel):
+//               getJSON(): return type String → const char* (static buf, nul heap-alloc bij elke JS-poll)
+//               temp_melding: global String → char[48] (assign in 60s-gate)
+//               Serial rapport (15s): String upper_room + String divider + String concatenaties → snprintf/printf
+//               Homepage pixel-lus: String label + String action → char[48]/char[32] + snprintf
+//               Setup pixel-handler registratie: String path → char[32] + snprintf
+// 15mar26 v2.6  JSON schema definitief conform overnamedocument §4.2 + definitieve tabel:
+//               ds_primary verwijderd uit JSON (was ah) — niet nuttig voor dashboard
+//               DS extra sensoren: ah=Tds2, ai=Tds3 (sensor 0 = primair = zit al in f)
+//               json buffer vergroot naar char[680]
+// 14mar26 v2.5  TSL2561: tsl_available vlag, I2C-scanner bij boot, getEvent()-check → 65536 lux + I2C-errors opgelost
+//               TSL2561: Zonlicht-rij altijd zichtbaar in UI (toont "I2C fout" als sensor niet gevonden)
+//               JSON hernummerd naar standaard schema a..ah+ (overnamedocument §4.2), heap ae/af in KB
+//               JSON key "t" (pixel_on_str): "P=" prefix toegevoegd → voorkomt getal-conversie in Google Sheets
+//               Homepage JS: data.t.replace('P=','') vóór charAt() pixel-lookup
+//               getJSON() pure snprintf → char[640], nul heap-alloc
+//               AsyncResponseStream voor / en /settings (html.reserve(12000/10000) weg)
+//               NVS-keys in loops: String → snprintf char-buf (heap-alloc weg)
+//               Crashlog: String reason → snprintf
 // 11mar26 v2.4  8 fixes: getJSON reserve(800), kleurkiezer oninput→onchange, first_boot co2/dust default false,
 //               num_mov_pixels shadowing fix, rescan_ds async-safe (vlag), DS18B20 CRC-validatie,
 //               crash-logging NVS (heap-bewaking + weergave in /settings + wis-knop), WiFi reconnect, printf typo.
@@ -59,6 +84,16 @@ Preferences preferences;     // Globale Preferences instantie
 #define OPTION_LDR     2   // IO2  - LDR2 analog         (was GPIO14)
 #define NEOPIXEL_PIN   4   // IO4  - Pixels data         (was GPIO16)
 
+// ============== SENSOR HEALTH THRESHOLDS (v2.8) ==============
+// Aanpasbaar per kamer — gebruikt in sensorWarn() C++ + sw() JavaScript
+#define SENSOR_TEMP_MIN    5.0f  // °C  — onder = sensor defect (rood)
+#define SENSOR_TEMP_MAX   40.0f  // °C  — boven = sensor defect (rood)
+#define SENSOR_HUMI_MIN   10     // %   — onder = sensor defect (rood)
+#define SENSOR_HUMI_MAX   99     // %   — boven = sensor defect (rood)
+#define SENSOR_RSSI_WARN  (-75)  // dBm — zwak signaal (oranje)
+#define SENSOR_RSSI_CRIT  (-85)  // dBm — kritiek signaal (rood)
+#define SENSOR_LUX_MAX    65000  // lux — >= 65535 = I2C garbage (TSL2561)
+
 
 // NVS keys (const voor netheid en veiligheid)
 const char* NVS_ROOM_ID             = "room_id";
@@ -104,6 +139,7 @@ const char* NVS_DS_PRIMARY          = "ds_primary";      // Index van primaire s
 DHT dht(DHT_PIN, DHT22);
 OneWireNg_CurrentPlatform ow(ONE_WIRE_PIN, false);  // C6 compatibel 1-Wire
 Adafruit_TSL2561_Unified tsl = Adafruit_TSL2561_Unified(TSL2561_ADDR_FLOAT, 12345);
+bool tsl_available = false;  // v2.5: vlag — voorkomt herhaalde I2C-errors als sensor niet gevonden bij init
 Adafruit_NeoPixel pixels(1, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);  // Tijdelijk 1, lengte wordt in setup() gezet
 AsyncWebServer server(80);
 
@@ -159,7 +195,7 @@ bool rescan_ds_requested = false;  // v2.4 FIX 5: vlag voor async-safe rescan va
 
 // HVAC Variabelen
 float room_temp = 0.0;      // Berekende kamertemp: primair temp_ds, backup temp_dht
-String temp_melding = "";   // Melding bij defect (bijv. "DS18B20 defect – DHT22 gebruikt")
+char temp_melding[48] = ""; // v2.7: char[] i.p.v. String — geen heap-alloc in 60s-gate
 int heating_setpoint = 20;  // aa: Gewenste temp (integer, default 20)
 int heating_on = 0;         // y: Verwarming aan (0/1, auto of manueel)
 int vent_percent = 0;       // z: Ventilatie % (0-100, auto of manueel)
@@ -347,15 +383,16 @@ void scanDS18B20() {
 
   preferences.putInt(NVS_DS_COUNT, ds_count);
   for (int i = 0; i < ds_count; i++) {
-    String akey = "ds_addr_" + String(i);
-    preferences.putBytes(akey.c_str(), ds_addrs[i], 8);
-    String nkey = "ds_nick_" + String(i);
-    if (preferences.getString(nkey.c_str(), "").isEmpty()) {
-      String defnick = room_id + " DS " + String(i + 1);
-      preferences.putString(nkey.c_str(), defnick);
+    char akey[16]; snprintf(akey, sizeof(akey), "ds_addr_%d", i);
+    preferences.putBytes(akey, ds_addrs[i], 8);
+    char nkey[16]; snprintf(nkey, sizeof(nkey), "ds_nick_%d", i);
+    if (preferences.getString(nkey, "").isEmpty()) {
+      char defnick[48]; snprintf(defnick, sizeof(defnick), "%s DS %d", room_id.c_str(), i+1);
+      preferences.putString(nkey, defnick);
       ds_nicknames[i] = defnick;
     } else {
-      ds_nicknames[i] = preferences.getString(nkey.c_str(), "DS " + String(i + 1));
+      char fallback[16]; snprintf(fallback, sizeof(fallback), "DS %d", i+1);
+      ds_nicknames[i] = preferences.getString(nkey, fallback);
     }
   }
   ds_primary = constrain(preferences.getInt(NVS_DS_PRIMARY, 0), 0, max(ds_count - 1, 0));
@@ -366,10 +403,11 @@ void loadDS18B20fromNVS() {
   ds_count = preferences.getInt(NVS_DS_COUNT, 0);
   ds_primary = constrain(preferences.getInt(NVS_DS_PRIMARY, 0), 0, max(ds_count - 1, 0));
   for (int i = 0; i < ds_count; i++) {
-    String akey = "ds_addr_" + String(i);
-    preferences.getBytes(akey.c_str(), ds_addrs[i], 8);
-    String nkey = "ds_nick_" + String(i);
-    ds_nicknames[i] = preferences.getString(nkey.c_str(), room_id + " DS " + String(i + 1));
+    char akey[16]; snprintf(akey, sizeof(akey), "ds_addr_%d", i);
+    preferences.getBytes(akey, ds_addrs[i], 8);
+    char nkey[16]; snprintf(nkey, sizeof(nkey), "ds_nick_%d", i);
+    char defnick[48]; snprintf(defnick, sizeof(defnick), "%s DS %d", room_id.c_str(), i+1);
+    ds_nicknames[i] = preferences.getString(nkey, defnick);
     temp_ds_arr[i] = 0.0;
   }
 }
@@ -435,64 +473,98 @@ void handleSerialCommands() {
 
 
 
-String getJSON() {
-  String pixel_on_str = "";
-  // v2.4 FIX 1: reserve() voorkomt heap-realloc bij elke /json aanvraag (elke 3s)
-  // Zonder reserve doet elke += een potentiële realloc op een gesegmenteerde heap
-  pixel_on_str.reserve(32);
-  String pixel_mode_str = String(pixel_mode[0]) + String(pixel_mode[1]);
+// ============== SENSOR HEALTH INDICATOR (v2.8) ==============
+// Returnt pointer naar string-literal in flash — nul heap, nul RAM
+// fault=true + critical=true  → rood ⚠  (sensor defect)
+// fault=true + critical=false → oranje ⚠ (verdachte waarde / functioneel alarm)
+// Optionele sensors: enkel aanroepen binnen bestaande if(sensor_enabled) blokken
+const char* sensorWarn(bool fault, bool critical = true) {
+  if (!fault) return "";
+  return critical
+    ? "<span style='color:#c00;font-size:13px;margin-left:4px' title='Abnormale waarde'>&#9888;</span>"
+    : "<span style='color:#f80;font-size:13px;margin-left:4px' title='Verdachte waarde'>&#9888;</span>";
+}
 
-  for (int i = 0; i < pixels_num; i++) {
-    pixel_on_str += pixel_on[i] ? "1" : "0";
+const char* getJSON() {
+  // v2.7: return type const char* (static buf) — geen heap-alloc bij elke JSON-poll
+  // v2.6: schema volledig conform overnamedocument §4.2 + definitieve tabel
+  // a=uptime .. ag=ds_count, ah=Tds2, ai=Tds3 (sensor 0 = primair = zit al in f)
+  // ds_primary index weggelaten uit JSON — niet nuttig voor dashboard/GAS
+
+  char pixel_on_str[32] = {0};
+  for (int i = 0; i < pixels_num && i < 30; i++) {
+    pixel_on_str[i] = pixel_on[i] ? '1' : '0';
   }
+  char pixel_mode_str[4] = {0};
+  pixel_mode_str[0] = '0' + pixel_mode[0];
+  pixel_mode_str[1] = mov2_enabled ? ('0' + pixel_mode[1]) : '0';
 
-  // DS18B20 extra sensoren
-  String ds_json = "";
-  for (int i = 0; i < ds_count; i++) {
-    ds_json += ",\"ds" + String(i) + "\":" + String(temp_ds_arr[i], 1);
+  static char json[680];
+  snprintf(json, sizeof(json),
+    "{"
+    "\"a\":%lu,"      // uptime (s)
+    "\"b\":%d,"       // heating_on (0/1)
+    "\"c\":%d,"       // heating_setpoint (°C)
+    "\"d\":%d,"       // tstat_on (0/1)
+    "\"e\":%.1f,"     // temp_dht °C (Temp1 DHT22)  — NaN→0.0 via guard hieronder
+    "\"f\":%.1f,"     // temp_ds °C  (Temp2 DS18B20 primair)
+    "\"g\":%d,"       // vent_percent (%)
+    "\"h\":%d,"       // humi (%)  — NaN→0 via guard hieronder; zonder guard geeft (int)round(NaN) = INT_MAX
+    "\"i\":%.1f,"     // dew °C
+    "\"j\":%d,"       // dew_alert (0/1)
+    "\"k\":%d,"       // co2 (ppm)
+    "\"l\":%d,"       // dust (raw)
+    "\"m\":%d,"       // light_ldr (0-100)
+    "\"n\":%d,"       // sun_light (lux)
+    "\"o\":%d,"       // night (0/1)
+    "\"p\":%d,"       // bed (0/1)
+    "\"q\":%d,"       // neo_r (0-255)
+    "\"r\":%d,"       // neo_g (0-255)
+    "\"s\":%d,"       // neo_b (0-255)
+    "\"t\":\"P=%s\"," // pixel_on_str — P= prefix voorkomt getal-conversie in Sheets
+    "\"u\":\"%s\","   // pixel_mode_str
+    "\"v\":%d,"       // home_mode (0/1)
+    "\"w\":%d,"       // mov1_triggers
+    "\"x\":%d,"       // mov2_triggers
+    "\"y\":%d,"       // mov1_light (0/1)
+    "\"z\":%d,"       // mov2_light (0/1)
+    "\"aa\":%d,"      // beam_value (0-100)
+    "\"ab\":%d,"      // beam_alert (0/1)
+    "\"ac\":%d,"      // wifi_rssi (dBm)
+    "\"ad\":%d,"      // free_heap (%)
+    "\"ae\":%u,"      // largest_block (KB)
+    "\"af\":%u,"      // min_free_heap (KB)
+    "\"ag\":%d",      // ds_count — geen trailing comma, DS-temps of } volgt
+    (unsigned long)uptime_sec,
+    heating_on, heating_setpoint, tstat_on,
+    isnan(temp_dht) ? 0.0f : temp_dht,   // v2.7: NaN-guard — anders "nan" in JSON
+    isnan(temp_ds)  ? 0.0f : temp_ds,
+    vent_percent,
+    isnan(humi) ? 0 : (int)round(humi),  // v2.7: NaN-guard — anders INT_MAX (2147483647) in JSON
+    isnan(dew)  ? 0.0f : dew,
+    dew_alert,
+    co2, dust, light_ldr, sun_light, night, bed,
+    (int)neo_r, (int)neo_g, (int)neo_b,
+    pixel_on_str, pixel_mode_str,
+    home_mode, mov1_triggers, mov2_triggers,
+    mov1_light, mov2_light, beam_value, beam_alert_new,
+    (int)WiFi.RSSI(),
+    (int)((ESP.getFreeHeap() * 100) / ESP.getHeapSize()),
+    (unsigned)(ESP.getMaxAllocHeap() / 1024),
+    (unsigned)(ESP.getMinFreeHeap() / 1024),
+    ds_count
+  );
+
+  // Extra DS18B20 sensoren vanaf index 1 (index 0 = primair, zit al in "f")
+  // ah = Tds2 (sensor 1), ai = Tds3 (sensor 2), aj = Tds4 (sensor 3)
+  for (int i = 1; i < ds_count && i < DS_MAX_SENSORS; i++) {
+    char ds_entry[24];
+    snprintf(ds_entry, sizeof(ds_entry), ",\"a%c\":%.1f", (char)('g' + i), temp_ds_arr[i]);
+    strncat(json, ds_entry, sizeof(json) - strlen(json) - 1);
   }
+  strncat(json, "}", sizeof(json) - strlen(json) - 1);
 
-  String out;
-  out.reserve(800);  // v2.4 FIX 1: JSON is ~650-750 bytes, reserve voorkomt realloc-cascade
-  out = "{\"a\":" + String(co2) +
-         ",\"b\":" + String(dust) +
-         ",\"c\":" + String(dew,1) +
-         ",\"d\":" + String((int)round(humi)) +
-         ",\"e\":" + String(light_ldr) +
-         ",\"f\":" + String(sun_light) +
-         ",\"g\":" + String(temp_dht,1) +
-         ",\"h\":" + String(temp_ds,1) +
-         ",\"i\":" + String(mov1_triggers) +
-         ",\"j\":" + String(mov2_triggers) +
-         ",\"k\":" + String(dew_alert) +
-         ",\"l\":" + String(tstat_on) +
-         ",\"m\":" + String(mov1_light) +
-         ",\"n\":" + String(mov2_light) +
-         ",\"o\":" + String(beam_value) +
-         ",\"p\":" + String(beam_alert_new) +
-         ",\"q\":" + String(night) +
-         ",\"r\":" + String(bed) +
-         ",\"s\":" + String(neo_r) +
-         ",\"t\":" + String(neo_g) +
-         ",\"u\":" + String(neo_b) +
-         ",\"v\":" + String(WiFi.RSSI()) +
-         ",\"w\":" + String(constrain(2*(WiFi.RSSI()+100),0,100)) +
-         ",\"x\":" + String((ESP.getFreeHeap()*100)/ESP.getHeapSize()) +
-         ",\"y\":" + String(heating_on) +
-         ",\"z\":" + String(vent_percent) +
-         ",\"aa\":" + String(heating_setpoint) +
-         ",\"ab\":" + String(fade_duration) +
-         ",\"ac\":" + String(uptime_sec) +
-         ",\"ad\":\"" + pixel_on_str + "\"" +
-         ",\"ae\":\"" + pixel_mode_str + "\"" +
-         ",\"af\":" + String(home_mode) +
-  out += ",\"ag\":" + String(ds_count) +
-         ",\"ah\":" + String(ds_primary) +
-         ",\"ai\":" + String(ESP.getMaxAllocHeap()) +
-         ",\"aj\":" + String(ESP.getMinFreeHeap()) +
-         ds_json +
-         "}";
-  return out;
+  return json;  // v2.7: const char* — geen String-kopie op heap
 }
 
 
@@ -523,7 +595,7 @@ void setup() {
   Serial.begin(115200);
   delay(1500);
   while (Serial.available()) Serial.read();  // flush
-  Serial.println("\n\n=== ROOM Controller v2.4 ===");
+  Serial.println("\n\n=== ROOM Controller v2.6 ===");
 
   // v2.4 FIX 7: Crash-logging — lees vorige crash uit NVS bij elke boot
   {
@@ -566,12 +638,12 @@ void setup() {
 
     if (i < num_mov_pixels) {
       // Pixel 0–1: mode (AUTO / ON)
-      const char* key = (i == 0) ? NVS_PIXEL_MODE_0 : NVS_PIXEL_MODE_1;
-      pixel_mode[i] = preferences.getInt(key, 0);   // default = AUTO
+      const char* mkey = (i == 0) ? NVS_PIXEL_MODE_0 : NVS_PIXEL_MODE_1;
+      pixel_mode[i] = preferences.getInt(mkey, 0);   // default = AUTO
     } else {
       // Pixels 2+
-      String key = String(NVS_PIXEL_ON_BASE) + String(i);
-      pixel_on[i] = preferences.getBool(key.c_str(), false);
+      char pkey[24]; snprintf(pkey, sizeof(pkey), "%s%d", NVS_PIXEL_ON_BASE, i);
+      pixel_on[i] = preferences.getBool(pkey, false);
     }
   }
   
@@ -612,8 +684,8 @@ void setup() {
     preferences.putInt(NVS_PIXELS_NUM, 8);
     // Pixel states defaults: alles uit, modes AUTO
     for (int i = 0; i < 30; i++) {
-      String key = String(NVS_PIXEL_ON_BASE) + String(i);
-      preferences.putBool(key.c_str(), false);
+      char pbkey[24]; snprintf(pbkey, sizeof(pbkey), "%s%d", NVS_PIXEL_ON_BASE, i);
+      preferences.putBool(pbkey, false);
     }
     preferences.putInt(NVS_PIXEL_MODE_0, 0);  // AUTO
     preferences.putInt(NVS_PIXEL_MODE_1, 0);  // AUTO
@@ -641,8 +713,8 @@ void setup() {
   ldr_dark_threshold       = preferences.getInt(NVS_LDR_DARK, 50);
   beam_alert_threshold     = preferences.getInt(NVS_BEAM_THRESHOLD, 50);
   
-  co2_enabled      = preferences.getBool(NVS_CO2_ENABLED, true);
-  dust_enabled     = preferences.getBool(NVS_DUST_ENABLED, true);
+  co2_enabled      = preferences.getBool(NVS_CO2_ENABLED, false);   // v2.5 fix: default false — anders WDT crash bij afwezige sensor
+  dust_enabled     = preferences.getBool(NVS_DUST_ENABLED, false);  // v2.5 fix: default false
   sun_light_enabled= preferences.getBool(NVS_SUN_ENABLED, true);
   mov2_enabled     = preferences.getBool(NVS_MOV2_ENABLED, true);
   num_mov_pixels = 1 + (mov2_enabled ? 1 : 0);  // v2.4 FIX 4: 'int' verwijderd — was lokale shadowing van globale variabele → globale bleef altijd 2
@@ -659,13 +731,13 @@ void setup() {
 
   // === PIXEL NICKNAMES INITIALISEREN ===
   for (int i = 0; i < 30; i++) {
-    String key = String(NVS_PIXEL_NICK_BASE) + String(i);
-    pixel_nicknames[i] = preferences.getString(key.c_str(), "");
+    char nickkey[24]; snprintf(nickkey, sizeof(nickkey), "%s%d", NVS_PIXEL_NICK_BASE, i);
+    pixel_nicknames[i] = preferences.getString(nickkey, "");
     
     // Als leeg (eerste boot of na factory reset) → genereer default
     if (pixel_nicknames[i].isEmpty()) {
       pixel_nicknames[i] = room_id + " Pixel " + String(i);
-      preferences.putString(key.c_str(), pixel_nicknames[i]);
+      preferences.putString(nickkey, pixel_nicknames[i].c_str());
     }
   }
   
@@ -673,8 +745,8 @@ void setup() {
 
   // === PIXEL STATES LADEN UIT NVS ===
   for (int i = 0; i < pixels_num; i++) {
-    String key = String(NVS_PIXEL_USER_ON_BASE) + String(i);
-    pixel_user_on[i] = preferences.getBool(key.c_str(), false);
+    char pukey[24]; snprintf(pukey, sizeof(pukey), "%s%d", NVS_PIXEL_USER_ON_BASE, i);
+    pixel_user_on[i] = preferences.getBool(pukey, false);
     pixel_on[i] = pixel_user_on[i];   // startwaarde, auto-logica kan dit overschrijven
   }
 
@@ -712,8 +784,8 @@ void setup() {
 
   // Laad pixel_on[] persistent uit NVS
   for (int i = 0; i < pixels_num; i++) {
-    String key = String(NVS_PIXEL_ON_BASE) + String(i);
-    pixel_on[i] = preferences.getBool(key.c_str(), false);
+    char pokey[24]; snprintf(pokey, sizeof(pokey), "%s%d", NVS_PIXEL_ON_BASE, i);
+    pixel_on[i] = preferences.getBool(pokey, false);
   }
 
 
@@ -744,13 +816,56 @@ void setup() {
   pinMode(TSTAT_PIN, INPUT_PULLUP);
   pinMode(OPTION_LDR, INPUT);
 
-  // TSL2561:
+  // TSL2561 + I2C debug:
   dht.begin();
   if (sun_light_enabled) {
-    Wire.begin(13, 11);  // SDA=IO13, SCL=IO11
-    if (!tsl.begin()) Serial.println("TSL2561 niet gevonden");
-    tsl.enableAutoRange(true);
-    tsl.setIntegrationTime(TSL2561_INTEGRATIONTIME_13MS);
+    Serial.println("\n[TSL2561] I2C init op SDA=IO13, SCL=IO11...");
+    Wire.begin(13, 11);
+    delay(100);  // Geef I2C bus tijd om te stabiliseren
+
+    // I2C scanner: enkel via Wire — GEEN extra TSL-objecten aanmaken (beschadigt Wire-staat)
+    Serial.println("[I2C SCAN] Zoeken naar apparaten op de bus...");
+    int i2c_found = 0;
+    for (uint8_t addr = 1; addr < 127; addr++) {
+      Wire.beginTransmission(addr);
+      uint8_t err = Wire.endTransmission();
+      if (err == 0) {
+        Serial.printf("[I2C SCAN] ✓ Apparaat op 0x%02X", addr);
+        if (addr == 0x29) Serial.print("  ← TSL2561 ADDR_LOW  (ADDR→GND)");
+        if (addr == 0x39) Serial.print("  ← TSL2561 ADDR_FLOAT (ADDR zwevend)");
+        if (addr == 0x49) Serial.print("  ← TSL2561 ADDR_HIGH (ADDR→VCC)");
+        Serial.println();
+        i2c_found++;
+      }
+    }
+    if (i2c_found == 0) {
+      Serial.println("[I2C SCAN] ⚠️  Geen enkel I2C-apparaat gevonden!");
+      Serial.println("[I2C SCAN]    Controleer: SDA=IO13 SCL=IO11, voeding 3.3V, pull-ups 4k7");
+    } else {
+      Serial.printf("[I2C SCAN] %d apparaat(en) gevonden\n", i2c_found);
+    }
+
+    // Initialiseer TSL2561 op geconfigureerd adres (FLOAT = 0x39)
+    tsl_available = tsl.begin();
+    if (!tsl_available) {
+      Serial.println("[TSL2561] ⚠️  tsl.begin() MISLUKT op 0x39");
+      Serial.println("[TSL2561]    Zonlicht uitgeschakeld — waarde blijft 0");
+    } else {
+      tsl.enableAutoRange(true);
+      tsl.setIntegrationTime(TSL2561_INTEGRATIONTIME_13MS);
+      delay(20);  // Wacht op eerste conversie (13ms integratie)
+      sensors_event_t test_e;
+      memset(&test_e, 0, sizeof(test_e));
+      bool ok = tsl.getEvent(&test_e);
+      if (ok) {
+        sun_light = (int)test_e.light;
+        Serial.printf("[TSL2561] ✓ OK — eerste meting: %d lux\n", sun_light);
+        if (sun_light == 0) Serial.println("[TSL2561]   ⚠️  0 lux — sensor afgedekt of overbelicht?");
+      } else {
+        Serial.println("[TSL2561] ✓ Init OK, maar getEvent() mislukt bij eerste meting");
+      }
+    }
+    Serial.println();
   }
 
   // DS18B20: laad uit NVS of scan bij eerste boot
@@ -917,322 +1032,339 @@ void setup() {
 
   // === HOME PAGE ===
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-    String html;
-    html.reserve(12000);
-    html = R"rawliteral(
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>)rawliteral" + room_id + R"rawliteral( Status</title>
+    // v2.5: AsyncResponseStream — geen html.reserve(12000) meer op de heap
+    AsyncResponseStream *p = request->beginResponseStream("text/html; charset=utf-8");
 
-
-  <style>
-  body{font-family:Arial,sans-serif;background:#fff;margin:0;padding:0;}
-  .header{display:flex;background:#ffcc00;color:#000;padding:10px 15px;font-size:18px;font-weight:bold;align-items:center;}
-  .header-left{flex:1;}.header-right{flex:1;text-align:right;font-size:15px;}
-  .container{display:flex;min-height:calc(100vh - 60px);}
-  .sidebar{width:80px;padding:10px 5px;background:#fff;border-right:3px solid #c00;box-sizing:border-box;flex-shrink:0;}
-  .sidebar a{display:block;background:#369;color:#fff;padding:8px;margin:8px auto;text-decoration:none;font-weight:bold;font-size:12px;border-radius:6px;text-align:center;width:60px;}
-  .sidebar a:hover{background:#036;}.sidebar a.active{background:#c00;}
-  .main{flex:1;padding:15px;overflow-y:auto;}
-  .group-title{font-size:17px;font-style:italic;font-weight:bold;color:#369;margin:20px 0 8px 0;}
-  table{width:100%;border-collapse:collapse;margin-bottom:15px;}
-  td.label{color:#369;font-size:13px;padding:8px 5px;width:30%;border-bottom:1px solid #ddd;vertical-align:middle;}
-  td.value{background:#e6f0ff;font-size:13px;padding:8px 5px;width:100px;border-bottom:1px solid #ddd;text-align:center;vertical-align:middle;}
-  td.control{font-size:13px;padding:8px 5px;border-bottom:1px solid #ddd;text-align:right;vertical-align:middle;}
-  .slider{width:150px;height:28px;}
-  .switch{position:relative;display:inline-block;width:50px;height:28px;vertical-align:middle;}
-  .switch input{opacity:0;width:0;height:0;}
-  .slider-switch{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#ccc;transition:.4s;border-radius:28px;}
-  .slider-switch:before{position:absolute;content:"";height:20px;width:20px;left:4px;bottom:4px;background:#fff;transition:.4s;border-radius:50%;}
-  input:checked + .slider-switch{background:#369;}
-  input:checked + .slider-switch:before{transform:translateX(22px);}
-  @media(max-width:600px){
-    .container{flex-direction:column;}
-    .sidebar{width:100%;border-right:none;border-bottom:3px solid #c00;padding:10px 0;display:flex;justify-content:center;}
-    .sidebar a{width:80px;margin:0 5px;}
-    .main{padding:10px;}
-    .group-title{font-size:16px;margin:15px 0 6px 0;}
-    td.label{font-size:12px;padding:6px 4px;width:40%;}
-    td.value{font-size:12px;padding:6px 4px;width:auto;}
-    td.control{padding:6px 4px;}
-    .slider{width:100%;max-width:200px;}
-  }
-  </style>
-</head>
-<body>
-  <div class="header">
-    <div class="header-left">)rawliteral" + room_id + R"rawliteral(</div>
-    <div class="header-right">
-      )rawliteral";
-    html += String(uptime_sec) + " s &nbsp;&nbsp; " + getFormattedDateTime();  // Pas datum aan (NTP)
-    html += R"rawliteral(
-    </div>
-  </div>
-  <div class="container">
-
-    <div class="sidebar">
-      <a href="/" class="active">Status</a>
-      <a href="/update">OTA</a>
-      <a href="/json">JSON</a>
-      <a href="/settings">Settings</a>
-    </div>
-
-
-
-    <div class="main">
-
-
-  <div class="group-title">HVAC</div>
-  <table>
-    <tr><td class="label">Room temp</td>
-    <td class="value">)rawliteral" + String(room_temp, 1) + " °C<br><small>(" + String(temp_dht, 1) + ", " + String(temp_ds, 1) + ")</small>" + R"rawliteral(</td>
-    <td class="control"></td></tr>
-    <tr><td class="label">Humidity</td><td class="value">)rawliteral" + String(humi, 1) + " %" + R"rawliteral(</td><td class="control"></td></tr>
-    <tr><td class="label">Dauwpunt</td><td class="value">)rawliteral" + String(dew, 1) + " °C" + R"rawliteral(</td><td class="control"></td></tr>
-    
-    <tr><td class="label">DewAlert</td><td class="value">)rawliteral" + String(dew_alert ? "JA" : "NEE") + R"rawliteral(</td><td class="control"></td></tr>
-    
-    )rawliteral";
+    p->print(F("<!DOCTYPE html><html><head>"
+      "<meta charset=\"utf-8\">"
+      "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+      "<title>"));
+    p->print(room_id);
+    p->print(F(" Status</title>"
+      "<style>"
+      "body{font-family:Arial,sans-serif;background:#fff;margin:0;padding:0;}"
+      ".header{display:flex;background:#ffcc00;color:#000;padding:10px 15px;font-size:18px;font-weight:bold;align-items:center;}"
+      ".header-left{flex:1;}.header-right{flex:1;text-align:right;font-size:15px;}"
+      ".container{display:flex;min-height:calc(100vh - 60px);}"
+      ".sidebar{width:80px;padding:10px 5px;background:#fff;border-right:3px solid #c00;box-sizing:border-box;flex-shrink:0;}"
+      ".sidebar a{display:block;background:#369;color:#fff;padding:8px;margin:8px auto;text-decoration:none;font-weight:bold;font-size:12px;border-radius:6px;text-align:center;width:60px;}"
+      ".sidebar a:hover{background:#036;}.sidebar a.active{background:#c00;}"
+      ".main{flex:1;padding:15px;overflow-y:auto;}"
+      ".group-title{font-size:17px;font-style:italic;font-weight:bold;color:#369;margin:20px 0 8px 0;}"
+      "table{width:100%;border-collapse:collapse;margin-bottom:15px;}"
+      "td.label{color:#369;font-size:13px;padding:8px 5px;width:30%;border-bottom:1px solid #ddd;vertical-align:middle;}"
+      "td.value{background:#e6f0ff;font-size:13px;padding:8px 5px;width:100px;border-bottom:1px solid #ddd;text-align:center;vertical-align:middle;}"
+      "td.control{font-size:13px;padding:8px 5px;border-bottom:1px solid #ddd;text-align:right;vertical-align:middle;}"
+      ".slider{width:150px;height:28px;}"
+      ".switch{position:relative;display:inline-block;width:50px;height:28px;vertical-align:middle;}"
+      ".switch input{opacity:0;width:0;height:0;}"
+      ".slider-switch{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#ccc;transition:.4s;border-radius:28px;}"
+      ".slider-switch:before{position:absolute;content:\"\";height:20px;width:20px;left:4px;bottom:4px;background:#fff;transition:.4s;border-radius:50%;}"
+      "input:checked + .slider-switch{background:#369;}"
+      "input:checked + .slider-switch:before{transform:translateX(22px);}"
+      "@media(max-width:600px){"
+      ".container{flex-direction:column;}"
+      ".sidebar{width:100%;border-right:none;border-bottom:3px solid #c00;padding:10px 0;display:flex;justify-content:center;}"
+      ".sidebar a{width:80px;margin:0 5px;}"
+      ".main{padding:10px;}"
+      ".group-title{font-size:16px;margin:15px 0 6px 0;}"
+      "td.label{font-size:12px;padding:6px 4px;width:40%;}"
+      "td.value{font-size:12px;padding:6px 4px;width:auto;}"
+      "td.control{padding:6px 4px;}"
+      ".slider{width:100%;max-width:200px;}"
+      "}"
+      "</style></head><body>"
+      "<div class=\"header\">"
+      "<div class=\"header-left\">"));
+    p->print(room_id);
+    p->print(F("</div><div class=\"header-right\">"));
+    p->print(uptime_sec);
+    p->print(F(" s &nbsp;&nbsp; "));
+    p->print(getFormattedDateTime());
+    p->print(F("</div></div>"
+      "<div class=\"container\">"
+      "<div class=\"sidebar\">"
+      "<a href=\"/\" class=\"active\">Status</a>"
+      "<a href=\"/update\">OTA</a>"
+      "<a href=\"/json\">JSON</a>"
+      "<a href=\"/settings\">Settings</a>"
+      "</div>"
+      "<div class=\"main\">"
+      "<div class=\"group-title\">HVAC</div>"
+      "<table>"
+      "<tr><td class=\"label\">Room temp</td><td class=\"value\">"));
+    p->printf("%.1f &deg;C<br><small>(%.1f, %.1f)</small>", room_temp, temp_dht, temp_ds);
+    // v2.8: warn als DS18B20 (primair) of DHT22 buiten bereik
+    p->print(sensorWarn(temp_ds  == 0.0f || temp_ds  < SENSOR_TEMP_MIN || temp_ds  > SENSOR_TEMP_MAX));
+    p->print(sensorWarn(temp_dht == 0.0f || temp_dht < SENSOR_TEMP_MIN || temp_dht > SENSOR_TEMP_MAX));
+    p->print(F("</td><td class=\"control\"></td></tr>"
+      "<tr><td class=\"label\">Humidity</td><td class=\"value\">"));
+    p->printf("%.1f %%", humi);
+    // v2.8: warn als DHT22 vocht buiten bereik (ook 0 = was NaN)
+    p->print(sensorWarn(humi == 0 || (int)humi < SENSOR_HUMI_MIN || (int)humi > SENSOR_HUMI_MAX));
+    p->print(F("</td><td class=\"control\"></td></tr>"
+      "<tr><td class=\"label\">Dauwpunt</td><td class=\"value\">"));
+    p->printf("%.1f &deg;C", dew);
+    // v2.8: oranje warn als dauwpunt-alarm actief (functioneel alarm, geen sensordefect)
+    p->print(sensorWarn(dew_alert == 1, false));
+    p->print(F("</td><td class=\"control\"></td></tr>"
+      "<tr><td class=\"label\">DewAlert</td><td class=\"value\">"));
+    // v2.8: "JA" in rood voor extra zichtbaarheid
+    if (dew_alert) p->print(F("<b style='color:#c00'>JA</b>"));
+    else           p->print(F("NEE"));
+    p->print(F("</td><td class=\"control\"></td></tr>"));
     if (co2_enabled) {
-      html += R"rawliteral(
-    <tr><td class="label">CO₂</td><td class="value">)rawliteral" + String(co2) + " ppm" + R"rawliteral(</td><td class="control"></td></tr>
-    )rawliteral";
+      p->print(F("<tr><td class=\"label\">CO&#8322;</td><td class=\"value\">"));
+      p->printf("%d ppm", co2);
+      p->print(sensorWarn(co2 == 0));  // v2.8: 0 ppm = sensor leest niet
+      p->print(F("</td><td class=\"control\"></td></tr>"));
     }
     if (dust_enabled) {
-      html += R"rawliteral(
-    <tr><td class="label">Stof</td><td class="value">)rawliteral" + String(dust) + R"rawliteral(</td><td class="control"></td></tr>
-    )rawliteral";
+      p->print(F("<tr><td class=\"label\">Stof</td><td class=\"value\">"));
+      p->print(dust);
+      // v2.8: warn als dust == 0 (sensor leest niet)
+      p->print(sensorWarn(dust == 0));
+      p->print(F("</td><td class=\"control\"></td></tr>"));
     }
-    html += R"rawliteral(
-    <tr><td class="label">Heating setpoint</td><td class="value">)rawliteral" + String(heating_setpoint) + " °C" + R"rawliteral(</td>
-
-      <td class="control"><form action="/set_setpoint" method="get" onsubmit="event.preventDefault(); submitAjax(this);"><input type="range" class="slider" name="setpoint" min="10" max="30" value=")rawliteral" + String(heating_setpoint) + R"rawliteral(" onchange="submitAjax(this.form);"></form></td></tr>
-    <tr><td class="label">Heating Auto</td><td class="value">)rawliteral" + String(heating_mode == 0 ? "AUTO" : "MANUEEL") + R"rawliteral(</td>
-      <td class="control"><form action="/toggle_heating_auto" method="get" onsubmit="event.preventDefault(); submitAjax(this);"><label class="switch"><input type="checkbox" )rawliteral" + (heating_mode == 0 ? "checked" : "") + R"rawliteral( onchange="submitAjax(this.form);"><span class="slider-switch"></span></label></form></td></tr>
-
-    <tr><td class="label">Ventilatie snelheid %</td><td class="value">)rawliteral" + String(vent_percent) + " %" + R"rawliteral(</td>
-      <td class="control"><form action="/set_vent" method="get" onsubmit="event.preventDefault(); submitAjax(this);"><input type="range" class="slider" name="vent" min="0" max="100" value=")rawliteral" + String(vent_percent) + R"rawliteral(" onchange="submitAjax(this.form);"></form></td></tr>
-    <tr><td class="label">Vent Auto</td><td class="value">)rawliteral" + String(vent_mode == 0 ? "AUTO" : "MANUEEL") + R"rawliteral(</td>
-      <td class="control"><form action="/toggle_vent_auto" method="get" onsubmit="event.preventDefault(); submitAjax(this);"><label class="switch"><input type="checkbox" )rawliteral" + (vent_mode == 0 ? "checked" : "") + R"rawliteral( onchange="submitAjax(this.form);"><span class="slider-switch"></span></label></form></td></tr>
-
-
-    <tr><td class="label">Thuis/Uit</td><td class="value">)rawliteral" + String(home_mode ? "Thuis" : "Uit") + R"rawliteral(</td>
-       <td class="control"><form action="/toggle_home" method="get" onsubmit="event.preventDefault(); submitAjax(this);">
-       <label class="switch"><input type="checkbox" )rawliteral" + (home_mode ? "checked" : "") + R"rawliteral( onchange="submitAjax(this.form);">
-       <span class="slider-switch"></span></label>
-    </form></td></tr>
-    )rawliteral";
+    p->print(F("<tr><td class=\"label\">Heating setpoint</td><td class=\"value\">"));
+    p->printf("%d &deg;C", heating_setpoint);
+    p->printf("</td><td class=\"control\"><form action=\"/set_setpoint\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\"><input type=\"range\" class=\"slider\" name=\"setpoint\" min=\"10\" max=\"30\" value=\"%d\" onchange=\"submitAjax(this.form);\"></form></td></tr>", heating_setpoint);
+    p->print(F("<tr><td class=\"label\">Heating Auto</td><td class=\"value\">"));
+    p->print(heating_mode == 0 ? F("AUTO") : F("MANUEEL"));
+    p->printf("</td><td class=\"control\"><form action=\"/toggle_heating_auto\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\"><label class=\"switch\"><input type=\"checkbox\" %s onchange=\"submitAjax(this.form);\"><span class=\"slider-switch\"></span></label></form></td></tr>",
+      heating_mode == 0 ? "checked" : "");
+    p->print(F("<tr><td class=\"label\">Ventilatie snelheid %</td><td class=\"value\">"));
+    p->printf("%d %%", vent_percent);
+    p->printf("</td><td class=\"control\"><form action=\"/set_vent\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\"><input type=\"range\" class=\"slider\" name=\"vent\" min=\"0\" max=\"100\" value=\"%d\" onchange=\"submitAjax(this.form);\"></form></td></tr>", vent_percent);
+    p->print(F("<tr><td class=\"label\">Vent Auto</td><td class=\"value\">"));
+    p->print(vent_mode == 0 ? F("AUTO") : F("MANUEEL"));
+    p->printf("</td><td class=\"control\"><form action=\"/toggle_vent_auto\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\"><label class=\"switch\"><input type=\"checkbox\" %s onchange=\"submitAjax(this.form);\"><span class=\"slider-switch\"></span></label></form></td></tr>",
+      vent_mode == 0 ? "checked" : "");
+    p->print(F("<tr><td class=\"label\">Thuis/Uit</td><td class=\"value\">"));
+    p->print(home_mode ? F("Thuis") : F("Uit"));
+    p->printf("</td><td class=\"control\"><form action=\"/toggle_home\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\"><label class=\"switch\"><input type=\"checkbox\" %s onchange=\"submitAjax(this.form);\"><span class=\"slider-switch\"></span></label></form></td></tr>",
+      home_mode ? "checked" : "");
     if (tstat_enabled) {
-      html += R"rawliteral(
-    <tr><td class="label">Hardware thermostaat</td><td class="value">)rawliteral" + String(tstat_on ? "AAN" : "UIT") + R"rawliteral(</td><td class="control"></td></tr>
-    )rawliteral";
+      p->print(F("<tr><td class=\"label\">Hardware thermostaat</td><td class=\"value\">"));
+      p->print(tstat_on ? F("AAN") : F("UIT"));
+      p->print(F("</td><td class=\"control\"></td></tr>"));
     }
-    html += R"rawliteral(
-    <tr><td class="label">Heating aan</td><td class="value">)rawliteral" + String(heating_on ? "JA" : "NEE") + R"rawliteral(</td><td class="control"></td></tr>
-  </table>
-
-
-  <div class="group-title">VERLICHTING</div>
-  <table>
-    )rawliteral";
+    p->print(F("<tr><td class=\"label\">Heating aan</td><td class=\"value\">"));
+    p->print(heating_on ? F("JA") : F("NEE"));
+    p->print(F("</td><td class=\"control\"></td></tr>"
+      "</table>"
+      "<div class=\"group-title\">VERLICHTING</div>"
+      "<table>"));
     if (sun_light_enabled) {
-      html += R"rawliteral(
-    <tr><td class="label">Zonlicht</td><td class="value">)rawliteral" + String(sun_light) + " lux" + R"rawliteral(</td><td class="control"></td></tr>
-    )rawliteral";
-    }
-    
-    
-    html += R"rawliteral(
-    <tr><td class="label">LDR (donker=100)</td><td class="value">)rawliteral" + String(light_ldr) + R"rawliteral(</td><td class="control"></td></tr>
-    <tr><td class="label">MOV1 PIR licht aan</td><td class="value">)rawliteral" + String(mov1_light ? "JA" : "NEE") + R"rawliteral(</td><td class="control"></td></tr>
-    )rawliteral";
-    if (mov2_enabled) {
-      html += R"rawliteral(
-    <tr><td class="label">MOV2 PIR licht aan</td><td class="value">)rawliteral" + String(mov2_light ? "JA" : "NEE") + R"rawliteral(</td><td class="control"></td></tr>
-    )rawliteral";
-    }
-    html += R"rawliteral(
-
-
-    <tr><td class="label">NeoPixel Kleur</td><td class="value" id="rgb_val">)rawliteral" + String(neo_r) + ", " + String(neo_g) + ", " + String(neo_b) + R"rawliteral(</td>
-      <td class="control"><input type="color" id="colorPicker" value=")rawliteral" + String('#') + (neo_r < 16 ? "0" : "") + String(neo_r, HEX)                   + (neo_g < 16 ? "0" : "") + String(neo_g, HEX)                   + (neo_b < 16 ? "0" : "") + String(neo_b, HEX) + R"rawliteral(" onchange="setNeoColor(this.value)" style="width:48px;height:34px;border:none;cursor:pointer;padding:2px;"></td></tr>
-    <tr><td class="label">Bed switch</td><td class="value">)rawliteral" + String(bed ? "AAN" : "UIT") + R"rawliteral(</td>
-      <td class="control"><form action="/toggle_bed" method="get" onsubmit="event.preventDefault(); submitAjax(this);"><label class="switch"><input type="checkbox" )rawliteral" + (bed ? "checked" : "") + R"rawliteral( onchange="submitAjax(this.form);"><span class="slider-switch"></span></label></form></td></tr>
-    <tr><td class="label">Dim snelheid (s)</td><td class="value">)rawliteral" + String(fade_duration) + R"rawliteral(</td>
-      <td class="control"><form action="/set_fade_duration" method="get" onsubmit="event.preventDefault(); submitAjax(this);"><input type="range" class="slider" name="duration" min="1" max="10" value=")rawliteral" + String(fade_duration) + R"rawliteral(" onchange="submitAjax(this.form);"></form></td></tr>
-)rawliteral";
-
-
-    // Dynamische pixels loop met nicknames
-    for (int i = 0; i < pixels_num; i++) {
-      String label = pixel_nicknames[i];  // Kopieer eerst
-      label.trim();                       // Verwijder spaties voor/achter
-      
-      if (label.isEmpty()) {
-        // Fallback als geen nickname ingesteld
-        label = "Pixel " + String(i);
-        if (i < 2) {
-          if (i == 0) {
-            label += " (MOV1)";
-          } else if (mov2_enabled) {
-            label += " (MOV2)";
-          }
-        }
-      }
-      String value = pixel_on[i] ? "On" : "Off";
-      String checked = pixel_on[i] ? "checked" : "";
-
-
-      String action;
-      if (i == 0 || (i == 1 && mov2_enabled)) {
-        action = "/toggle_pixel_mode" + String(i);   // Mode-toggle alleen voor actieve MOV-pixels
+      p->print(F("<tr><td class=\"label\">Zonlicht</td><td class=\"value\">"));
+      if (tsl_available) {
+        p->printf("%d lux", sun_light);
+        // v2.8: warn als lux >= 65000 (I2C garbage waarde)
+        p->print(sensorWarn(sun_light >= SENSOR_LUX_MAX));
       } else {
-        action = "/toggle_pixel" + String(i);        // On/off-toggle voor alle andere (incl. pixel 1 als MOV2 uit)
+        p->print(F("<span style='color:#c00;font-size:11px;'>I2C fout</span>"));
       }
-
-
-        html += "<tr><td class=\"label\">" + label + "</td><td class=\"value\">" + value + "</td>";
-        html += "<td class=\"control\"><form action=\"" + action + "\" method=\"get\" onsubmit=\"event.preventDefault(); submitAjax(this);\"><label class=\"switch\"><input type=\"checkbox\" " + checked + " onchange=\"submitAjax(this.form);\"><span class=\"slider-switch\"></span></label></form></td></tr>";
+      p->print(F("</td><td class=\"control\"></td></tr>"));
     }
-
-
-    html += R"rawliteral(
-      </table>
-
-      <div class="group-title">BEWEGING</div>
-      
-      <table>
-        <tr><td class="label">MOV1 PIR trig/min</td><td class="value">)rawliteral" + String(mov1_triggers) + R"rawliteral(</td><td class="control"></td></tr>
-        )rawliteral";
+    p->print(F("<tr><td class=\"label\">LDR (donker=100)</td><td class=\"value\">"));
+    p->print(light_ldr);
+    p->print(F("</td><td class=\"control\"></td></tr>"
+      "<tr><td class=\"label\">MOV1 PIR licht aan</td><td class=\"value\">"));
+    p->print(mov1_light ? F("JA") : F("NEE"));
+    p->print(F("</td><td class=\"control\"></td></tr>"));
     if (mov2_enabled) {
-      html += R"rawliteral(
-        <tr><td class="label">MOV2 PIR trig/min</td><td class="value">)rawliteral" + String(mov2_triggers) + R"rawliteral(</td><td class="control"></td></tr>
-        )rawliteral";
+      p->print(F("<tr><td class=\"label\">MOV2 PIR licht aan</td><td class=\"value\">"));
+      p->print(mov2_light ? F("JA") : F("NEE"));
+      p->print(F("</td><td class=\"control\"></td></tr>"));
     }
-    html += R"rawliteral(
+    // NeoPixel kleurkiezer — hex string via printf
+    p->print(F("<tr><td class=\"label\">NeoPixel Kleur</td><td class=\"value\" id=\"rgb_val\">"));
+    p->printf("%d, %d, %d", (int)neo_r, (int)neo_g, (int)neo_b);
+    p->printf("</td><td class=\"control\"><input type=\"color\" id=\"colorPicker\" value=\"#%02x%02x%02x\""
+      " onchange=\"setNeoColor(this.value)\" style=\"width:48px;height:34px;border:none;cursor:pointer;padding:2px;\"></td></tr>",
+      neo_r, neo_g, neo_b);
+    p->print(F("<tr><td class=\"label\">Bed switch</td><td class=\"value\">"));
+    p->print(bed ? F("AAN") : F("UIT"));
+    p->printf("</td><td class=\"control\"><form action=\"/toggle_bed\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\"><label class=\"switch\"><input type=\"checkbox\" %s onchange=\"submitAjax(this.form);\"><span class=\"slider-switch\"></span></label></form></td></tr>",
+      bed ? "checked" : "");
+    p->print(F("<tr><td class=\"label\">Dim snelheid (s)</td><td class=\"value\">"));
+    p->print(fade_duration);
+    p->printf("</td><td class=\"control\"><form action=\"/set_fade_duration\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\"><input type=\"range\" class=\"slider\" name=\"duration\" min=\"1\" max=\"10\" value=\"%d\" onchange=\"submitAjax(this.form);\"></form></td></tr>",
+      fade_duration);
 
+    // Dynamische pixels loop — v2.7: char[] i.p.v. String label/action (geen heap-alloc per pixel)
+    for (int i = 0; i < pixels_num; i++) {
+      char label[48];
+      if (pixel_nicknames[i].isEmpty()) {
+        if      (i == 0)               snprintf(label, sizeof(label), "Pixel %d (MOV1)", i);
+        else if (i == 1 && mov2_enabled) snprintf(label, sizeof(label), "Pixel %d (MOV2)", i);
+        else                           snprintf(label, sizeof(label), "Pixel %d", i);
+      } else {
+        snprintf(label, sizeof(label), "%s", pixel_nicknames[i].c_str());
+      }
+      const char* val  = pixel_on[i] ? "On" : "Off";
+      const char* chkd = pixel_on[i] ? "checked" : "";
+      char action[32];
+      if (i == 0 || (i == 1 && mov2_enabled))
+        snprintf(action, sizeof(action), "/toggle_pixel_mode%d", i);
+      else
+        snprintf(action, sizeof(action), "/toggle_pixel%d", i);
+      p->printf("<tr><td class=\"label\">%s</td><td class=\"value\">%s</td>"
+        "<td class=\"control\"><form action=\"%s\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\"><label class=\"switch\">"
+        "<input type=\"checkbox\" %s onchange=\"submitAjax(this.form);\"><span class=\"slider-switch\"></span></label></form></td></tr>",
+        label, val, action, chkd);
+    }
 
-    </table>
-      )rawliteral";
+    p->print(F("</table>"
+      "<div class=\"group-title\">BEWEGING</div>"
+      "<table>"
+      "<tr><td class=\"label\">MOV1 PIR trig/min</td><td class=\"value\">"));
+    p->print(mov1_triggers);
+    p->print(F("</td><td class=\"control\"></td></tr>"));
+    if (mov2_enabled) {
+      p->print(F("<tr><td class=\"label\">MOV2 PIR trig/min</td><td class=\"value\">"));
+      p->print(mov2_triggers);
+      p->print(F("</td><td class=\"control\"></td></tr>"));
+    }
+    p->print(F("</table>"));
     if (beam_enabled) {
-      html += R"rawliteral(
-      <div class="group-title">BEWAKING</div>
-      <table>
-        <tr><td class="label">Beam sensor waarde</td><td class="value">)rawliteral" + String(beam_value) + R"rawliteral(</td><td class="control"></td></tr>
-        <tr><td class="label">Beam sensor alert</td><td class="value">)rawliteral" + String(beam_alert_new ? "JA" : "NEE") + R"rawliteral(</td><td class="control"></td></tr>
-      </table>
-      )rawliteral";
+      p->print(F("<div class=\"group-title\">BEWAKING</div>"
+        "<table>"
+        "<tr><td class=\"label\">Beam sensor waarde</td><td class=\"value\">"));
+      p->print(beam_value);
+      p->print(F("</td><td class=\"control\"></td></tr>"
+        "<tr><td class=\"label\">Beam sensor alert</td><td class=\"value\">"));
+      p->print(beam_alert_new ? F("JA") : F("NEE"));
+      p->print(F("</td><td class=\"control\"></td></tr></table>"));
     }
-    html += R"rawliteral(
-
-
-      <div class="group-title">CONTROLLER</div>
-      <table>
-        <tr><td class="label">WiFi RSSI</td><td class="value">)rawliteral" + String(WiFi.RSSI()) + " dBm" + R"rawliteral(</td><td class="control"></td></tr>
-        <tr><td class="label">WiFi kwaliteit</td><td class="value">)rawliteral" + String(constrain(2 * (WiFi.RSSI() + 100), 0, 100)) + " %" + R"rawliteral(</td><td class="control"></td></tr>
-        <tr><td class="label">Free heap</td><td class="value" id="heap-pct">)rawliteral" + String((ESP.getFreeHeap() * 100) / ESP.getHeapSize()) + " %" + R"rawliteral(</td>
-        <td class="control" id="heap-lb" style="font-size:12px;">)rawliteral" +
-          [&]() -> String {
-            uint32_t lb = ESP.getMaxAllocHeap();
-            const char* col = lb > 35000 ? "#0a0" : lb > 25000 ? "#f80" : "#c00";
-            return String("largest: <b style='color:") + col + "'>" + String(lb/1024) + " KB</b>";
-          }()
-        + R"rawliteral(</td></tr>
-      
-
-      </table>
-      <div style="text-align:center;margin:10px 0;">
-        <button class="button" onclick="updateValues()">Refresh</button>
-      </div>
-      <div id="status" style="text-align:center;margin:8px 0;font-weight:bold;color:#369;"></div>
-    </div>
-  </div>
-<script>
-function updateValues(){
-  fetch('/json?'+Date.now(),{cache:'no-store'}).then(r=>r.json()).then(data=>{
-    document.querySelectorAll('td.value').forEach(td=>{
-      const l=td.previousElementSibling;if(!l)return;
-      const lbl=l.textContent.trim();
-      if(lbl.includes("Room temp")) td.innerHTML=data.h.toFixed(1)+" °C<br><small>("+data.g.toFixed(1)+", "+data.h.toFixed(1)+")</small>";
-      else if(lbl.includes("Humidity")) td.textContent=Math.round(data.d)+" %";
-      else if(lbl.includes("Dauwpunt")) td.textContent=data.c.toFixed(1)+" °C";
-      else if(lbl.includes("DewAlert")) td.textContent=data.k?"JA":"NEE";
-      else if(lbl.includes("CO₂")) td.textContent=data.a+" ppm";
-      else if(lbl.includes("Stof")) td.textContent=data.b;
-      else if(lbl.includes("Heating setpoint")) td.textContent=data.aa+" °C";
-      else if(lbl.includes("Ventilatie snelheid")) td.textContent=data.z+" %";
-      else if(lbl.includes("HVAC Auto")) td.textContent=data.af==0?"AUTO":"MANUEEL";
-      else if(lbl.includes("Hardware thermostaat")) td.textContent=data.l?"AAN":"UIT";
-      else if(lbl.includes("Heating aan")) td.textContent=data.y?"JA":"NEE";
-      else if(lbl.includes("Zonlicht")) td.textContent=data.f+" lux";
-      else if(lbl.includes("LDR")) td.textContent=data.e;
-      else if(lbl.includes("Night mode")) td.textContent=data.q?"JA":"NEE";
-      else if(lbl.includes("MOV1 PIR licht")) td.textContent=data.m?"JA":"NEE";
-      else if(lbl.includes("MOV2 PIR licht")) td.textContent=data.n?"JA":"NEE";
-      else if(lbl.includes("NeoPixel Kleur")){td.textContent=data.s+", "+data.t+", "+data.u;var cp=document.getElementById('colorPicker');if(cp){var toHex=v=>('0'+Math.round(v).toString(16)).slice(-2);cp.value='#'+toHex(data.s)+toHex(data.t)+toHex(data.u);}}
-      else if(lbl.includes("Bed switch")) td.textContent=data.r?"AAN":"UIT";
-      else if(lbl.includes("Dim snelheid")) td.textContent=data.ab;
-      else if(lbl.includes("MOV1 PIR trig")) td.textContent=data.i;
-      else if(lbl.includes("MOV2 PIR trig")) td.textContent=data.j;
-      else if(lbl.includes("Beam waarde")) td.textContent=data.o;
-      else if(lbl.includes("Beam alert")) td.textContent=data.p?"JA":"NEE";
-      else if(lbl.includes("WiFi RSSI")) td.textContent=data.v+" dBm";
-      else if(lbl.includes("WiFi kwaliteit")) td.textContent=data.w+" %";
-      else if(lbl.includes("Free heap")){
-        td.textContent=data.x+" %";
-        var lb=data.ai||0;
-        var lbKB=Math.round(lb/1024);
-        var col=lb>35000?"#0a0":lb>25000?"#f80":"#c00";
-        var detail=document.getElementById("heap-lb");
-        if(detail) detail.innerHTML="largest: <b style='color:"+col+"'>"+lbKB+" KB</b>";
-      }
-      else if(lbl.includes("Pixel")){
-        const idx=parseInt(lbl.match(/\d+/)[0]);
-        if(idx===0) td.textContent=data.m?"On":"Off";
-        else if(idx===1) td.textContent=data.n?"On":"Off";
-        else td.textContent=data.ad.charAt(idx)==='1'?"On":"Off";
-      }
-    });
-    const hvacT=document.querySelector('td.control form[action="/toggle_hvac_auto"] input');
-    if(hvacT) hvacT.checked=(data.af==0);
-    const homeT=document.querySelector('td.control form[action="/toggle_home"] input');
-    if(homeT) homeT.checked=(data.af==1);
-    document.querySelectorAll('td.control form[action^="/toggle_pixel_mode"] input').forEach((cb,i)=>{cb.checked=(data.ae.charAt(i)==='1');});
-    const hdr=document.querySelector('.header-right');
-    if(hdr){const now=new Date();hdr.innerHTML=data.ac+" s &nbsp;&nbsp; "+now.toLocaleDateString('nl-BE')+" "+now.toLocaleTimeString('nl-BE');}
-  }).catch(e=>console.error(e));
-}
-function submitAjax(form){
-  const p=new URLSearchParams();let px=null;
-  for(const el of form.elements){
-    if(el.name){p.append(el.name,el.value);
-      if(el.name==='pixel'&&el.type==='hidden') px=parseInt(el.value);
-      if(el.name==='state') px={idx:px,state:el.value==='1'};
+    p->print(F("<div class=\"group-title\">CONTROLLER</div>"
+      "<table>"
+      "<tr><td class=\"label\">WiFi RSSI</td><td class=\"value\">"));
+    {
+      int rssi = (int)WiFi.RSSI();
+      p->printf("%d dBm", rssi);
+      // v2.8: oranje < -75 dBm, rood < -85 dBm
+      p->print(sensorWarn(rssi < SENSOR_RSSI_WARN, rssi < SENSOR_RSSI_CRIT));
     }
-  }
-  const url=p.toString()?form.action+'?'+p.toString():form.action;
-  if(px&&px.idx!==null) document.querySelectorAll('td.value').forEach(td=>{const l=td.previousElementSibling;if(l&&l.textContent.includes('Pixel '+px.idx)) td.textContent=px.state?'On':'Off';});
-  fetch(url).then(r=>{if(r.ok){updateValues();const s=document.getElementById('status');if(s){s.textContent='✓';setTimeout(()=>s.textContent='',1500);}}}).catch(e=>console.error(e));
-}
-window.addEventListener('load',()=>{updateValues();setInterval(updateValues,3000);});
-function setNeoColor(hex){
-  var r=parseInt(hex.slice(1,3),16);
-  var g=parseInt(hex.slice(3,5),16);
-  var b=parseInt(hex.slice(5,7),16);
-  document.getElementById('rgb_val').textContent=r+', '+g+', '+b;
-  fetch('/setcolor?r='+r+'&g='+g+'&b='+b);
-}
-</script>
+    p->print(F("</td><td class=\"control\"></td></tr>"
+      "<tr><td class=\"label\">WiFi kwaliteit</td><td class=\"value\">"));
+    p->printf("%d %%", constrain(2 * (WiFi.RSSI() + 100), 0, 100));
+    p->print(F("</td><td class=\"control\"></td></tr>"
+      "<tr><td class=\"label\">Free heap</td><td class=\"value\" id=\"heap-pct\">"));
+    p->printf("%d %%", (ESP.getFreeHeap() * 100) / ESP.getHeapSize());
+    {
+      uint32_t lb = ESP.getMaxAllocHeap();
+      const char* col = lb > 35000 ? "#0a0" : lb > 25000 ? "#f80" : "#c00";
+      p->printf("</td><td class=\"control\" id=\"heap-lb\" style=\"font-size:12px;\">largest: <b style='color:%s'>%u KB</b></td></tr>",
+        col, lb / 1024);
+    }
+    p->print(F("</table>"
+      "<div style=\"text-align:center;margin:10px 0;\">"
+      "<button class=\"button\" onclick=\"updateValues()\">Refresh</button>"
+      "</div>"
+      "<div id=\"status\" style=\"text-align:center;margin:8px 0;font-weight:bold;color:#369;\"></div>"
+      "</div></div>"));
 
+    // v2.5: JavaScript met bijgewerkte JSON-keys (schema §4.2)
+    // Key-mapping: a=uptime, b=heating_on, c=setpoint, d=tstat, e=temp_dht, f=temp_ds,
+    //   g=vent%, h=humi, i=dew, j=dew_alert, k=co2, l=dust, m=ldr, n=sun_light,
+    //   o=night, p=bed, q=neo_r, r=neo_g, s=neo_b, t=pixel_on_str, u=pixel_mode_str,
+    //   v=home_mode, w=mov1_trig, x=mov2_trig, y=mov1_light, z=mov2_light,
+    //   aa=beam_value, ab=beam_alert, ac=rssi, ad=free_heap%, ae=largest_block_KB, af=min_free_KB
+    // v2.8: sw() helper voor sensor health indicators (loopt in browser — nul ESP32-impact)
+    p->print(F("<script>"
+      // v2.8: sw(fault, critical) — geeft ⚠ span terug, '' als geen fout
+      // Optionele sensors: sw() enkel aangeroepen als de tabelrij bestaat (= sensor ingeschakeld)
+      "function sw(f,c){"
+        "return f?\"<span style='color:\"+(c?'#c00':'#f80')+\";font-size:13px;margin-left:4px' "
+        "title='\"+(c?'Abnormale':'Verdachte')+\" waarde'>&#9888;</span>\":'';}"
+      "function updateValues(){"
+      "fetch('/json?'+Date.now(),{cache:'no-store'}).then(r=>r.json()).then(data=>{"
+      "document.querySelectorAll('td.value').forEach(td=>{"
+      "const l=td.previousElementSibling;if(!l)return;"
+      "const lbl=l.textContent.trim();"
+      // Room temp: warn als DS18B20 (f) of DHT22 (e) buiten bereik
+      "if(lbl.includes('Room temp')) td.innerHTML=data.f.toFixed(1)+' \u00b0C<br><small>('+data.e.toFixed(1)+', '+data.f.toFixed(1)+')</small>'"
+        "+sw(data.f==0||data.f<5||data.f>40)"
+        "+sw(data.e==0||data.e<5||data.e>40);"
+      // Humidity: warn als DHT22 vocht buiten bereik
+      "else if(lbl.includes('Humidity')) td.innerHTML=Math.round(data.h)+' %'"
+        "+sw(data.h==0||data.h<10||data.h>99);"
+      // Dauwpunt: oranje warn als dew_alert actief
+      "else if(lbl.includes('Dauwpunt')) td.innerHTML=data.i.toFixed(1)+' \u00b0C'"
+        "+sw(data.j==1,false);"
+      // DewAlert: rood JA voor extra zichtbaarheid
+      "else if(lbl.includes('DewAlert')) td.innerHTML=data.j?\"<b style='color:#c00'>JA</b>\":'NEE';"
+      // CO2: enkel zichtbaar als co2_enabled — warn als 0 ppm (sensor leest niet)
+      "else if(lbl.includes('CO')) td.innerHTML=data.k+' ppm'+sw(data.k==0);"
+      // Stof: enkel zichtbaar als dust_enabled — warn als 0 (sensor leest niet)
+      "else if(lbl.includes('Stof')) td.innerHTML=data.l+sw(data.l==0);"
+      "else if(lbl.includes('Heating setpoint')) td.textContent=data.c+' \u00b0C';"
+      "else if(lbl.includes('Ventilatie snelheid')) td.textContent=data.g+' %';"
+      "else if(lbl.includes('Hardware thermostaat')) td.textContent=data.d?'AAN':'UIT';"
+      "else if(lbl.includes('Heating aan')) td.textContent=data.b?'JA':'NEE';"
+      // Zonlicht: enkel zichtbaar als sun_light_enabled — warn als lux >= 65000 (I2C garbage)
+      "else if(lbl.includes('Zonlicht')) td.innerHTML=data.n+' lux'+sw(data.n>=65000);"
+      "else if(lbl.includes('LDR')) td.textContent=data.m;"
+      "else if(lbl.includes('Night mode')) td.textContent=data.o?'JA':'NEE';"
+      "else if(lbl.includes('MOV1 PIR licht')) td.textContent=data.y?'JA':'NEE';"
+      "else if(lbl.includes('MOV2 PIR licht')) td.textContent=data.z?'JA':'NEE';"
+      "else if(lbl.includes('NeoPixel Kleur')){"
+        "td.textContent=data.q+', '+data.r+', '+data.s;"
+        "var cp=document.getElementById('colorPicker');"
+        "if(cp){var toHex=v=>('0'+Math.round(v).toString(16)).slice(-2);"
+        "cp.value='#'+toHex(data.q)+toHex(data.r)+toHex(data.s);}}"
+      "else if(lbl.includes('Bed switch')) td.textContent=data.p?'AAN':'UIT';"
+      "else if(lbl.includes('MOV1 PIR trig')) td.textContent=data.w;"
+      "else if(lbl.includes('MOV2 PIR trig')) td.textContent=data.x;"
+      // Beam alert: enkel zichtbaar als beam_enabled — rood JA
+      "else if(lbl.includes('Beam waarde')) td.textContent=data.aa;"
+      "else if(lbl.includes('Beam alert')) td.innerHTML=data.ab?\"<b style='color:#c00'>JA</b>\":'NEE';"
+      // WiFi RSSI: oranje < -75 dBm, rood < -85 dBm
+      "else if(lbl.includes('WiFi RSSI')) td.innerHTML=data.ac+' dBm'"
+        "+sw(data.ac<-75,data.ac<-85);"
+      "else if(lbl.includes('WiFi kwaliteit')) td.innerHTML=Math.min(100,Math.max(0,2*(data.ac+100)))+' %'"
+        "+sw(data.ac<-75,data.ac<-85);"
+      "else if(lbl.includes('Free heap')){"
+        "td.textContent=data.ad+' %';"
+        "var lbKB=data.ae||0;"
+        "var col=lbKB>50?'#0a0':lbKB>35?'#f80':'#c00';"
+        "var detail=document.getElementById('heap-lb');"
+        "if(detail) detail.innerHTML='largest: <b style=\"color:'+col+'\">'+lbKB+' KB</b>';}"
+      "else if(lbl.includes('Pixel')){"
+        "const idx=parseInt(lbl.match(/\\d+/)[0]);"
+        "const pstr=(data.t||'').replace('P=','');"
+        "if(idx===0) td.textContent=data.y?'On':'Off';"
+        "else if(idx===1) td.textContent=data.z?'On':'Off';"
+        "else td.textContent=(pstr.charAt(idx)==='1')?'On':'Off';}"
+      "});"
+      "const homeT=document.querySelector('td.control form[action=\"/toggle_home\"] input');"
+      "if(homeT) homeT.checked=(data.v==1);"
+      "document.querySelectorAll('td.control form[action^=\"/toggle_pixel_mode\"] input').forEach((cb,i)=>{"
+        "cb.checked=(data.u&&data.u.charAt(i)==='1');});"
+      "const hdr=document.querySelector('.header-right');"
+      "if(hdr){const now=new Date();hdr.innerHTML=data.a+' s &nbsp;&nbsp; '+now.toLocaleDateString('nl-BE')+' '+now.toLocaleTimeString('nl-BE');}"
+      "}).catch(e=>console.error(e));}"
+      "function submitAjax(form){"
+      "const p=new URLSearchParams();let px=null;"
+      "for(const el of form.elements){"
+        "if(el.name){p.append(el.name,el.value);"
+        "if(el.name==='pixel'&&el.type==='hidden') px=parseInt(el.value);"
+        "if(el.name==='state') px={idx:px,state:el.value==='1'};}"
+      "}"
+      "const url=p.toString()?form.action+'?'+p.toString():form.action;"
+      "if(px&&px.idx!==null) document.querySelectorAll('td.value').forEach(td=>{const l=td.previousElementSibling;if(l&&l.textContent.includes('Pixel '+px.idx)) td.textContent=px.state?'On':'Off';});"
+      "fetch(url).then(r=>{if(r.ok){updateValues();const s=document.getElementById('status');if(s){s.textContent='\u2713';setTimeout(()=>s.textContent='',1500);}}}).catch(e=>console.error(e));}"
+      "window.addEventListener('load',()=>{updateValues();setInterval(updateValues,3000);});"
+      "function setNeoColor(hex){"
+        "var r=parseInt(hex.slice(1,3),16);"
+        "var g=parseInt(hex.slice(3,5),16);"
+        "var b=parseInt(hex.slice(5,7),16);"
+        "document.getElementById('rgb_val').textContent=r+', '+g+', '+b;"
+        "fetch('/setcolor?r='+r+'&g='+g+'&b='+b);}"
+      "</script></body></html>"));
 
-
-</body>
-</html>
-)rawliteral";
-    request->send(200, "text/html; charset=utf-8", html);
+    request->send(p);
   });
 
 
@@ -1245,49 +1377,45 @@ function setNeoColor(hex){
 
   // === OTA UPDATE PAGE ===
   server.on("/update", HTTP_GET, [](AsyncWebServerRequest *request) {
-    String html;
-    html.reserve(2000);
-    html = R"rawliteral(
-<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OTA</title>
-<style>
-body{font-family:Arial,sans-serif;background:#fff;margin:0;padding:0;}
-.header{display:flex;background:#ffcc00;color:#000;padding:10px 15px;font-size:18px;font-weight:bold;}
-.header-left{flex:1;}.header-right{flex:1;text-align:right;font-size:15px;}
-.container{display:flex;min-height:calc(100vh - 60px);}
-.sidebar{width:80px;padding:10px 5px;background:#fff;border-right:3px solid #c00;flex-shrink:0;}
-.sidebar a{display:block;background:#369;color:#fff;padding:8px;margin:8px auto;text-decoration:none;font-weight:bold;font-size:12px;border-radius:6px;text-align:center;width:60px;}
-.sidebar a:hover{background:#036;}.sidebar a.active{background:#c00;}
-.main{flex:1;padding:30px;text-align:center;}
-.btn{background:#369;color:#fff;padding:11px 22px;border:none;border-radius:7px;cursor:pointer;font-size:15px;margin:8px;}
-.btn:hover{background:#036;}.btn-red{background:#c00;}.btn-red:hover{background:#900;}
-</style></head><body>
-<div class="header">
-  <div class="header-left">)rawliteral" + room_id + R"rawliteral(</div>
-  <div class="header-right">)rawliteral" + String(uptime_sec) + " s" + R"rawliteral(</div>
-</div>
-<div class="container">
-  <div class="sidebar">
-    <a href="/">Status</a>
-    <a href="/update" class="active">OTA</a>
-    <a href="/json">JSON</a>
-    <a href="/settings">Settings</a>
-  </div>
-  <div class="main">
-    <h2 style="color:#369;">OTA Firmware Update</h2>
-    <form method="POST" action="/update" enctype="multipart/form-data">
-      <input type="file" name="update" accept=".bin"><br><br>
-      <button class="btn" type="submit">Upload</button>
-    </form>
-    <br>
-    <button class="btn btn-red" onclick="location.href='/reboot'">Reboot</button>
-    <br><br><a href="/">← Terug</a>
-  </div>
-</div>
-</body></html>
-)rawliteral";
-    request->send(200, "text/html; charset=utf-8", html);
+    // v2.5: AsyncResponseStream — geen html.reserve(2000) meer
+    AsyncResponseStream *p = request->beginResponseStream("text/html; charset=utf-8");
+    p->print(F("<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+      "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+      "<title>OTA</title>"
+      "<style>"
+      "body{font-family:Arial,sans-serif;background:#fff;margin:0;padding:0;}"
+      ".header{display:flex;background:#ffcc00;color:#000;padding:10px 15px;font-size:18px;font-weight:bold;}"
+      ".header-left{flex:1;}.header-right{flex:1;text-align:right;font-size:15px;}"
+      ".container{display:flex;min-height:calc(100vh - 60px);}"
+      ".sidebar{width:80px;padding:10px 5px;background:#fff;border-right:3px solid #c00;flex-shrink:0;}"
+      ".sidebar a{display:block;background:#369;color:#fff;padding:8px;margin:8px auto;text-decoration:none;font-weight:bold;font-size:12px;border-radius:6px;text-align:center;width:60px;}"
+      ".sidebar a:hover{background:#036;}.sidebar a.active{background:#c00;}"
+      ".main{flex:1;padding:30px;text-align:center;}"
+      ".btn{background:#369;color:#fff;padding:11px 22px;border:none;border-radius:7px;cursor:pointer;font-size:15px;margin:8px;}"
+      ".btn:hover{background:#036;}.btn-red{background:#c00;}.btn-red:hover{background:#900;}"
+      "</style></head><body>"
+      "<div class=\"header\"><div class=\"header-left\">"));
+    p->print(room_id);
+    p->print(F("</div><div class=\"header-right\">"));
+    p->print(uptime_sec);
+    p->print(F(" s</div></div>"
+      "<div class=\"container\">"
+      "<div class=\"sidebar\">"
+      "<a href=\"/\">Status</a>"
+      "<a href=\"/update\" class=\"active\">OTA</a>"
+      "<a href=\"/json\">JSON</a>"
+      "<a href=\"/settings\">Settings</a>"
+      "</div>"
+      "<div class=\"main\">"
+      "<h2 style=\"color:#369;\">OTA Firmware Update</h2>"
+      "<form method=\"POST\" action=\"/update\" enctype=\"multipart/form-data\">"
+      "<input type=\"file\" name=\"update\" accept=\".bin\"><br><br>"
+      "<button class=\"btn\" type=\"submit\">Upload</button>"
+      "</form><br>"
+      "<button class=\"btn btn-red\" onclick=\"location.href='/reboot'\">Reboot</button>"
+      "<br><br><a href=\"/\">\u2190 Terug</a>"
+      "</div></div></body></html>"));
+    request->send(p);
   });
 
 
@@ -1350,11 +1478,14 @@ for (int i = 0; i < pixels_num; i++) {
     (i == 0) ||
     (i == 1 && mov2_enabled);
 
-  String path = is_mode_pixel
-    ? "/toggle_pixel_mode" + String(i)
-    : "/toggle_pixel" + String(i);
+  // v2.7: char[] i.p.v. String path — geen heap-alloc bij setup
+  char path[32];
+  if (is_mode_pixel)
+    snprintf(path, sizeof(path), "/toggle_pixel_mode%d", i);
+  else
+    snprintf(path, sizeof(path), "/toggle_pixel%d", i);
 
-  server.on(path.c_str(), HTTP_GET, [i, is_mode_pixel](AsyncWebServerRequest *request) {
+  server.on(path, HTTP_GET, [i, is_mode_pixel](AsyncWebServerRequest *request) {
 
     if (is_mode_pixel) {
       pixel_mode[i] = 1 - pixel_mode[i];
@@ -1362,8 +1493,8 @@ for (int i = 0; i < pixels_num; i++) {
       preferences.putInt(key, pixel_mode[i]);
     } else {
       pixel_on[i] = !pixel_on[i];
-      String key = String(NVS_PIXEL_ON_BASE) + String(i);
-      preferences.putBool(key.c_str(), pixel_on[i]);
+      char pokey[24]; snprintf(pokey, sizeof(pokey), "%s%d", NVS_PIXEL_ON_BASE, i);
+      preferences.putBool(pokey, pixel_on[i]);
     }
 
     request->send(200, "text/plain", "OK");
@@ -1393,148 +1524,175 @@ server.on("/ncsi.txt", HTTP_GET, [](AsyncWebServerRequest *request) {
   request->redirect("/settings");
 });
 
-// === SETTINGS PAGE - complete versie, werkende checkboxes ===
+// === SETTINGS PAGE - v2.5 AsyncResponseStream ===
 server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
+  // v2.5: AsyncResponseStream — geen html.reserve(10000) meer op de heap
+  AsyncResponseStream *p = request->beginResponseStream("text/html; charset=utf-8");
 
-  // Pixel nicknames velden
-  String pixelNamesHtml = "";
-  for (int i = 0; i < pixels_num; i++) {
-    pixelNamesHtml += "<label style=\"display:block;margin:4px 0;\">P" + String(i) + ": ";
-    pixelNamesHtml += "<input type=\"text\" name=\"pixel_nick_" + String(i) + "\" value=\"" + pixel_nicknames[i] + "\" style=\"width:200px;\"></label>";
-  }
+  p->print(F("<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+    "<title>"));
+  p->print(room_id);
+  p->print(F(" - Settings</title>"
+    "<style>"
+    "body{font-family:Arial,sans-serif;background:#fff;margin:0;padding:0;}"
+    ".header{display:flex;background:#ffcc00;color:#000;padding:10px 15px;font-size:18px;font-weight:bold;}"
+    ".header-left{flex:1;}.header-right{flex:1;text-align:right;font-size:15px;}"
+    ".container{display:flex;min-height:calc(100vh - 60px);}"
+    ".sidebar{width:80px;padding:10px 5px;background:#fff;border-right:3px solid #c00;box-sizing:border-box;flex-shrink:0;}"
+    ".sidebar a{display:block;background:#369;color:#fff;padding:8px;margin:8px auto;text-decoration:none;font-weight:bold;font-size:12px;border-radius:6px;text-align:center;width:60px;}"
+    ".sidebar a:hover{background:#036;}.sidebar a.active{background:#c00;}"
+    ".main{flex:1;padding:20px;overflow-y:auto;}"
+    "table{width:100%;border-collapse:collapse;margin:10px 0;}"
+    "td.lbl{width:38%;padding:9px 6px;font-weight:bold;color:#369;border-bottom:1px solid #eee;vertical-align:middle;}"
+    "td.inp{padding:9px 6px;border-bottom:1px solid #eee;vertical-align:middle;}"
+    "input[type=text],input[type=password],input[type=number],select{width:100%;padding:7px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;}"
+    ".btn{background:#369;color:#fff;padding:11px 28px;border:none;border-radius:6px;font-size:15px;cursor:pointer;margin:15px 8px;}"
+    ".btn:hover{background:#036;}"
+    ".btn-red{background:#c00;}.btn-red:hover{background:#900;}"
+    "@media(max-width:800px){.container{flex-direction:column;}.sidebar{width:100%;border-right:none;border-bottom:3px solid #c00;display:flex;justify-content:center;}.sidebar a{margin:0 3px;}}"
+    "</style></head><body>"
+    "<div class=\"header\">"
+    "<div class=\"header-left\">"));
+  p->print(room_id);
+  p->print(F("</div><div class=\"header-right\">Instellingen</div></div>"
+    "<div class=\"container\">"
+    "<div class=\"sidebar\">"
+    "<a href=\"/\">Status</a>"
+    "<a href=\"/update\">OTA</a>"
+    "<a href=\"/json\">JSON</a>"
+    "<a href=\"/settings\" class=\"active\">Settings</a>"
+    "</div>"
+    "<div class=\"main\">"
+    "<form action=\"/save_settings\" method=\"get\" id=\"sf\">"
+    "<table>"
+    "<tr><td class=\"lbl\">MAC adres</td><td class=\"inp\"><code>"));
+  p->print(mac_address);
+  p->print(F("</code></td></tr>"));
 
-  String html;
-  html.reserve(10000);
-  html = R"rawliteral(
-<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>)rawliteral" + room_id + R"rawliteral( - Settings</title>
-<style>
-body{font-family:Arial,sans-serif;background:#fff;margin:0;padding:0;}
-.header{display:flex;background:#ffcc00;color:#000;padding:10px 15px;font-size:18px;font-weight:bold;}
-.header-left{flex:1;}.header-right{flex:1;text-align:right;font-size:15px;}
-.container{display:flex;min-height:calc(100vh - 60px);}
-.sidebar{width:80px;padding:10px 5px;background:#fff;border-right:3px solid #c00;box-sizing:border-box;flex-shrink:0;}
-.sidebar a{display:block;background:#369;color:#fff;padding:8px;margin:8px auto;text-decoration:none;font-weight:bold;font-size:12px;border-radius:6px;text-align:center;width:60px;}
-.sidebar a:hover{background:#036;}.sidebar a.active{background:#c00;}
-.main{flex:1;padding:20px;overflow-y:auto;}
-table{width:100%;border-collapse:collapse;margin:10px 0;}
-td.lbl{width:38%;padding:9px 6px;font-weight:bold;color:#369;border-bottom:1px solid #eee;vertical-align:middle;}
-td.inp{padding:9px 6px;border-bottom:1px solid #eee;vertical-align:middle;}
-input[type=text],input[type=password],input[type=number],select{width:100%;padding:7px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;}
-.btn{background:#369;color:#fff;padding:11px 28px;border:none;border-radius:6px;font-size:15px;cursor:pointer;margin:15px 8px;}
-.btn:hover{background:#036;}
-.btn-red{background:#c00;}.btn-red:hover{background:#900;}
-@media(max-width:800px){.container{flex-direction:column;}.sidebar{width:100%;border-right:none;border-bottom:3px solid #c00;display:flex;justify-content:center;}.sidebar a{margin:0 3px;}}
-</style></head><body>
-<div class="header">
-  <div class="header-left">)rawliteral" + room_id + R"rawliteral(</div>
-  <div class="header-right">Instellingen</div>
-</div>
-<div class="container">
-  <div class="sidebar">
-    <a href="/">Status</a>
-    <a href="/update">OTA</a>
-    <a href="/json">JSON</a>
-    <a href="/settings" class="active">Settings</a>
-  </div>
-  <div class="main">
-    <form action="/save_settings" method="get" id="sf">
-    <table>
-      <tr><td class="lbl">MAC adres</td><td class="inp"><code>)rawliteral" + mac_address + R"rawliteral(</code></td></tr>
-      )rawliteral";
-
-  // v2.4 FIX 7: Crash-log weergave in settings
+  // v2.4 Crash-log weergave
   {
     Preferences crashPrefs;
     crashPrefs.begin("crash-log", true);
     uint32_t crashCnt = crashPrefs.getUInt("count", 0);
     String crashReason = crashPrefs.getString("reason", "geen");
     crashPrefs.end();
-    String crashColor = crashCnt > 0 ? "#c00" : "#0a0";
-    html += "<tr><td class=\"lbl\">Crashteller</td><td class=\"inp\"><b style=\"color:" + crashColor + "\">" + String(crashCnt) + "</b>";
+    const char* crashColor = crashCnt > 0 ? "#c00" : "#0a0";
+    p->printf("<tr><td class=\"lbl\">Crashteller</td><td class=\"inp\"><b style=\"color:%s\">%u</b>", crashColor, crashCnt);
     if (crashCnt > 0) {
-      html += " &nbsp; <a href=\"/clear_crash_log\" style=\"font-size:12px;color:#369;\" onclick=\"return confirm('Crash-log wissen?');\">Wissen</a>";
+      p->print(F(" &nbsp; <a href=\"/clear_crash_log\" style=\"font-size:12px;color:#369;\" onclick=\"return confirm('Crash-log wissen?');\">Wissen</a>"));
     }
-    html += "</td></tr>";
-    html += "<tr><td class=\"lbl\">Laatste crash</td><td class=\"inp\"><code style=\"font-size:12px;\">" + crashReason + "</code></td></tr>";
+    p->print(F("</td></tr><tr><td class=\"lbl\">Laatste crash</td><td class=\"inp\"><code style=\"font-size:12px;\">"));
+    p->print(crashReason);
+    p->print(F("</code></td></tr>"));
   }
 
-  html += R"rawliteral(
-      <tr><td class="lbl">Room naam</td><td class="inp"><input type="text" name="room_id" value=")rawliteral" + room_id + R"rawliteral(" required></td></tr>
-      <tr><td class="lbl">WiFi SSID</td><td class="inp"><input type="text" name="wifi_ssid" value=")rawliteral" + wifi_ssid + R"rawliteral(" required></td></tr>
-      <tr><td class="lbl">WiFi wachtwoord</td><td class="inp"><input type="password" name="wifi_pass" value=")rawliteral" + wifi_pass + R"rawliteral("></td></tr>
-      <tr><td class="lbl">Static IP</td><td class="inp"><input type="text" name="static_ip" value=")rawliteral" + static_ip_str + R"rawliteral(" placeholder="leeg = DHCP"></td></tr>
-      <tr><td class="lbl">Heating setpoint</td><td class="inp"><input type="number" name="heat_sp" min="10" max="30" value=")rawliteral" + String(heating_setpoint_default) + R"rawliteral("></td></tr>
-      <tr><td class="lbl">Vent default %</td><td class="inp"><input type="number" name="vent_req" min="0" max="100" value=")rawliteral" + String(vent_request_default) + R"rawliteral("></td></tr>
-      <tr><td class="lbl">Dew margin (°C)</td><td class="inp"><input type="number" step="0.1" name="dew_margin" min="0.5" max="5.0" value=")rawliteral" + String(dew_safety_margin, 1) + R"rawliteral("></td></tr>
-      <tr><td class="lbl">Home mode default</td><td class="inp">
-        <select name="home_mode">
-          <option value="0" )rawliteral" + (home_mode_default == 0 ? "selected" : "") + R"rawliteral(>Uit</option>
-          <option value="1" )rawliteral" + (home_mode_default == 1 ? "selected" : "") + R"rawliteral(>Thuis</option>
-        </select></td></tr>
-      <tr><td class="lbl">LDR dark threshold</td><td class="inp"><input type="number" name="ldr_dark" min="10" max="100" value=")rawliteral" + String(ldr_dark_threshold) + R"rawliteral("></td></tr>
-      <tr><td class="lbl">Beam threshold</td><td class="inp"><input type="number" name="beam_thresh" min="0" max="100" value=")rawliteral" + String(beam_alert_threshold) + R"rawliteral("></td></tr>
-      <tr><td class="lbl">Aantal NeoPixels</td><td class="inp"><input type="number" name="pixels" min="1" max="30" value=")rawliteral" + String(pixels_num) + R"rawliteral("></td></tr>
-      <tr><td class="lbl">Standaard RGB</td><td class="inp">
-        R:<input type="number" name="neo_r" min="0" max="255" value=")rawliteral" + String(neo_r) + R"rawliteral(" style="width:70px;">
-        G:<input type="number" name="neo_g" min="0" max="255" value=")rawliteral" + String(neo_g) + R"rawliteral(" style="width:70px;">
-        B:<input type="number" name="neo_b" min="0" max="255" value=")rawliteral" + String(neo_b) + R"rawliteral(" style="width:70px;"></td></tr>
-      <tr><td class="lbl">Pixel namen</td><td class="inp">)rawliteral" + pixelNamesHtml + R"rawliteral(</td></tr>
-      <tr><td class="lbl">Optionele sensoren</td><td class="inp">
-        <label><input type="checkbox" name="co2")rawliteral" + String(co2_enabled ? " checked" : "") + R"rawliteral(> CO₂</label>
-        <label><input type="checkbox" name="dust")rawliteral" + String(dust_enabled ? " checked" : "") + R"rawliteral(> Stof</label>
-        <label><input type="checkbox" name="sun")rawliteral" + String(sun_light_enabled ? " checked" : "") + R"rawliteral(> Zonlicht</label>
-        <label><input type="checkbox" name="mov2")rawliteral" + String(mov2_enabled ? " checked" : "") + R"rawliteral(> MOV2</label>
-        <label><input type="checkbox" name="tstat")rawliteral" + String(tstat_enabled ? " checked" : "") + R"rawliteral(> Thermostaat</label>
-        <label><input type="checkbox" name="beam")rawliteral" + String(beam_enabled ? " checked" : "") + R"rawliteral(> Beam</label>
-      </td></tr>
-      <tr><td class="lbl">Serial logging</td><td class="inp">
-        <label><input type="checkbox" name="serial_verbose")rawliteral" + String(serial_verbose ? " checked" : "") + R"rawliteral(> Aan</label>
-        &nbsp;&nbsp;interval: <input type="number" name="serial_interval" min="5" max="30" value=")rawliteral" + String(serial_interval) + R"rawliteral(" style="width:50px;"> s
-      </td></tr>
-    </table>)rawliteral";
+  p->print(F("<tr><td class=\"lbl\">Room naam</td><td class=\"inp\"><input type=\"text\" name=\"room_id\" value=\""));
+  p->print(room_id);
+  p->print(F("\" required></td></tr>"
+    "<tr><td class=\"lbl\">WiFi SSID</td><td class=\"inp\"><input type=\"text\" name=\"wifi_ssid\" value=\""));
+  p->print(wifi_ssid);
+  p->print(F("\" required></td></tr>"
+    "<tr><td class=\"lbl\">WiFi wachtwoord</td><td class=\"inp\"><input type=\"password\" name=\"wifi_pass\" value=\""));
+  p->print(wifi_pass);
+  p->print(F("\"></td></tr>"
+    "<tr><td class=\"lbl\">Static IP</td><td class=\"inp\"><input type=\"text\" name=\"static_ip\" value=\""));
+  p->print(static_ip_str);
+  p->printf("\" placeholder=\"leeg = DHCP\"></td></tr>"
+    "<tr><td class=\"lbl\">Heating setpoint</td><td class=\"inp\"><input type=\"number\" name=\"heat_sp\" min=\"10\" max=\"30\" value=\"%d\"></td></tr>"
+    "<tr><td class=\"lbl\">Vent default %%</td><td class=\"inp\"><input type=\"number\" name=\"vent_req\" min=\"0\" max=\"100\" value=\"%d\"></td></tr>"
+    "<tr><td class=\"lbl\">Dew margin (&deg;C)</td><td class=\"inp\"><input type=\"number\" step=\"0.1\" name=\"dew_margin\" min=\"0.5\" max=\"5.0\" value=\"%.1f\"></td></tr>",
+    heating_setpoint_default, vent_request_default, dew_safety_margin);
+  p->printf("<tr><td class=\"lbl\">Home mode default</td><td class=\"inp\">"
+    "<select name=\"home_mode\">"
+    "<option value=\"0\" %s>Uit</option>"
+    "<option value=\"1\" %s>Thuis</option>"
+    "</select></td></tr>",
+    home_mode_default == 0 ? "selected" : "",
+    home_mode_default == 1 ? "selected" : "");
+  p->printf("<tr><td class=\"lbl\">LDR dark threshold</td><td class=\"inp\"><input type=\"number\" name=\"ldr_dark\" min=\"10\" max=\"100\" value=\"%d\"></td></tr>"
+    "<tr><td class=\"lbl\">Beam threshold</td><td class=\"inp\"><input type=\"number\" name=\"beam_thresh\" min=\"0\" max=\"100\" value=\"%d\"></td></tr>"
+    "<tr><td class=\"lbl\">Aantal NeoPixels</td><td class=\"inp\"><input type=\"number\" name=\"pixels\" min=\"1\" max=\"30\" value=\"%d\"></td></tr>",
+    ldr_dark_threshold, beam_alert_threshold, pixels_num);
+  p->printf("<tr><td class=\"lbl\">Standaard RGB</td><td class=\"inp\">"
+    "R:<input type=\"number\" name=\"neo_r\" min=\"0\" max=\"255\" value=\"%d\" style=\"width:70px;\">"
+    "G:<input type=\"number\" name=\"neo_g\" min=\"0\" max=\"255\" value=\"%d\" style=\"width:70px;\">"
+    "B:<input type=\"number\" name=\"neo_b\" min=\"0\" max=\"255\" value=\"%d\" style=\"width:70px;\"></td></tr>",
+    (int)neo_r, (int)neo_g, (int)neo_b);
+
+  // Pixel namen
+  p->print(F("<tr><td class=\"lbl\">Pixel namen</td><td class=\"inp\">"));
+  for (int i = 0; i < pixels_num; i++) {
+    p->printf("<label style=\"display:block;margin:4px 0;\">P%d: <input type=\"text\" name=\"pixel_nick_%d\" value=\"%s\" style=\"width:200px;\"></label>",
+      i, i, pixel_nicknames[i].c_str());
+  }
+  p->print(F("</td></tr>"));
+
+  p->printf("<tr><td class=\"lbl\">Optionele sensoren</td><td class=\"inp\">"
+    "<label><input type=\"checkbox\" name=\"co2\"%s> CO&#8322;</label> "
+    "<label><input type=\"checkbox\" name=\"dust\"%s> Stof</label> "
+    "<label><input type=\"checkbox\" name=\"sun\"%s> Zonlicht</label> "
+    "<label><input type=\"checkbox\" name=\"mov2\"%s> MOV2</label> "
+    "<label><input type=\"checkbox\" name=\"tstat\"%s> Thermostaat</label> "
+    "<label><input type=\"checkbox\" name=\"beam\"%s> Beam</label>"
+    "</td></tr>",
+    co2_enabled ? " checked" : "",
+    dust_enabled ? " checked" : "",
+    sun_light_enabled ? " checked" : "",
+    mov2_enabled ? " checked" : "",
+    tstat_enabled ? " checked" : "",
+    beam_enabled ? " checked" : "");
+  p->printf("<tr><td class=\"lbl\">Serial logging</td><td class=\"inp\">"
+    "<label><input type=\"checkbox\" name=\"serial_verbose\"%s> Aan</label>"
+    "&nbsp;&nbsp;interval: <input type=\"number\" name=\"serial_interval\" min=\"5\" max=\"30\" value=\"%d\" style=\"width:50px;\"> s"
+    "</td></tr></table>",
+    serial_verbose ? " checked" : "",
+    serial_interval);
 
   // DS18B20 sectie
-  html += "<p style=\"margin:12px 0 4px 0;\"><b>DS18B20</b> &mdash; " + String(ds_count) + " sensor(s) gevonden";
-  if (ds_count == 0) html += " <span style=\"color:#c00;\">&mdash; controleer bedrading</span>";
-  html += "</p>";
+  p->printf("<p style=\"margin:12px 0 4px 0;\"><b>DS18B20</b> &mdash; %d sensor(s) gevonden", ds_count);
+  if (ds_count == 0) p->print(F(" <span style=\"color:#c00;\">&mdash; controleer bedrading</span>"));
+  p->print(F("</p>"));
   for (int i = 0; i < ds_count; i++) {
-    html += "<div style=\"margin:4px 0;padding:6px;background:#f5f5f5;border-radius:4px;\">";
-    html += "<code style=\"font-size:12px;color:#666;\">";
-    for (int j = 0; j < 8; j++) { char buf[4]; snprintf(buf, 4, "%02X", ds_addrs[i][j]); html += buf; if (j < 7) html += ":"; }
-    html += "</code>";
-    if (temp_ds_arr[i] != 0.0) html += " <b style=\"color:#369;\">" + String(temp_ds_arr[i], 1) + " &deg;C</b>";
-    html += "<br><label style=\"font-size:13px;\">Nickname: <input type=\"text\" name=\"ds_nick_" + String(i) + "\" value=\"" + ds_nicknames[i] + "\" style=\"width:180px;margin-top:3px;\"></label></div>";
+    p->print(F("<div style=\"margin:4px 0;padding:6px;background:#f5f5f5;border-radius:4px;\">"
+      "<code style=\"font-size:12px;color:#666;\">"));
+    for (int j = 0; j < 8; j++) {
+      p->printf("%02X%s", ds_addrs[i][j], j < 7 ? ":" : "");
+    }
+    p->print(F("</code>"));
+    if (temp_ds_arr[i] != 0.0) {
+      p->printf(" <b style=\"color:#369;\">%.1f &deg;C</b>", temp_ds_arr[i]);
+    }
+    p->printf("<br><label style=\"font-size:13px;\">Nickname: "
+      "<input type=\"text\" name=\"ds_nick_%d\" value=\"%s\" style=\"width:180px;margin-top:3px;\"></label></div>",
+      i, ds_nicknames[i].c_str());
   }
-  html += "<div style=\"margin:8px 0;\"><label><b>Primaire sensor: </b><select name=\"ds_primary\" style=\"padding:4px;\">";
-  for (int i = 0; i < ds_count; i++) {
-    html += "<option value='" + String(i) + "'" + (i == ds_primary ? " selected" : "") + ">" + ds_nicknames[i];
-    if (temp_ds_arr[i] != 0.0) html += " (" + String(temp_ds_arr[i], 1) + " °C)";
-    html += "</option>";
-  }
-  html += R"rawliteral(</select></label>
-  &nbsp; <a href="/rescan_ds" onclick="return confirm('Rescan uitvoeren?');" style="background:#369;color:#fff;padding:6px 14px;border-radius:5px;text-decoration:none;font-size:13px;">Rescan 1-Wire</a>
-</div>
-    <div style="text-align:center;margin-top:16px;">
-      <button type="submit" class="btn">Opslaan &amp; Reboot</button>
-      <button type="button" class="btn btn-red" onclick="if(confirm('Alles wissen?')) location.href='/factory_reset';">Factory Reset</button>
-    </div>
-    </form>
-    <script>
-    document.getElementById('sf').onsubmit=function(e){
-      const ip=this.static_ip.value.trim();
-      if(ip&&!/^(\d{1,3}\.){3}\d{1,3}$/.test(ip)){alert('Ongeldig IP!');e.preventDefault();return false;}
-      if(!this.room_id.value.trim()||!this.wifi_ssid.value.trim()){alert('Room naam en SSID verplicht!');e.preventDefault();return false;}
-      return true;
-    };
-    </script>
-  </div>
-</div>
-</body></html>
-)rawliteral";
 
-  request->send(200, "text/html; charset=utf-8", html);
+  p->print(F("<div style=\"margin:8px 0;\"><label><b>Primaire sensor: </b><select name=\"ds_primary\" style=\"padding:4px;\">"));
+  for (int i = 0; i < ds_count; i++) {
+    p->printf("<option value='%d'%s>%s", i, i == ds_primary ? " selected" : "", ds_nicknames[i].c_str());
+    if (temp_ds_arr[i] != 0.0) p->printf(" (%.1f \xC2\xB0""C)", temp_ds_arr[i]);
+    p->print(F("</option>"));
+  }
+  p->print(F("</select></label>"
+    " &nbsp; <a href=\"/rescan_ds\" onclick=\"return confirm('Rescan uitvoeren?');\" "
+    "style=\"background:#369;color:#fff;padding:6px 14px;border-radius:5px;text-decoration:none;font-size:13px;\">Rescan 1-Wire</a>"
+    "</div>"
+    "<div style=\"text-align:center;margin-top:16px;\">"
+    "<button type=\"submit\" class=\"btn\">Opslaan &amp; Reboot</button>"
+    "<button type=\"button\" class=\"btn btn-red\" onclick=\"if(confirm('Alles wissen?')) location.href='/factory_reset';\">Factory Reset</button>"
+    "</div>"
+    "</form>"
+    "<script>"
+    "document.getElementById('sf').onsubmit=function(e){"
+    "const ip=this.static_ip.value.trim();"
+    "if(ip&&!/^(\\d{1,3}\\.){3}\\d{1,3}$/.test(ip)){alert('Ongeldig IP!');e.preventDefault();return false;}"
+    "if(!this.room_id.value.trim()||!this.wifi_ssid.value.trim()){alert('Room naam en SSID verplicht!');e.preventDefault();return false;}"
+    "return true;};"
+    "</script>"
+    "</div></div></body></html>"));
+
+  request->send(p);
 });
 
 // === SAVE SETTINGS ===
@@ -1578,8 +1736,8 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
   // Als aantal verhoogd: nieuwe pixels default uit zetten in NVS
   if (new_pixels > old_pixels) {
     for (int i = old_pixels; i < new_pixels; i++) {
-      String key = String(NVS_PIXEL_ON_BASE) + String(i);
-      preferences.putBool(key.c_str(), false);
+      char pbkey[24]; snprintf(pbkey, sizeof(pbkey), "%s%d", NVS_PIXEL_ON_BASE, i);
+      preferences.putBool(pbkey, false);
     }
   }
 
@@ -1591,15 +1749,16 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
 
   // Opslaan pixel nicknames
   for (int i = 0; i < 30; i++) {
-    String argName = "pixel_nick_" + String(i);
-    if (request->hasArg(argName.c_str())) {
-      String nick = request->arg(argName.c_str());
+    char argName[20]; snprintf(argName, sizeof(argName), "pixel_nick_%d", i);
+    if (request->hasArg(argName)) {
+      String nick = request->arg(argName);
       nick.trim();
       if (nick.isEmpty()) {
-        nick = room_id + " Pixel " + String(i);
+        char defnick[48]; snprintf(defnick, sizeof(defnick), "%s Pixel %d", room_id.c_str(), i);
+        nick = defnick;
       }
-      String key = String(NVS_PIXEL_NICK_BASE) + String(i);
-      preferences.putString(key.c_str(), nick);
+      char nickkey[24]; snprintf(nickkey, sizeof(nickkey), "%s%d", NVS_PIXEL_NICK_BASE, i);
+      preferences.putString(nickkey, nick.c_str());
       if (i < pixels_num) {
         pixel_nicknames[i] = nick;  // Update runtime array
       }
@@ -1608,12 +1767,12 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
 
   // DS18B20 nicknames en primaire sensor opslaan (v1.3)
   for (int i = 0; i < DS_MAX_SENSORS; i++) {
-    String argName = "ds_nick_" + String(i);
-    if (request->hasArg(argName.c_str())) {
-      String nick = request->arg(argName.c_str());
+    char argName[16]; snprintf(argName, sizeof(argName), "ds_nick_%d", i);
+    if (request->hasArg(argName)) {
+      String nick = request->arg(argName);
       nick.trim();
       if (!nick.isEmpty()) {
-        preferences.putString(argName.c_str(), nick);
+        preferences.putString(argName, nick.c_str());
       }
     }
   }
@@ -1950,7 +2109,8 @@ void loop() {
       crashPrefs.begin("crash-log", false);
       uint32_t cnt = crashPrefs.getUInt("count", 0) + 1;
       crashPrefs.putUInt("count", cnt);
-      String reason = "heap " + String(lb / 1024) + "KB @ " + String(uptime_sec) + "s";
+      char reason[48];
+      snprintf(reason, sizeof(reason), "heap %uKB @ %lus", lb/1024, (unsigned long)uptime_sec);
       crashPrefs.putString("reason", reason);
       crashPrefs.end();
       Serial.printf("[HEAP] ⚠️  Largest block %u KB — crash-log geschreven (#%u)\n", lb / 1024, cnt);
@@ -1965,8 +2125,22 @@ void loop() {
   dew = calculateDewPoint(temp_dht, humi);
   readDS18B20temps();  // Lees alle DS18B20 sensoren → temp_ds = primaire sensor
   
-  if (sun_light_enabled) {
-    sensors_event_t e; tsl.getEvent(&e); sun_light = (int)e.light;
+  if (sun_light_enabled && tsl_available) {
+    sensors_event_t e;
+    memset(&e, 0, sizeof(e));
+    bool ok = tsl.getEvent(&e);
+    if (ok) {
+      sun_light = (int)e.light;
+      // Debug elke 5 minuten (300s) of eerste keer
+      static uint32_t last_tsl_debug = 0;
+      if (uptime_sec - last_tsl_debug >= 300 || last_tsl_debug == 0) {
+        last_tsl_debug = uptime_sec;
+        Serial.printf("[TSL2561] %.2f lux  (int=%d)\n", e.light, sun_light);
+      }
+    } else {
+      Serial.printf("[TSL2561] getEvent() MISLUKT @ %lus — vorige waarde %d lux bewaard\n",
+        (unsigned long)uptime_sec, sun_light);
+    }
   }
   
   light_ldr = scaleLDR(analogRead(LDR_ANALOG));
@@ -1981,13 +2155,13 @@ void loop() {
 
   // Room temp logica: primair temp_ds (Temp2), backup temp_dht (Temp1)
   room_temp = temp_ds;
-  temp_melding = "";
+  temp_melding[0] = '\0';  // v2.7: reset char[] zonder heap-alloc
   if (isnan(temp_ds) || temp_ds < 5.0 || temp_ds > 40.0) {  // Falen detectie
     room_temp = temp_dht;
-    temp_melding = "DS18B20 defect – DHT22 gebruikt";
+    strncpy(temp_melding, "DS18B20 defect - DHT22 gebruikt", sizeof(temp_melding) - 1);
     if (isnan(temp_dht) || temp_dht < 5.0 || temp_dht > 40.0) {
       room_temp = 0.0;
-      temp_melding = "Beide temp sensoren defect!";
+      strncpy(temp_melding, "Beide temp sensoren defect!", sizeof(temp_melding) - 1);
     }
   }
 
@@ -2009,20 +2183,22 @@ void loop() {
     if (serial_verbose && !ap_mode_active && millis() - lastSerial > (unsigned long)(serial_interval * 1000)) {
     lastSerial = millis();
 
-    String upper_room = room_id;           // Kopieer de room_id
-    upper_room.toUpperCase();              // Maak alles hoofdletters (bijv. "woonkamer" → "WOONKAMER")
-    Serial.println("\n" + upper_room + " – " + String(uptime_sec) + " s");
-    String divider = "";
-    for (int i = 0; i < upper_room.length() + String(uptime_sec).length() + 12; i++) {
-      divider += "─";
-    }
-    Serial.println(divider);
+    // v2.7: Serial rapport zonder String-allocaties (upper_room, divider, concatenaties → char[]/printf)
+    char upper_room[32];
+    snprintf(upper_room, sizeof(upper_room), "%s", room_id.c_str());
+    for (int k = 0; upper_room[k]; k++) upper_room[k] = toupper((unsigned char)upper_room[k]);
+    char uptime_buf[12];
+    snprintf(uptime_buf, sizeof(uptime_buf), "%lu", (unsigned long)uptime_sec);
+    Serial.printf("\n%s \xe2\x80\x93 %s s\n", upper_room, uptime_buf);  // "–" UTF-8
+    int div_len = strlen(upper_room) + strlen(uptime_buf) + 5;
+    for (int k = 0; k < div_len; k++) Serial.print("\xe2\x94\x80");  // "─" UTF-8
+    Serial.println();
     Serial.printf("DHT22 Temp2          : %.2f °C\n", temp_dht);
     Serial.printf("DHT22 Humidity       : %.1f %%\n", humi);
     Serial.printf("Dauwpunt             : %.1f °C\n", dew);
     Serial.printf("DewAlert (Temp2<Dew) : %s\n", dew_alert ? "JA" : "NEE");
     Serial.printf("DS18B20 Temp1        : %.2f °C\n", temp_ds);
-    Serial.printf("Room temp            : %.1f °C %s\n", room_temp, temp_melding.c_str());
+    Serial.printf("Room temp            : %.1f °C %s\n", room_temp, temp_melding);
     Serial.printf("Heating setpoint     : %d °C\n", heating_setpoint);
     Serial.printf("Heating mode         : %s\n", heating_mode == 0 ? "AUTO" : "MANUEEL");
     Serial.printf("Thuis/Uit modus      : %s\n", home_mode ? "Thuis" : "Uit");
@@ -2072,7 +2248,7 @@ void loop() {
      Serial.println();
 
 
-    Serial.print("Pixels on (0-" + String(pixels_num-1) + ")      : ");
+    Serial.printf("Pixels on (0-%d)      : ", pixels_num - 1);
       for (int i = 0; i < pixels_num; i++) {
         Serial.print(pixel_on[i] ? "1" : "0");
       }
