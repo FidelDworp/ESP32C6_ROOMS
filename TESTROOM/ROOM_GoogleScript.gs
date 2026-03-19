@@ -1,7 +1,13 @@
 // ============================================================
-// ROOM CONTROLLER DATA LOGGER - Google Apps Script v1.4
+// ROOM CONTROLLER DATA LOGGER - Google Apps Script v1.5
 // Ontvangt JSON-push van de Zarlar Dashboard (room controllers)
 // en logt naar Google Sheet — één sheet voor alle kamers.
+//
+// v1.5 (18mar26):
+//   - 2 bevroren rijen: rij 1 = titel+URL, rij 2 = kolomtitels
+//   - HEADER_ROWS = 2 constante voor consistentie
+//   - doPost() verwijdert oudste rij op rij 3 (niet rij 2)
+//   - setupHeaders() detecteert en vervangt beide koprijen correct
 //
 // v1.4 (15mar26):
 //   - Headers aangepast (jouw finale titels), 10pt wit op zwart,
@@ -10,7 +16,6 @@
 //     → oudste rijen worden automatisch verwijderd als limiet bereikt
 //   - DEPLOYMENT: gebruik ALTIJD "Bestaande implementatie bewerken"
 //     → nooit "Nieuwe implementatie" — dat geeft een nieuwe URL!
-//     → Zarlar Dashboard moet dan ook de nieuwe URL krijgen
 //
 // v1.3 (15mar26): volledig schema a..ak, 37 kolommen
 // v1.2 (14mar26): P= prefix pixel string
@@ -27,9 +32,11 @@
 // ============================================================
 // ⚙️  CONFIGURATIE — pas hier aan zonder de rest aan te raken
 // ============================================================
-const MAX_ROWS = 1000;  // Maximum aantal datarijen (excl. header)
-                        // Oudste rijen worden verwijderd als limiet bereikt
-                        // Pas aan naar wens (bv 500, 2000, 5000)
+const MAX_ROWS    = 1000;  // Maximum aantal datarijen (excl. headers)
+                           // Oudste rijen worden verwijderd als limiet bereikt
+                           // Pas aan naar wens (bv 500, 2000, 5000)
+const HEADER_ROWS = 2;     // Rij 1 = titel+URL, Rij 2 = kolomtitels
+                           // ⚠️ Niet aanpassen zonder ook setupHeaders() aan te passen
 // ============================================================
 
 
@@ -91,10 +98,10 @@ function doPost(e) {
     sheet.appendRow(row);
 
     // MAX_ROWS bewaking: verwijder oudste datarij als limiet overschreden
-    // Rij 1 = header, datarijen starten op rij 2
-    const dataRows = sheet.getLastRow() - 1;  // excl. header
+    // Rij 1 = titelrij, Rij 2 = kolomtitels, datarijen starten op rij 3
+    const dataRows = sheet.getLastRow() - HEADER_ROWS;
     if (dataRows > MAX_ROWS) {
-      sheet.deleteRow(2);  // verwijder oudste rij (rij 2, net onder header)
+      sheet.deleteRow(HEADER_ROWS + 1);  // verwijder oudste rij (eerste datarij)
       Logger.log("MAX_ROWS (" + MAX_ROWS + ") bereikt — oudste rij verwijderd");
     }
 
@@ -125,17 +132,40 @@ function doPost(e) {
 // ============================================================
 function setupHeaders() {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const ss    = SpreadsheetApp.getActiveSpreadsheet();
 
-  // Verwijder bestaande koprij als aanwezig
-  if (sheet.getLastRow() > 0) {
-    const firstCell = sheet.getRange(1, 1).getValue();
-    if (firstCell === "Tijdstempel") {
+  // --- Verwijder bestaande koprijen als aanwezig ---
+  // Controleer rij 2 eerst (kolomtitels), dan rij 1 (titelrij)
+  // Altijd van onder naar boven verwijderen om rijnummers correct te houden
+  if (sheet.getLastRow() >= 2) {
+    const row2 = sheet.getRange(2, 1).getValue();
+    if (row2 === "Tijdstempel") {
+      sheet.deleteRow(2);
+      Logger.log("Bestaande kolomtitelrij (rij 2) verwijderd.");
+    }
+  }
+  if (sheet.getLastRow() >= 1) {
+    const row1 = sheet.getRange(1, 1).getValue();
+    if (typeof row1 === "string" && row1.startsWith("ROOM")) {
       sheet.deleteRow(1);
-      Logger.log("Bestaande koprij verwijderd.");
+      Logger.log("Bestaande titelrij (rij 1) verwijderd.");
     }
   }
 
-  // Jouw finale kolomtitels
+  // --- Rij 1: Titelrij met scriptnaam en sheet-URL ---
+  sheet.insertRowBefore(1);
+  const titleCell = sheet.getRange(1, 1);
+  titleCell.setValue("ROOM CONTROLLER DATA LOGGER v1.5  |  " + ss.getUrl());
+  titleCell.setFontSize(9);
+  titleCell.setFontWeight("normal");
+  titleCell.setFontStyle("italic");
+  titleCell.setFontColor("#cccccc");
+  titleCell.setBackground("#222222");
+  titleCell.setHorizontalAlignment("left");
+  titleCell.setVerticalAlignment("middle");
+  sheet.setRowHeight(1, 24);
+
+  // --- Rij 2: Kolomtitels ---
   const headers = [
     "Tijdstempel",    // A  - breed
     "Uptime (s)",     // B
@@ -176,8 +206,8 @@ function setupHeaders() {
     "Tds3 (°C)",      // AK
   ];
 
-  sheet.insertRowBefore(1);
-  const headerRange = sheet.getRange(1, 1, 1, headers.length);
+  sheet.insertRowBefore(2);
+  const headerRange = sheet.getRange(2, 1, 1, headers.length);
   headerRange.setValues([headers]);
 
   // Opmaak: 10pt, wit op zwart, niet vet, niet italic, gecentreerd, wrap
@@ -188,12 +218,12 @@ function setupHeaders() {
   headerRange.setBackground("#000000");
   headerRange.setHorizontalAlignment("center");
   headerRange.setVerticalAlignment("middle");
-  headerRange.setWrap(true);  // woorden wrappen → 2 rijen mogelijk
+  headerRange.setWrap(true);  // woorden wrappen → 2 regels mogelijk
 
-  // Rijhoogte header: genoeg voor 2 regels tekst op 10pt
-  sheet.setRowHeight(1, 40);
+  // Rijhoogte kolomtitelrij: genoeg voor 2 regels tekst op 10pt
+  sheet.setRowHeight(2, 40);
 
-  // Kolombreedtes: smal genoeg om woorden te laten wrappen
+  // Kolombreedtes (ongewijzigd t.o.v. v1.4)
   sheet.setColumnWidth(1,  130);  // A: Tijdstempel
   sheet.setColumnWidth(2,   60);  // B: Uptime
   sheet.setColumnWidth(3,   80);  // C: Kamer
@@ -232,10 +262,12 @@ function setupHeaders() {
   sheet.setColumnWidth(36,  60);  // AJ: Tds2
   sheet.setColumnWidth(37,  60);  // AK: Tds3
 
-  sheet.setFrozenRows(1);
-  sheet.setFrozenColumns(3);  // A+B+C zichtbaar bij horizontaal scrollen
+  // 2 rijen bevriezen: rij 1 (titel) + rij 2 (kolomtitels)
+  sheet.setFrozenRows(2);
+  sheet.setFrozenColumns(1);  // Alleen kolom A (Tijdstempel) bevroren
 
   Logger.log("Headers aangemaakt! " + headers.length + " kolommen (A t/m AK)");
+  Logger.log("Rij 1 = titelrij | Rij 2 = kolomtitels | Data vanaf rij 3");
   Logger.log("MAX_ROWS instelling: " + MAX_ROWS);
 }
 
