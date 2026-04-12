@@ -10,11 +10,17 @@
 //   app1,     app,  ota_1,   0x610000, 0x600000,
 //   spiffs,   data, spiffs,  0xC10000, 0x3F0000,
 //
-// 12apr26 v2.14 MOV1/MOV2 dot reageert op beweging (w>0/x>0), ongeacht licht — labels "MOV1"/"MOV2"
-//               Pixel-dots blijven op lamp-aan (y/z) + neo-kleur — geen JSON-wijzigingen
-// 12apr26 v2.13 "Licht tijd (min)" slider (0–30 min + 5s overtime, NVS-persistent, default 0=5s)
-//               LIGHT_ON_DURATION constante → lightOnDuration() + NVS int light_on_min
-//               "Verwarming AUTO" dot teal #1a9e6e, "Ventilatie AUTO" dot lichtblauw #3aafe0
+// 12apr26 v2.19 Dim snelheid + Licht tijd: JS handler leest slider DOM-waarde, geen JSON key nodig
+//               Licht tijd format: "N min" (geen "(+ 5s)" meer)
+// 12apr26 v2.18 MOV triggers direct herberekend bij PIR-event (niet meer wachten op 60s-gate)
+// 12apr26 v2.17 JSON terug naar origineel (680 bytes, geen hm/vm/lt keys)
+//               AUTO-dots en Licht tijd tonen correct via server-render (geen live JS-update nodig)
+// 12apr26 v2.16 Heropbouw na v2.13/v2.14/v2.15 (NG — JS grote block vervangen brak alles)
+//               Timer fix: DOMContentLoaded + onafhankelijke updateClock() elke 1s
+//               Licht tijd slider (0-30 min + 5s overtime, NVS light_on_min, default 0)
+//               Verwarming AUTO (teal #1a9e6e) + Ventilatie AUTO (blauw #3aafe0) cirkels
+//               MOV1/MOV2 dots: rood bij beweging (w>0/x>0), ongeacht licht
+//               Nieuwe JSON keys hm/vm/lt (heating_mode, vent_mode, light_on_min)
 // 12apr26 v2.12 UI: binaire waarden → gekleurde cirkels (.dot CSS), labels aangepast
 //               Bug fix: MOV AUTO-modus gebruikte hardcoded groen → nu neo_r/g/b kleur
 //               Pixel-cirkels tonen actuele neo-kleur als ze aan zijn
@@ -315,8 +321,7 @@ float fade_progress[30] = {0.0};
 // PIR op 3.3V: beweging = LOW
 unsigned long mov1_off_time = 0;
 unsigned long mov2_off_time = 0;
-// v2.13: licht-aan tijd instelbaar via slider (0–30 min) + 5s overtime
-// NVS-persistent, default 0 = 5s (enkel overtime)
+// v2.16: licht-aan tijd instelbaar (0-30 min + 5s overtime). Default 0 = 5s.
 int light_on_min = 0;
 inline unsigned long lightOnDuration() {
   return (unsigned long)light_on_min * 60000UL + 5000UL;
@@ -577,7 +582,7 @@ const char* getJSON() {
   pixel_mode_str[0] = '0' + pixel_mode[0];
   pixel_mode_str[1] = mov2_enabled ? ('0' + pixel_mode[1]) : '0';
 
-  static char json[720];  // v2.13: 680→720 voor hm/vm/lt keys
+  static char json[680];
   snprintf(json, sizeof(json),
     "{"
     "\"a\":%lu,"      // uptime (s)
@@ -602,20 +607,17 @@ const char* getJSON() {
     "\"t\":\"P=%s\"," // pixel_on_str — P= prefix voorkomt getal-conversie in Sheets
     "\"u\":\"%s\","   // pixel_mode_str
     "\"v\":%d,"       // home_mode (0/1)
-    "\"w\":%d,"       // mov1_triggers
-    "\"x\":%d,"       // mov2_triggers
-    "\"y\":%d,"       // mov1_light (0/1)
-    "\"z\":%d,"       // mov2_light (0/1)
+    "\"w\":%d,"       // mov1_triggers (/min)
+    "\"x\":%d,"       // mov2_triggers (/min)
+    "\"y\":%d,"       // mov1_light (lamp aan 0/1)
+    "\"z\":%d,"       // mov2_light (lamp aan 0/1)
     "\"aa\":%d,"      // beam_value (0-100)
     "\"ab\":%d,"      // beam_alert (0/1)
     "\"ac\":%d,"      // wifi_rssi (dBm)
     "\"ad\":%d,"      // free_heap (%)
     "\"ae\":%u,"      // largest_block (KB)
     "\"af\":%u,"      // min_free_heap (KB)
-    "\"ag\":%d,"      // ds_count
-    "\"hm\":%d,"      // heating_mode (0=AUTO, 1=MANUEEL) — v2.13
-    "\"vm\":%d,"      // vent_mode    (0=AUTO, 1=MANUEEL) — v2.13
-    "\"lt\":%d",      // light_on_min (0-30 min) — v2.13 — geen trailing comma, DS-temps of } volgt
+    "\"ag\":%d",      // ds_count — geen trailing comma, DS-temps of } volgt
     (unsigned long)uptime_sec,
     heating_on, heating_setpoint, tstat_on,
     isnan(temp_dht) ? 0.0f : temp_dht,   // v2.7: NaN-guard — anders "nan" in JSON
@@ -633,8 +635,7 @@ const char* getJSON() {
     (int)((ESP.getFreeHeap() * 100) / ESP.getHeapSize()),
     (unsigned)(ESP.getMaxAllocHeap() / 1024),
     (unsigned)(ESP.getMinFreeHeap() / 1024),
-    ds_count,
-    heating_mode, vent_mode, light_on_min  // v2.13: hm, vm, lt
+    ds_count
   );
 
   // Extra DS18B20 sensoren vanaf index 1 (index 0 = primair, zit al in "f")
@@ -1488,7 +1489,7 @@ void setup() {
     p->printf("%d &deg;C", heating_setpoint);
     p->printf("</td><td class=\"control\"><form action=\"/set_setpoint\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\"><input type=\"range\" class=\"slider\" name=\"setpoint\" min=\"10\" max=\"30\" value=\"%d\" onchange=\"submitAjax(this.form);\"></form></td></tr>", heating_setpoint);
     p->print(F("<tr><td class=\"label\">Verwarming AUTO</td><td class=\"value\">"));
-    // v2.13: dot — teal als AUTO, grijs als MANUEEL
+    // v2.16: dot — teal als AUTO, grijs als MANUEEL
     p->printf("<span class='dot' style='background:%s'></span>", heating_mode == 0 ? "#1a9e6e" : "#bbb");
     p->printf("</td><td class=\"control\"><form action=\"/toggle_heating_auto\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\"><label class=\"switch\"><input type=\"checkbox\" %s onchange=\"submitAjax(this.form);\"><span class=\"slider-switch\"></span></label></form></td></tr>",
       heating_mode == 0 ? "checked" : "");
@@ -1496,7 +1497,7 @@ void setup() {
     p->printf("%d %%", vent_percent);
     p->printf("</td><td class=\"control\"><form action=\"/set_vent\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\"><input type=\"range\" class=\"slider\" name=\"vent\" min=\"0\" max=\"100\" value=\"%d\" onchange=\"submitAjax(this.form);\"></form></td></tr>", vent_percent);
     p->print(F("<tr><td class=\"label\">Ventilatie AUTO</td><td class=\"value\">"));
-    // v2.13: dot — lichtblauw als AUTO, grijs als MANUEEL
+    // v2.16: dot — lichtblauw als AUTO, grijs als MANUEEL
     p->printf("<span class='dot' style='background:%s'></span>", vent_mode == 0 ? "#3aafe0" : "#bbb");
     p->printf("</td><td class=\"control\"><form action=\"/toggle_vent_auto\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\"><label class=\"switch\"><input type=\"checkbox\" %s onchange=\"submitAjax(this.form);\"><span class=\"slider-switch\"></span></label></form></td></tr>",
       vent_mode == 0 ? "checked" : "");
@@ -1533,18 +1534,17 @@ void setup() {
     p->print(light_ldr);
     p->print(F("</td><td class=\"control\"></td></tr>"
       "<tr><td class=\"label\">MOV1</td><td class=\"value\">"));
-    // v2.14: dot — rood als recent beweging (triggers>0), ongeacht licht
+    // v2.16: dot — rood als recent beweging (triggers>0), ongeacht licht
     p->printf("<span class='dot' style='background:%s'></span>", mov1_triggers > 0 ? "#c00" : "#bbb");
     p->print(F("</td><td class=\"control\"></td></tr>"));
     if (mov2_enabled) {
       p->print(F("<tr><td class=\"label\">MOV2</td><td class=\"value\">"));
-      // v2.14: dot — rood als recent beweging (triggers>0), ongeacht licht
       p->printf("<span class='dot' style='background:%s'></span>", mov2_triggers > 0 ? "#c00" : "#bbb");
       p->print(F("</td><td class=\"control\"></td></tr>"));
     }
-    // v2.13: Licht-aan tijd slider (0–30 min + 5s overtime)
-    p->print(F("<tr><td class=\"label\">Licht tijd (min)</td><td class=\"value\" id=\"light-time-val\">"));
-    p->printf("%d min (+ 5s)", light_on_min);
+    // v2.16: Licht-aan tijd slider (0-30 min + 5s overtime)
+    p->print(F("<tr><td class=\"label\">Licht tijd (min)</td><td class=\"value\">"));
+    p->printf("%d min", light_on_min);
     p->printf("</td><td class=\"control\"><form action=\"/set_light_on_min\" method=\"get\" "
       "onsubmit=\"event.preventDefault();submitAjax(this);\">"
       "<input type=\"range\" class=\"slider\" name=\"mins\" min=\"0\" max=\"30\" value=\"%d\" "
@@ -1651,9 +1651,14 @@ void setup() {
     //   aa=beam_value, ab=beam_alert, ac=rssi, ad=free_heap%, ae=largest_block_KB, af=min_free_KB
     // v2.8: sw() helper voor sensor health indicators (loopt in browser — nul ESP32-impact)
     p->print(F("<script>"
-      // v2.12: dot(v,col) — gekleurde cirkel als v true, grijs als false
-      // lastNh: onthoudt neo-hex voor gebruik in submitAjax pixel-preview
+      // v2.16: timer fix — onafhankelijke klok, losgekoppeld van JSON-fetch
+      "var lastUptime=0;"
       "var lastNh='#bbb';"
+      "function updateClock(){"
+        "var h=document.querySelector('.header-right');"
+        "if(!h)return;"
+        "var n=new Date();"
+        "h.innerHTML=lastUptime+' s &nbsp;&nbsp;'+n.toLocaleDateString('nl-BE')+' '+n.toLocaleTimeString('nl-BE');}"
       "function dot(v,col){return '<span class=\"dot\" style=\"background:'+(v?(col||'#2a9d2a'):'#bbb')+'\"></span>';}"
       // v2.8: sw(fault, critical) — geeft ⚠ span terug, '' als geen fout
       "function sw(f,c){"
@@ -1681,26 +1686,23 @@ void setup() {
       "else if(lbl.includes('Heating setpoint')) td.textContent=data.c+' \u00b0C';"
       "else if(lbl.includes('Ventilatie snelheid')) td.textContent=data.g+' %';"
       "else if(lbl.includes('Hardware thermostaat')) td.innerHTML=dot(data.d,'#2a9d2a');"
-      // v2.13: hm=0 → AUTO (teal), hm=1 → MANUEEL (grijs)
-      "else if(lbl.includes('Verwarming AUTO')) td.innerHTML=dot(data.hm==0,'#1a9e6e');"
       "else if(lbl.includes('Verwarming aan')) td.innerHTML=dot(data.b,'#e05c00');"
-      // v2.13: vm=0 → AUTO (lichtblauw), vm=1 → MANUEEL (grijs)
-      "else if(lbl.includes('Ventilatie AUTO')) td.innerHTML=dot(data.vm==0,'#3aafe0');"
       "else if(lbl.includes('Zonlicht')) td.innerHTML=data.n+' lux'+sw(data.n>=65000);"
       "else if(lbl.includes('LDR')) td.textContent=data.m;"
-      // v2.14: MOV1/MOV2 dot reageert op beweging (w>0/x>0), ongeacht licht
-      "else if(lbl==='MOV1') td.innerHTML=dot(data.w>0,'#c00');"
-      "else if(lbl==='MOV2') td.innerHTML=dot(data.x>0,'#c00');"
-      // v2.13: licht-aan tijd updaten (lt = light_on_min)
-      "else if(lbl.includes('Licht tijd')) td.textContent=data.lt+' min (+ 5s)';"
       "else if(lbl.includes('NeoPixel Kleur')){"
         "td.textContent=data.q+', '+data.r+', '+data.s;"
         "var cp=document.getElementById('colorPicker');"
         "if(cp) cp.value='#'+toHex(data.q)+toHex(data.r)+toHex(data.s);}"
       "else if(lbl==='Bed modus') td.innerHTML=dot(data.p,'#7b2fbe');"
       "else if(lbl==='Thuis') td.innerHTML=dot(data.v,'#2a9d2a');"
+      // v2.16: nieuwe dot-handlers — sp.style.background (geen innerHTML, geen quote issues)
+      "else if(lbl==='MOV1'){var sp=td.querySelector('.dot');if(sp)sp.style.background=data.w>0?'#c00':'#bbb';}"
+      "else if(lbl==='MOV2'){var sp=td.querySelector('.dot');if(sp)sp.style.background=data.x>0?'#c00':'#bbb';}"
       "else if(lbl.includes('MOV1 PIR trig')) td.textContent=data.w;"
       "else if(lbl.includes('MOV2 PIR trig')) td.textContent=data.x;"
+      // v2.19: Dim snelheid + Licht tijd — slider DOM-waarde lezen (geen JSON key)
+      "else if(lbl.includes('Dim snelheid')){var sl=document.querySelector('input[name=duration]');if(sl)td.textContent=sl.value+' s';}"
+      "else if(lbl.includes('Licht tijd')){var sl=document.querySelector('input[name=mins]');if(sl)td.textContent=sl.value+' min';}"
       "else if(lbl.includes('Beam sensor waarde')) td.textContent=data.aa;"
       "else if(lbl.includes('Beam alert')) td.innerHTML=dot(data.ab,'#c00');"
       "else if(lbl.includes('WiFi RSSI')) td.innerHTML=data.ac+' dBm'"
@@ -1725,8 +1727,8 @@ void setup() {
       "if(homeT) homeT.checked=(data.v==1);"
       "document.querySelectorAll('td.control form[action^=\"/toggle_pixel_mode\"] input').forEach((cb,i)=>{"
         "cb.checked=(data.u&&data.u.charAt(i)==='1');});"
-      "const hdr=document.querySelector('.header-right');"
-      "if(hdr){const now=new Date();hdr.innerHTML=data.a+' s &nbsp;&nbsp; '+now.toLocaleDateString('nl-BE')+' '+now.toLocaleTimeString('nl-BE');}"
+      // v2.16: uptime opslaan voor updateClock(), header update zit in updateClock()
+      "lastUptime=data.a;"
       "}).catch(e=>console.error(e));}"
       "function submitAjax(form){"
       "const p=new URLSearchParams();let px=null;"
@@ -1739,7 +1741,12 @@ void setup() {
       // v2.12: pixel preview via dot met lastNh (meest recente neo-kleur)
       "if(px&&px.idx!==null) document.querySelectorAll('td.value').forEach(td=>{const l=td.previousElementSibling;if(l&&l.textContent.includes('Pixel '+px.idx)) td.innerHTML=dot(px.state,lastNh);});"
       "fetch(url).then(r=>{if(r.ok){updateValues();const s=document.getElementById('status');if(s){s.textContent='\u2713';setTimeout(()=>s.textContent='',1500);}}}).catch(e=>console.error(e));}"
-      "window.addEventListener('load',()=>{updateValues();setInterval(updateValues,3000);});"
+      // v2.16: DOMContentLoaded betrouwbaarder dan load voor inline scripts
+      // updateClock elke 1s onafhankelijk van JSON-fetch
+      "document.addEventListener('DOMContentLoaded',function(){"
+        "updateValues();"
+        "setInterval(updateValues,3000);"
+        "setInterval(updateClock,1000);});"
       "function setNeoColor(hex){"
         "var r=parseInt(hex.slice(1,3),16);"
         "var g=parseInt(hex.slice(3,5),16);"
@@ -2222,12 +2229,12 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
   request->send(200, "text/plain", "OK");
   });
 
-  // v2.13: Licht-aan tijd slider (0–30 min + 5s overtime)
+  // v2.16: Licht-aan tijd slider (0-30 min + 5s overtime)
   server.on("/set_light_on_min", HTTP_GET, [](AsyncWebServerRequest *request) {
     if (request->hasParam("mins")) {
       light_on_min = request->getParam("mins")->value().toInt();
       light_on_min = constrain(light_on_min, 0, 30);
-      preferences.putInt(NVS_LIGHT_ON_MIN, light_on_min);  // direct opslaan
+      preferences.putInt(NVS_LIGHT_ON_MIN, light_on_min);
     }
     request->send(200, "text/plain", "OK");
   });
@@ -2411,11 +2418,13 @@ void loop() {
 
   if (!p1 && last1) { 
     mov1_off_time = millis() + lightOnDuration();
-    pushEvent(mov1Times, MOV_BUF_SIZE); 
+    pushEvent(mov1Times, MOV_BUF_SIZE);
+    mov1_triggers = countRecent(mov1Times, MOV_BUF_SIZE);  // v2.18: direct update, niet wachten op 60s
   }
   if (!p2 && last2) { 
     mov2_off_time = millis() + lightOnDuration();
-    pushEvent(mov2Times, MOV_BUF_SIZE); 
+    pushEvent(mov2Times, MOV_BUF_SIZE);
+    mov2_triggers = countRecent(mov2Times, MOV_BUF_SIZE);  // v2.18: direct update
   }
 
   last1 = p1; last2 = p2;
