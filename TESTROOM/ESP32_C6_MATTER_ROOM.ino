@@ -10,7 +10,7 @@
 //   app1,     app,  ota_1,   0x610000, 0x600000,
 //   spiffs,   data, spiffs,  0xC10000, 0x3F0000,
 //
-// 12apr26 v2.20 Crash-stabiliteit fix (3 maatregelen):
+// 13apr26 v2.20 Crash-stabiliteit fix (3 maatregelen):
 //               1) NVS crashlog feedback loop: max 1x schrijven per low-heap episode
 //               2) Matter update-interval 5s → 30s (6× minder heap-fragmentatiedruk)
 //               3) CO2 pulseIn() timeout 200ms → 50ms (400ms → 100ms blocking per 60s)
