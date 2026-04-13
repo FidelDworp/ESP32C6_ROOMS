@@ -10,11 +10,16 @@
 //   app1,     app,  ota_1,   0x610000, 0x600000,
 //   spiffs,   data, spiffs,  0xC10000, 0x3F0000,
 //
+// 13apr26 v2.21 KISS: heating_mode + vent_mode verwijderd (waren niet NVS-persistent, geen meerwaarde)
+//               Matter onChangeMode → home_mode (UIT=Weg, HEAT=Thuis) + NVS opslaan
+//               Ventilatie: CO2 dot in value-cel (grijs=slider, lichtblauw=CO2 stuurt)
+//               Slider volgt werkelijke vent_percent via JS (data.g + slider.value update)
+//               Vent default 0% → 25%
 // 13apr26 v2.20 Crash-stabiliteit fix (3 maatregelen):
 //               1) NVS crashlog feedback loop: max 1x schrijven per low-heap episode
 //               2) Matter update-interval 5s → 30s (6× minder heap-fragmentatiedruk)
 //               3) CO2 pulseIn() timeout 200ms → 50ms (400ms → 100ms blocking per 60s)
-// 12apr26 v2.19 Dim snelheid + Licht tijd: JS handler leest slider DOM-waarde, geen JSON key nodig
+// 13apr26 v2.19 Dim snelheid + Licht tijd: JS handler leest slider DOM-waarde, geen JSON key nodig
 //               Licht tijd format: "N min" (geen "(+ 5s)" meer)
 // 12apr26 v2.18 MOV triggers direct herberekend bij PIR-event (niet meer wachten op 60s-gate)
 // 12apr26 v2.17 JSON terug naar origineel (680 bytes, geen hm/vm/lt keys)
@@ -242,7 +247,7 @@ char mac_address[20]       = "";              // Voor display in settings
 
 // Configureerbare defaults
 int heating_setpoint_default = 20;
-int vent_request_default     = 0;
+int vent_request_default     = 25;  // v2.21: default 0→25%
 float dew_safety_margin      = 2.0;
 int home_mode_default        = 0;              // 0 = Weg
 int light_dark_threshold     = 50;
@@ -279,10 +284,9 @@ bool rescan_ds_requested = false;  // v2.4 FIX 5: vlag voor async-safe rescan va
 float room_temp = 0.0;      // Berekende kamertemp: primair temp_ds, backup temp_dht
 char temp_melding[48] = ""; // v2.7: char[] i.p.v. String — geen heap-alloc in 60s-gate
 int heating_setpoint = 20;  // aa: Gewenste temp (integer, default 20)
-int heating_on = 0;         // y: Verwarming aan (0/1, auto of manueel)
-int vent_percent = 0;       // z: Ventilatie % (0-100, auto of manueel)
-int heating_mode = 0;       // 0 = AUTO, 1 = MANUEEL voor heating
-int vent_mode = 0;          // 0 = AUTO, 1 = MANUEEL voor ventilation (slider zet naar 1)
+int heating_on = 0;         // b: Verwarming aan (0/1)
+int vent_percent = 0;       // g: Ventilatie % (0-100)
+// v2.21: heating_mode + vent_mode verwijderd — verwarming altijd AUTO, ventilatie altijd via slider of CO2
 int home_mode = 1;          // 1 = Thuis (hardware thermostaat prioriteit), 0 = Uit (ESP regelt met anti-condens)
 
 
@@ -884,7 +888,7 @@ void setup() {
     preferences.putString(NVS_STATIC_IP, "192.168.xx.xx");
     
     preferences.putInt(NVS_HEATING_SETPOINT, 20);
-    preferences.putInt(NVS_VENT_REQUEST, 0);
+    preferences.putInt(NVS_VENT_REQUEST, 25);  // v2.21: default 25%
     preferences.putFloat(NVS_DEW_MARGIN, 2.0);
     preferences.putInt(NVS_HOME_MODE, 0);
     preferences.putInt(NVS_LIGHT_THRESHOLD, 50);
@@ -923,7 +927,7 @@ void setup() {
     strlcpy(static_ip_str, tmp.c_str(), sizeof(static_ip_str)); }
   
   heating_setpoint_default = preferences.getInt(NVS_HEATING_SETPOINT, 20);
-  vent_request_default     = preferences.getInt(NVS_VENT_REQUEST, 0);
+  vent_request_default     = preferences.getInt(NVS_VENT_REQUEST, 25);  // v2.21: default 25%
   dew_safety_margin        = preferences.getFloat(NVS_DEW_MARGIN, 2.0);
   home_mode_default        = preferences.getInt(NVS_HOME_MODE, 0);
   light_dark_threshold     = preferences.getInt(NVS_LIGHT_THRESHOLD, 50);
@@ -1254,15 +1258,18 @@ void setup() {
       Serial.printf(F("[HomeKit] Thermostat setpoint → %d °C\n"), heating_setpoint);
       return true;
     });
-    // Mode UIT → manueel stop; mode HEAT → auto hervat
+    // v2.21: UIT → home_mode=0 (Weg, anti-condens actief); HEAT → home_mode=1 (Thuis)
+    // Synchroon met webUI "Thuis" toggle + NVS persistent
     matter_thermostat.onChangeMode([](uint8_t mode) -> bool {
       if (matter_ignore_cb) return true;
       if (mode == MatterThermostat::THERMOSTAT_MODE_OFF) {
-        heating_mode = 1; heating_on = 0;
-        Serial.println(F("[HomeKit] Thermostat → UIT (manueel stop)"));
+        home_mode = 0;
+        preferences.putInt(NVS_HOME_MODE_STATE, home_mode);
+        Serial.println(F("[HomeKit] Thermostat → UIT → Weg-modus"));
       } else {
-        heating_mode = 0;
-        Serial.println(F("[HomeKit] Thermostat → HEAT (auto hervat)"));
+        home_mode = 1;
+        preferences.putInt(NVS_HOME_MODE_STATE, home_mode);
+        Serial.println(F("[HomeKit] Thermostat → HEAT → Thuis-modus"));
       }
       return true;
     });
@@ -1493,19 +1500,13 @@ void setup() {
     p->print(F("<tr><td class=\"label\">Heating setpoint</td><td class=\"value\">"));
     p->printf("%d &deg;C", heating_setpoint);
     p->printf("</td><td class=\"control\"><form action=\"/set_setpoint\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\"><input type=\"range\" class=\"slider\" name=\"setpoint\" min=\"10\" max=\"30\" value=\"%d\" onchange=\"submitAjax(this.form);\"></form></td></tr>", heating_setpoint);
-    p->print(F("<tr><td class=\"label\">Verwarming AUTO</td><td class=\"value\">"));
-    // v2.16: dot — teal als AUTO, grijs als MANUEEL
-    p->printf("<span class='dot' style='background:%s'></span>", heating_mode == 0 ? "#1a9e6e" : "#bbb");
-    p->printf("</td><td class=\"control\"><form action=\"/toggle_heating_auto\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\"><label class=\"switch\"><input type=\"checkbox\" %s onchange=\"submitAjax(this.form);\"><span class=\"slider-switch\"></span></label></form></td></tr>",
-      heating_mode == 0 ? "checked" : "");
     p->print(F("<tr><td class=\"label\">Ventilatie snelheid %</td><td class=\"value\">"));
     p->printf("%d %%", vent_percent);
+    // v2.21: CO2 dot — lichtblauw als CO2 stuurt, grijs als slider bepaalt
+    p->printf("<span class='dot' style='background:%s;margin-left:5px' title='CO2'>",
+      (co2_enabled && co2 > 0) ? "#3aafe0" : "#bbb");
+    p->print(F("</span>"));
     p->printf("</td><td class=\"control\"><form action=\"/set_vent\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\"><input type=\"range\" class=\"slider\" name=\"vent\" min=\"0\" max=\"100\" value=\"%d\" onchange=\"submitAjax(this.form);\"></form></td></tr>", vent_percent);
-    p->print(F("<tr><td class=\"label\">Ventilatie AUTO</td><td class=\"value\">"));
-    // v2.16: dot — lichtblauw als AUTO, grijs als MANUEEL
-    p->printf("<span class='dot' style='background:%s'></span>", vent_mode == 0 ? "#3aafe0" : "#bbb");
-    p->printf("</td><td class=\"control\"><form action=\"/toggle_vent_auto\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\"><label class=\"switch\"><input type=\"checkbox\" %s onchange=\"submitAjax(this.form);\"><span class=\"slider-switch\"></span></label></form></td></tr>",
-      vent_mode == 0 ? "checked" : "");
     p->print(F("<tr><td class=\"label\">Thuis</td><td class=\"value\">"));
     // v2.12: dot — groen als thuis
     p->printf("<span class='dot' style='background:%s'></span>", home_mode ? "#2a9d2a" : "#bbb");
@@ -1689,7 +1690,10 @@ void setup() {
       "else if(lbl.includes('CO')) td.innerHTML=data.k+' ppm'+sw(data.k==0);"
       "else if(lbl.includes('Stof')) td.innerHTML=data.l+sw(data.l==0);"
       "else if(lbl.includes('Heating setpoint')) td.textContent=data.c+' \u00b0C';"
-      "else if(lbl.includes('Ventilatie snelheid')) td.textContent=data.g+' %';"
+      "else if(lbl.includes('Ventilatie snelheid')){"
+        "td.innerHTML=data.g+' %'+(data.k>0?\"<span class='dot' style='background:#3aafe0;margin-left:5px'></span>\":\"<span class='dot' style='background:#bbb;margin-left:5px'></span>\");"
+        "var sl=document.querySelector('input[name=vent]');"
+        "if(sl&&sl!==document.activeElement) sl.value=data.g;}"
       "else if(lbl.includes('Hardware thermostaat')) td.innerHTML=dot(data.d,'#2a9d2a');"
       "else if(lbl.includes('Verwarming aan')) td.innerHTML=dot(data.b,'#e05c00');"
       "else if(lbl.includes('Zonlicht')) td.innerHTML=data.n+' lux'+sw(data.n>=65000);"
@@ -2091,7 +2095,7 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
   preferences.putString(NVS_STATIC_IP, request->hasArg("static_ip") ? request->arg("static_ip").c_str() : "");
 
   preferences.putInt(NVS_HEATING_SETPOINT, request->hasArg("heat_sp")        ? request->arg("heat_sp").toInt()        : 20);
-  preferences.putInt(NVS_VENT_REQUEST,     request->hasArg("vent_req")        ? request->arg("vent_req").toInt()       : 0);
+  preferences.putInt(NVS_VENT_REQUEST,     request->hasArg("vent_req")        ? request->arg("vent_req").toInt()       : 25);  // v2.21: default 25%
   preferences.putFloat(NVS_DEW_MARGIN,     request->hasArg("dew_margin")      ? request->arg("dew_margin").toFloat()   : 2.0);
   preferences.putInt(NVS_HOME_MODE,        request->hasArg("home_mode")       ? request->arg("home_mode").toInt()      : 0);
   preferences.putInt(NVS_LDR_DARK,        request->hasArg("ldr_dark")        ? request->arg("ldr_dark").toInt()       : 50);
@@ -2256,28 +2260,15 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
   });
 
 
-  // Slider Ventilation % (gebruik zet MANUEEL)
+  // Slider Ventilation %
   server.on("/set_vent", HTTP_GET, [](AsyncWebServerRequest *request) {
     if (request->hasParam("vent")) {
       vent_percent = request->getParam("vent")->value().toInt();
       vent_percent = constrain(vent_percent, 0, 100);
-      vent_mode = 1;  // Slider gebruik → MANUEEL voor ventilation
     }
     request->send(200, "text/plain", "OK");
   });
 
-
-  // Toggle Heating AUTO/MANUEEL (aparte toggle)
-  server.on("/toggle_heating_auto", HTTP_GET, [](AsyncWebServerRequest *request) {
-    heating_mode = 1 - heating_mode;  // Schakelt tussen 0 (AUTO) en 1 (MANUEEL)
-    request->send(200, "text/plain", "OK");
-  });
-
-  // Toggle Ventilation AUTO/MANUEEL (aparte toggle)
-  server.on("/toggle_vent_auto", HTTP_GET, [](AsyncWebServerRequest *request) {
-    vent_mode = 1 - vent_mode;  // Schakelt tussen 0 (AUTO) en 1 (MANUEEL)
-    request->send(200, "text/plain", "OK");
-  });
 
   // Toggle Thuis/Uit
   server.on("/toggle_home", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -2519,16 +2510,13 @@ void loop() {
 
 
   // Thermostaat pinlezing + verwarmingslogica — buiten 60s-gate voor snelle respons
+  // v2.21: altijd AUTO — setpoint + dauwpuntbeveiliging (heating_mode verwijderd)
   tstat_on = !digitalRead(TSTAT_PIN);
   float effective_setpoint = max((float)heating_setpoint, dew + dew_safety_margin);
-  if (heating_mode == 1) {  // MANUEEL
-    heating_on = 1;
-  } else {  // AUTO
-    if (home_mode == 1 && tstat_enabled) {  // Thuis + thermostaat aanwezig → volg hardware
-      heating_on = tstat_on;
-    } else {  // Thuis zonder thermostaat, of Weg → ESP regelt met anti-condens bescherming
-      heating_on = (room_temp < (effective_setpoint - 0.5f)) ? 1 : 0;
-    }
+  if (home_mode == 1 && tstat_enabled) {
+    heating_on = tstat_on;              // Thuis + hardware TSTAT → volg hardware
+  } else {
+    heating_on = (room_temp < (effective_setpoint - 0.5f)) ? 1 : 0;  // Anti-condens altijd actief
   }
 
   // v2.4 FIX 5: Rescan DS18B20 vanuit loop() (async-safe — delay(750) is hier WDT-safe)
@@ -2613,10 +2601,11 @@ void loop() {
   }
 
 
-  // Ventilation logica (slider zet mode = 1)
-  if (vent_mode == 0) {  // AUTO
+  // Ventilation logica — v2.21: CO2-gestuurd als sensor leest, anders slider-waarde bewaren
+  if (co2_enabled && co2 > 0) {
     vent_percent = map(constrain(co2, 400, 800), 400, 800, 0, 100);
-  }  // MANUEEL: vent_percent = slider-waarde (gezet in handler)
+  }
+  // co2 = 0 of uitgeschakeld → vent_percent blijft op slider-waarde
 
 
 
@@ -2647,7 +2636,6 @@ void loop() {
     Serial.printf("DS18B20 Temp1        : %.2f °C\n", temp_ds);
     Serial.printf("Room temp            : %.1f °C %s\n", room_temp, temp_melding);
     Serial.printf("Heating setpoint     : %d °C\n", heating_setpoint);
-    Serial.printf("Heating mode         : %s\n", heating_mode == 0 ? "AUTO" : "MANUEEL");
     Serial.printf("Thuis/Uit modus      : %s\n", home_mode ? "Thuis" : "Uit");
     if (tstat_enabled) {
       Serial.printf("Hardware thermostaat : %s\n", tstat_on ? "AAN" : "UIT");
@@ -2661,7 +2649,6 @@ void loop() {
       Serial.printf("CO₂                  : %d ppm\n", co2);
     }
     Serial.printf("Ventilatie snelheid %%         : %d %%\n", vent_percent);
-    Serial.printf("Ventilation mode     : %s\n", vent_mode == 0 ? "AUTO" : "MANUEEL");
     if (sun_light_enabled) {
       Serial.printf("Zonlicht             : %d lux\n", sun_light);
     }
