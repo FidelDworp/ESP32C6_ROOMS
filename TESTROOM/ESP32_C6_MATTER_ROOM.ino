@@ -10,6 +10,10 @@
 //   app1,     app,  ota_1,   0x610000, 0x600000,
 //   spiffs,   data, spiffs,  0xC10000, 0x3F0000,
 //
+// 12apr26 v2.20 Crash-stabiliteit fix (3 maatregelen):
+//               1) NVS crashlog feedback loop: max 1x schrijven per low-heap episode
+//               2) Matter update-interval 5s → 30s (6× minder heap-fragmentatiedruk)
+//               3) CO2 pulseIn() timeout 200ms → 50ms (400ms → 100ms blocking per 60s)
 // 12apr26 v2.19 Dim snelheid + Licht tijd: JS handler leest slider DOM-waarde, geen JSON key nodig
 //               Licht tijd format: "N min" (geen "(+ 5s)" meer)
 // 12apr26 v2.18 MOV triggers direct herberekend bij PIR-event (niet meer wachten op 60s-gate)
@@ -534,8 +538,9 @@ void readDS18B20temps() {
 // ============== EINDE DS18B20 MULTI-SENSOR ==============
 
 int readCO2() {
-  unsigned long h = pulseIn(CO2_PWM, HIGH, 200000);  // Timeout 0.2s i.p.v. 0.1s (i.p.v. 2s vroeger: blocking!)
-  unsigned long l = pulseIn(CO2_PWM, LOW, 200000);
+  // v2.20 FIX 3: timeout 200ms → 50ms per call (totaal 100ms i.p.v. 400ms bij geen signaal)
+  unsigned long h = pulseIn(CO2_PWM, HIGH, 50000);
+  unsigned long l = pulseIn(CO2_PWM, LOW,  50000);
   return (h < 100 || l < 100) ? 0 : (int)(5000.0 * (h - 2.0) / (h + l - 4.0));
 }
 
@@ -2538,11 +2543,13 @@ void loop() {
   last_slow = millis();
   uptime_sec = millis() / 1000;
 
-  // v2.4 FIX 7: Heap-bewaking — schrijf naar NVS als largest block < 25 KB
-  // Zo is er na een crash bewijs van wat er voorafging
+  // v2.20 FIX 1: Heap-bewaking — schrijf naar NVS als largest block < 25 KB
+  // Max 1x per low-heap episode — voorkomt feedback loop (elke begin()/end() alloceert NVS-buffer)
   {
     uint32_t lb = ESP.getMaxAllocHeap();
-    if (lb < 25000) {
+    static bool crash_logged_this_episode = false;
+    if (lb < 25000 && !crash_logged_this_episode) {
+      crash_logged_this_episode = true;
       Preferences crashPrefs;
       crashPrefs.begin("crash-log", false);
       uint32_t cnt = crashPrefs.getUInt("count", 0) + 1;
@@ -2552,6 +2559,8 @@ void loop() {
       crashPrefs.putString("reason", reason);
       crashPrefs.end();
       Serial.printf("[HEAP] ⚠️  Largest block %u KB — crash-log geschreven (#%u)\n", lb / 1024, cnt);
+    } else if (lb >= 25000) {
+      crash_logged_this_episode = false;  // reset voor volgende episode
     }
   }
 
@@ -2698,8 +2707,9 @@ void loop() {
     Serial.println("─────────────────────────────────────\n");
   }
 
-  // v2.9: Matter sensor-update elke 5s (buiten AP-mode)
-  if (!ap_mode_active && millis() - last_matter_update > 5000) {
+  // v2.20 FIX 2: Matter update elke 30s i.p.v. 5s — 6× minder heap-fragmentatiedruk
+  // PIR/pixels reageren direct in loop(), niet via Matter — geen functioneel nadeel
+  if (!ap_mode_active && millis() - last_matter_update > 30000) {
     last_matter_update = millis();
     update_matter_sensors();
   }
