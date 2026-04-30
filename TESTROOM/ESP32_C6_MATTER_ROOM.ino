@@ -1,4 +1,4 @@
-// ESP32-C6_MATTER_ROOM_15mar_2200.ino = Photon based distributed Home automation system, converted to ESP32C6 controllers.
+// ESP32-C6_MATTER_ROOM_01may_v2_22.ino = Photon based distributed Home automation system, converted to ESP32C6 controllers.
 // Developed by Filip Delannoy in december '25.
 // Bereikbaar op (bijvb) http://eetplaats.local of http://192.168.0.80 => Andere controller: Naam (sectie DNS/MDNS) + static IP aanpassen!
 //
@@ -10,6 +10,10 @@
 //   app1,     app,  ota_1,   0x610000, 0x600000,
 //   spiffs,   data, spiffs,  0xC10000, 0x3F0000,
 //
+// 01may26 v2.22 /capabilities endpoint toegevoegd voor Zarlar Portal verlichting pagina
+//               Geeft pixel nicknames array terug als JSON: {"pixels":["Tafel lamp","Keuken",...]}
+//               Gebruikt bestaande pixel_nicknames[] array, streaming output, heap-safe (~100 bytes tijdens request)
+//               Portal UI kan nu echte pixel namen tonen ipv "Pixel 0", "Pixel 1"
 // 13apr26 v2.21 KISS: heating_mode + vent_mode verwijderd (waren niet NVS-persistent, geen meerwaarde)
 //               Matter onChangeMode → home_mode (UIT=Weg, HEAT=Thuis) + NVS opslaan
 //               Ventilatie: CO2 dot in value-cel (grijs=slider, lichtblauw=CO2 stuurt)
@@ -1772,6 +1776,26 @@ void setup() {
   // === JSON ENDPOINT ===
     server.on("/json", HTTP_GET, [](AsyncWebServerRequest *request) {
     request->send(200, "application/json", getJSON());
+  });
+
+  // === CAPABILITIES ENDPOINT (v2.22) ===
+  // Geeft pixel nicknames terug voor portal UI
+  // Heap impact: ~100 bytes tijdens request (streaming), geen persistent memory
+  server.on("/capabilities", HTTP_GET, [](AsyncWebServerRequest *request) {
+    AsyncResponseStream *p = request->beginResponseStream("application/json");
+    p->print(F("{\"pixels\":["));
+    for (int i = 0; i < pixels_num; i++) {
+      if (i > 0) p->print(',');
+      p->print('"');
+      // Escape quotes in nickname (JSON safety)
+      for (int j = 0; pixel_nicknames[i][j] != '\0' && j < 32; j++) {
+        if (pixel_nicknames[i][j] == '"') p->print("\\\"");
+        else p->print(pixel_nicknames[i][j]);
+      }
+      p->print('"');
+    }
+    p->print(F("]}"));
+    request->send(p);
   });
 
 
