@@ -1,117 +1,20 @@
-// ESP32-C6_MATTER_ROOM_01may_v2_22.ino = Photon based distributed Home automation system, converted to ESP32C6 controllers.
-// Developed by Filip Delannoy in december '25.
-// Bereikbaar op (bijvb) http://eetplaats.local of http://192.168.0.80 => Andere controller: Naam (sectie DNS/MDNS) + static IP aanpassen!
+// ESP32-C6 MATTER ROOM v2.23 — 8 mei 2026
+// Zarlar thuisautomatisering — Room controller met Matter/Apple Home integratie
+// Filip Delannoy — Zarlardinge (BE)
 //
-// PARTITIETABEL: Compileer met "partitions.csv" in de schetsmap (Custom partition table in Arduino IDE board settings):
-//   # Name,   Type, SubType, Offset,   Size,    Flags
-//   nvs,      data, nvs,     0x9000,   0x5000,
-//   otadata,  data, ota,     0xe000,   0x2000,
-//   app0,     app,  ota_0,   0x10000,  0x600000,
-//   app1,     app,  ota_1,   0x610000, 0x600000,
-//   spiffs,   data, spiffs,  0xC10000, 0x3F0000,
+// PARTITIETABEL: Compileer met "partitions_16mb.csv" in de schetsmap (Custom partition scheme):
+//   nvs (20 KB), otadata (8 KB), app0 (6 MB), app1 (6 MB), spiffs (~4 MB)
 //
-// 01may26 v2.22 /capabilities endpoint toegevoegd voor Zarlar Portal verlichting pagina
-//               Geeft pixel nicknames array terug als JSON: {"pixels":["Tafel lamp","Keuken",...]}
-//               Gebruikt bestaande pixel_nicknames[] array, streaming output, heap-safe (~100 bytes tijdens request)
-//               Portal UI kan nu echte pixel namen tonen ipv "Pixel 0", "Pixel 1"
-// 13apr26 v2.21 KISS: heating_mode + vent_mode verwijderd (waren niet NVS-persistent, geen meerwaarde)
-//               Matter onChangeMode → home_mode (UIT=Weg, HEAT=Thuis) + NVS opslaan
-//               Ventilatie: CO2 dot in value-cel (grijs=slider, lichtblauw=CO2 stuurt)
-//               Slider volgt werkelijke vent_percent via JS (data.g + slider.value update)
-//               Vent default 0% → 25%
-// 13apr26 v2.20 Crash-stabiliteit fix (3 maatregelen):
-//               1) NVS crashlog feedback loop: max 1x schrijven per low-heap episode
-//               2) Matter update-interval 5s → 30s (6× minder heap-fragmentatiedruk)
-//               3) CO2 pulseIn() timeout 200ms → 50ms (400ms → 100ms blocking per 60s)
-// 13apr26 v2.19 Dim snelheid + Licht tijd: JS handler leest slider DOM-waarde, geen JSON key nodig
-//               Licht tijd format: "N min" (geen "(+ 5s)" meer)
-// 12apr26 v2.18 MOV triggers direct herberekend bij PIR-event (niet meer wachten op 60s-gate)
-// 12apr26 v2.17 JSON terug naar origineel (680 bytes, geen hm/vm/lt keys)
-//               AUTO-dots en Licht tijd tonen correct via server-render (geen live JS-update nodig)
-// 12apr26 v2.16 Heropbouw na v2.13/v2.14/v2.15 (NG — JS grote block vervangen brak alles)
-//               Timer fix: DOMContentLoaded + onafhankelijke updateClock() elke 1s
-//               Licht tijd slider (0-30 min + 5s overtime, NVS light_on_min, default 0)
-//               Verwarming AUTO (teal #1a9e6e) + Ventilatie AUTO (blauw #3aafe0) cirkels
-//               MOV1/MOV2 dots: rood bij beweging (w>0/x>0), ongeacht licht
-//               Nieuwe JSON keys hm/vm/lt (heating_mode, vent_mode, light_on_min)
-// 12apr26 v2.12 UI: binaire waarden → gekleurde cirkels (.dot CSS), labels aangepast
-//               Bug fix: MOV AUTO-modus gebruikte hardcoded groen → nu neo_r/g/b kleur
-//               Pixel-cirkels tonen actuele neo-kleur als ze aan zijn
-//               Dode JS-code "Night mode" verwijderd (rij bestaat niet in HTML)
-// 16mar26 v2.11 /set_home endpoint toegevoegd voor dashboard HOME/UIT broadcast (Filip)
-// 15mar26 v2.10 Matter fixes + heap-optimalisatie (String → char[]):
-//               pixel_nicknames[30]: String[] → char[30][32] (~1.5KB heap gewonnen)
-//               ds_nicknames[4]: String[] → char[4][48]
-//               room_id, wifi_ssid, wifi_pass, static_ip_str, mac_address: String → char[]
-//               mdns_name volledig verwijderd (ongebruikt na MDNS.begin() verwijdering v2.9)
-//               getFormattedDateTime(): String return → const char* static buf
-//               matterNuclearReset() bk_nick[30]: String[] → char[30][32]
-//               Alle .c_str(), .isEmpty(), .toLowerCase() etc. → char[]-equivalenten
-//               MatterEnhancedColorLight → MatterColorLight (kleurpicker only, altijd aan)
-//               MatterOnOffPlugin → MatterOnOffLight voor SW1/SW2/SW3 (lamp-type → aparte tegels)
-//               HSV callback: espHsvColor_t → HsvColor_t (MatterColorLight API, zoals oude sketch)
-//               Pixel 6-8 fix: pixels.updateLength(30)+clear+show bij boot → alle fysieke LEDs uit
-//               pixels_num grens strict in alle SW3 callbacks (nooit > geconfigureerd aantal)
-//               MatterOnOffLight → MatterOnOffPlugin voor SW1/SW2/SW3 (aparte tegels in Apple Home)
-//               Thermostat onChangeMode callback: mode OFF → manueel stop, HEAT → auto hervat
-//               onChangeBrightness callback op color light: dim alle actieve pixels via fade engine
-//               pixels_num grens strict gerespecteerd in alle callbacks (nooit > geconfigureerd aantal)
-//               SW2 fix: werkt ook als mov2 uitgeschakeld (pixel 1 als gewone pixel)
-//               8 endpoints: Thermostat, HumiditySensor, 2× OccupancySensor (MOV1 altijd, MOV2 optioneel),
-//               EnhancedColorLight (globale RGB powerpixels), 3× OnOffLight (pixel 0 / pixel 1 / pixels 2+)
-//               HSV→RGB conversie voor Apple Home kleurkiezer → neo_r/g/b
-//               update_matter_sensors() elke 5s, matterNuclearReset() bewaart room-config
-//               /matter pagina: "klaar voor integratie + code" of "gepaard" + rode resetknop
-//               Sidebar "Matter" op alle pagina's
-//               #define Serial Serial0 verwijderd: niet nodig bij CDCOnBoot=default (breekt compile)
-// 15mar26 v2.8  Sensor health indicators in UI: sensorWarn() C++ helper + sw() JS helper
-//               Abnormale sensorwaarden tonen ⚠ symbool (rood=kritiek, oranje=verdacht)
-//               Optionele sensors (co2/dust/sun/mov2/beam/tstat): geen indicator als uitgeschakeld
-//               #defines voor drempelwaarden — aanpasbaar per kamer
-// 15mar26 v2.7b getJSON(): NaN-guards voor temp_dht(e), temp_ds(f), humi(h), dew(i)
-//               zonder guard: NaN float→"nan" in JSON, NaN→int = INT_MAX (2147483647)
-// 15mar26 v2.7  Resterende String-allocaties in recurring paden weggewerkt (Focus 1 — licht & stabiel):
-//               getJSON(): return type String → const char* (static buf, nul heap-alloc bij elke JS-poll)
-//               temp_melding: global String → char[48] (assign in 60s-gate)
-//               Serial rapport (15s): String upper_room + String divider + String concatenaties → snprintf/printf
-//               Homepage pixel-lus: String label + String action → char[48]/char[32] + snprintf
-//               Setup pixel-handler registratie: String path → char[32] + snprintf
-// 15mar26 v2.6  JSON schema definitief conform overnamedocument §4.2 + definitieve tabel:
-//               ds_primary verwijderd uit JSON (was ah) — niet nuttig voor dashboard
-//               DS extra sensoren: ah=Tds2, ai=Tds3 (sensor 0 = primair = zit al in f)
-//               json buffer vergroot naar char[680]
-// 14mar26 v2.5  TSL2561: tsl_available vlag, I2C-scanner bij boot, getEvent()-check → 65536 lux + I2C-errors opgelost
-//               TSL2561: Zonlicht-rij altijd zichtbaar in UI (toont "I2C fout" als sensor niet gevonden)
-//               JSON hernummerd naar standaard schema a..ah+ (overnamedocument §4.2), heap ae/af in KB
-//               JSON key "t" (pixel_on_str): "P=" prefix toegevoegd → voorkomt getal-conversie in Google Sheets
-//               Homepage JS: data.t.replace('P=','') vóór charAt() pixel-lookup
-//               getJSON() pure snprintf → char[640], nul heap-alloc
-//               AsyncResponseStream voor / en /settings (html.reserve(12000/10000) weg)
-//               NVS-keys in loops: String → snprintf char-buf (heap-alloc weg)
-//               Crashlog: String reason → snprintf
-// 11mar26 v2.4  8 fixes: getJSON reserve(800), kleurkiezer oninput→onchange, first_boot co2/dust default false,
-//               num_mov_pixels shadowing fix, rescan_ds async-safe (vlag), DS18B20 CRC-validatie,
-//               crash-logging NVS (heap-bewaking + weergave in /settings + wis-knop), WiFi reconnect, printf typo.
-// 05mar26 22:00 v. 2.3 btStop() teruggedraaid — veroorzaakte fragmentatie op C6. Heap-rapport behouden aan einde setup().
-// 05mar26 21:30 v. 2.2 RGB kleurkiezer inline op statuspagina (vervangt aparte /neopixel pagina). /neopixel redirect naar /.
-// 05mar26 20:30 v. 2.1 DS18B20: CONVERT_ALL broadcast (minder interrupt-blocking), leesfrequentie 2s→60s (zelfde als ECO/HVAC). Verwarmingslogica: tstat_enabled gerespecteerd, logica buiten 60s-gate voor snelle respons.
-// 05mar26 19:30 v. 2.0 Teruggedraaid: DS18B20 async + esp_int_wdt_deinit verwijderd (veroorzaakten instabiliteit). Enkel echte fixes behouden: CO2/dust guards, serial interval, heap monitoring, MAC in settings.
-// 05mar26 18:30 v. 1.9 WDT fix: dust guard (default false), yield() na OneWire, JSON labels ag/ah/ai/aj.
-// 05mar26 18:00 v. 1.8 Serial interval instelbaar in /settings (5-30s), direct actief. Heap monitoring v1.6 hersteld (was verloren bij v1.7 rebase).
-// 05mar26 17:30 v. 1.7 WDT-crash fixes: DS18B20 async (geen delay(750) meer), CO2 read bewaakt met if(co2_enabled). Default co2_enabled=false.
-// 05mar26 16:00 v. 1.6 Heap monitoring op statuspagina: largest free block + kleurcode. /json uitgebreid met heap_largest + heap_min_ever.
-// 05mar26 12:00 v. 1.5 Lux meting in orde gemaakt: I2C pins gewijzigd naar de voorziene pins. Geen errors meer in serial.
-// 04mar26 12:00 v. 1.4 Lichter gemaakt en vereenvoudigd om heap size maximaal te maken voor matter integratie. (25 => 67% over!)
-// 27feb26 17:30 v. 1.3 C6 compatibel: OneWireNg, pin updates, multi DS18B20 discovery + rescan + /config page expanded & simplified textboxes (Claude)
-// 26feb26 19:00 v. 1.2 Fixed IP geintroduceerd. Set zoals in tabel op google drive: vb: EETPL	(Mac = 58:8C:81:32:2F:48)	=> IP = 192.168.0.80
-// 21dec25 23:00 v. 1.1 Pixel nicknames werken VOLLEDIG in /settings en in / (hoofdpagina)! Ga terug naar deze versie als je vastloopt!
-// 22dec25 18:00 Captive portal geimplementeerd en gans factory reset proces verbeterd! Thuis getest, werkt nog niet.
-// 02jan26 21:00 Pixels persistent gemaakt! (voor Mireille) De UI labels van pixel 0 & 1 worden niet geupdated, tenzij ze refreshed worden! Noch ChatGPT noch Grok slaagden erin dit betrouwbaar op te lossen zonder nevenschade. Laat dit zo!
-// 12jan26 20:00 Endpoint voor JSON string veranderd van /status.json => /json zoals de andere controllers.
-// 13jan26 20:00 MAC address toegevoegd om Static IP adres in router te kunnen vastleggen.
-
-// Volgende opdrachten voor Grok of chatGPT: 
-//                1) Nicknames voor sensors die in Matter gebruikt worden: Standaard = Roomname+Sensor, Option: Make own nickname. (zoals de pixels)
+// v2.23 (8mei26): Heap-optimalisatie Fase 1 — CSS/JS naar PROGMEM (~20 KB winst)
+//                 Shared CSS + pagina-specifieke CSS/JS → PROGMEM (geen heap tijdens request)
+//                 Header vereenvoudigd — volledige history in Overnamedocument
+//                 Verwachte winst: largest free block 31 KB → 48-56 KB
+// v2.22 (1mei26): /capabilities endpoint voor Portal verlichting UI (pixel nicknames JSON)
+// v2.21 (13apr26): KISS — heating_mode/vent_mode verwijderd, Matter thermostat mode=home_mode
+// v2.20 (13apr26): Crash-stabiliteit — NVS crashlog fix, Matter interval 30s, CO2 timeout 50ms
+//
+// Hardware: ESP32-C6 32-pin clone — 192.168.0.80 (Eetplaats referentie)
+// Arduino IDE: Board=ESP32C6 Dev Module, Flash=16MB, USB CDC On Boot=Enabled
 
 
 
@@ -574,6 +477,90 @@ void handleSerialCommands() {
 // fault=true + critical=true  → rood ⚠  (sensor defect)
 // fault=true + critical=false → oranje ⚠ (verdachte waarde / functioneel alarm)
 // Optionele sensors: enkel aanroepen binnen bestaande if(sensor_enabled) blokken
+
+// ======================== PROGMEM HTML/CSS (v2.23) ========================
+
+// Shared CSS (alle 4 pagina's)
+const char SHARED_CSS[] PROGMEM = R"rawliteral(
+body{font-family:Arial,sans-serif;background:#fff;margin:0;padding:0;}
+.header{display:flex;background:#ffcc00;color:#000;padding:10px 15px;font-size:18px;font-weight:bold;align-items:center;}
+.header-left{flex:1;}
+.header-right{flex:1;text-align:right;font-size:15px;}
+.container{display:flex;min-height:calc(100vh - 60px);}
+.sidebar{width:80px;padding:10px 5px;background:#fff;border-right:3px solid #c00;box-sizing:border-box;flex-shrink:0;}
+.sidebar a{display:block;background:#369;color:#fff;padding:8px;margin:8px auto;text-decoration:none;font-weight:bold;font-size:12px;border-radius:6px;text-align:center;width:60px;}
+.sidebar a:hover{background:#036;}
+.sidebar a.active{background:#c00;}
+@media(max-width:600px){
+.container{flex-direction:column;}
+.sidebar{width:100%;border-right:none;border-bottom:3px solid #c00;display:flex;justify-content:center;}
+.sidebar a{margin:0 3px;}
+}
+)rawliteral";
+
+// Homepage extra CSS
+const char HOMEPAGE_EXTRA_CSS[] PROGMEM = R"rawliteral(
+.main{flex:1;padding:15px;overflow-y:auto;}
+.group-title{font-size:17px;font-style:italic;font-weight:bold;color:#369;margin:20px 0 8px 0;}
+table{width:100%;border-collapse:collapse;margin-bottom:15px;}
+td.label{color:#369;font-size:13px;padding:8px 5px;width:30%;border-bottom:1px solid #ddd;vertical-align:middle;}
+td.value{background:#e6f0ff;font-size:13px;padding:8px 5px;width:100px;border-bottom:1px solid #ddd;text-align:center;vertical-align:middle;}
+td.control{font-size:13px;padding:8px 5px;border-bottom:1px solid #ddd;text-align:right;vertical-align:middle;}
+.slider{width:150px;height:28px;}
+.dot{display:inline-block;width:14px;height:14px;border-radius:50%;vertical-align:middle;}
+.switch{position:relative;display:inline-block;width:50px;height:28px;vertical-align:middle;}
+.switch input{opacity:0;width:0;height:0;}
+.slider-switch{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#ccc;transition:.4s;border-radius:28px;}
+.slider-switch:before{position:absolute;content:"";height:20px;width:20px;left:4px;bottom:4px;background:#fff;transition:.4s;border-radius:50%;}
+input:checked + .slider-switch{background:#369;}
+input:checked + .slider-switch:before{transform:translateX(22px);}
+@media(max-width:600px){
+.group-title{font-size:16px;margin:15px 0 6px 0;}
+td.label{font-size:12px;padding:6px 4px;width:40%;}
+td.value{font-size:12px;padding:6px 4px;width:auto;}
+td.control{padding:6px 4px;}
+.slider{width:100%;max-width:200px;}
+}
+)rawliteral";
+
+// Settings extra CSS
+const char SETTINGS_EXTRA_CSS[] PROGMEM = R"rawliteral(
+.main{flex:1;padding:20px;overflow-y:auto;}
+table{width:100%;border-collapse:collapse;margin:10px 0;}
+td.lbl{width:38%;padding:9px 6px;font-weight:bold;color:#369;border-bottom:1px solid #eee;vertical-align:middle;}
+td.inp{padding:9px 6px;border-bottom:1px solid #eee;vertical-align:middle;}
+input[type=text],input[type=password],input[type=number],select{width:100%;padding:7px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;}
+.btn{background:#369;color:#fff;padding:11px 28px;border:none;border-radius:6px;font-size:15px;cursor:pointer;margin:15px 8px;}
+.btn:hover{background:#036;}
+.btn-red{background:#c00;}
+.btn-red:hover{background:#900;}
+@media(max-width:800px){
+.sidebar a{margin:0 3px;}
+}
+)rawliteral";
+
+// Update extra CSS
+const char UPDATE_EXTRA_CSS[] PROGMEM = R"rawliteral(
+.main{flex:1;padding:30px;text-align:center;}
+.btn{background:#369;color:#fff;padding:11px 22px;border:none;border-radius:7px;cursor:pointer;font-size:15px;margin:8px;}
+.btn:hover{background:#036;}
+.btn-red{background:#c00;}
+.btn-red:hover{background:#900;}
+)rawliteral";
+
+// Matter extra CSS
+const char MATTER_EXTRA_CSS[] PROGMEM = R"rawliteral(
+.main{flex:1;padding:30px;}
+.card{background:#e6f0ff;border:2px solid #369;border-radius:10px;padding:25px;max-width:520px;margin:20px 0;}
+.code{font-family:monospace;font-size:30px;font-weight:bold;color:#003366;background:#fff;padding:14px 22px;border-radius:6px;border:2px solid #369;display:inline-block;letter-spacing:4px;margin:14px 0;}
+.ok{color:#060;font-size:22px;font-weight:bold;margin-bottom:10px;}
+.btn-reset{background:#c00;color:#fff;padding:11px 26px;border:none;border-radius:6px;font-size:15px;cursor:pointer;margin-top:18px;}
+.btn-reset:hover{background:#900;}
+.hint{font-size:13px;color:#666;margin-top:8px;}
+)rawliteral";
+
+// ==============================================================================
+
 const char* sensorWarn(bool fault, bool critical = true) {
   if (!fault) return "";
   return critical
@@ -1415,40 +1402,10 @@ void setup() {
       "<title>"));
     p->print(room_id);
     p->print(F(" Status</title>"
-      "<style>"
-      "body{font-family:Arial,sans-serif;background:#fff;margin:0;padding:0;}"
-      ".header{display:flex;background:#ffcc00;color:#000;padding:10px 15px;font-size:18px;font-weight:bold;align-items:center;}"
-      ".header-left{flex:1;}.header-right{flex:1;text-align:right;font-size:15px;}"
-      ".container{display:flex;min-height:calc(100vh - 60px);}"
-      ".sidebar{width:80px;padding:10px 5px;background:#fff;border-right:3px solid #c00;box-sizing:border-box;flex-shrink:0;}"
-      ".sidebar a{display:block;background:#369;color:#fff;padding:8px;margin:8px auto;text-decoration:none;font-weight:bold;font-size:12px;border-radius:6px;text-align:center;width:60px;}"
-      ".sidebar a:hover{background:#036;}.sidebar a.active{background:#c00;}"
-      ".main{flex:1;padding:15px;overflow-y:auto;}"
-      ".group-title{font-size:17px;font-style:italic;font-weight:bold;color:#369;margin:20px 0 8px 0;}"
-      "table{width:100%;border-collapse:collapse;margin-bottom:15px;}"
-      "td.label{color:#369;font-size:13px;padding:8px 5px;width:30%;border-bottom:1px solid #ddd;vertical-align:middle;}"
-      "td.value{background:#e6f0ff;font-size:13px;padding:8px 5px;width:100px;border-bottom:1px solid #ddd;text-align:center;vertical-align:middle;}"
-      "td.control{font-size:13px;padding:8px 5px;border-bottom:1px solid #ddd;text-align:right;vertical-align:middle;}"
-      ".slider{width:150px;height:28px;}"
-      ".dot{display:inline-block;width:14px;height:14px;border-radius:50%;vertical-align:middle;}"
-      ".switch{position:relative;display:inline-block;width:50px;height:28px;vertical-align:middle;}"
-      ".switch input{opacity:0;width:0;height:0;}"
-      ".slider-switch{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#ccc;transition:.4s;border-radius:28px;}"
-      ".slider-switch:before{position:absolute;content:\"\";height:20px;width:20px;left:4px;bottom:4px;background:#fff;transition:.4s;border-radius:50%;}"
-      "input:checked + .slider-switch{background:#369;}"
-      "input:checked + .slider-switch:before{transform:translateX(22px);}"
-      "@media(max-width:600px){"
-      ".container{flex-direction:column;}"
-      ".sidebar{width:100%;border-right:none;border-bottom:3px solid #c00;padding:10px 0;display:flex;justify-content:center;}"
-      ".sidebar a{width:80px;margin:0 5px;}"
-      ".main{padding:10px;}"
-      ".group-title{font-size:16px;margin:15px 0 6px 0;}"
-      "td.label{font-size:12px;padding:6px 4px;width:40%;}"
-      "td.value{font-size:12px;padding:6px 4px;width:auto;}"
-      "td.control{padding:6px 4px;}"
-      ".slider{width:100%;max-width:200px;}"
-      "}"
-      "</style></head><body>"
+      "<style>"));
+    p->print(FPSTR(SHARED_CSS));
+    p->print(FPSTR(HOMEPAGE_EXTRA_CSS));
+    p->print(F("</style></head><body>"
       "<div class=\"header\">"
       "<div class=\"header-left\">"));
     p->print(room_id);
@@ -1806,18 +1763,10 @@ void setup() {
     p->print(F("<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
       "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
       "<title>OTA</title>"
-      "<style>"
-      "body{font-family:Arial,sans-serif;background:#fff;margin:0;padding:0;}"
-      ".header{display:flex;background:#ffcc00;color:#000;padding:10px 15px;font-size:18px;font-weight:bold;}"
-      ".header-left{flex:1;}.header-right{flex:1;text-align:right;font-size:15px;}"
-      ".container{display:flex;min-height:calc(100vh - 60px);}"
-      ".sidebar{width:80px;padding:10px 5px;background:#fff;border-right:3px solid #c00;flex-shrink:0;}"
-      ".sidebar a{display:block;background:#369;color:#fff;padding:8px;margin:8px auto;text-decoration:none;font-weight:bold;font-size:12px;border-radius:6px;text-align:center;width:60px;}"
-      ".sidebar a:hover{background:#036;}.sidebar a.active{background:#c00;}"
-      ".main{flex:1;padding:30px;text-align:center;}"
-      ".btn{background:#369;color:#fff;padding:11px 22px;border:none;border-radius:7px;cursor:pointer;font-size:15px;margin:8px;}"
-      ".btn:hover{background:#036;}.btn-red{background:#c00;}.btn-red:hover{background:#900;}"
-      "</style></head><body>"
+      "<style>"));
+    p->print(FPSTR(SHARED_CSS));
+    p->print(FPSTR(UPDATE_EXTRA_CSS));
+    p->print(F("</style></head><body>"
       "<div class=\"header\"><div class=\"header-left\">"));
     p->print(room_id);
     p->print(F("</div><div class=\"header-right\">"));
@@ -1946,24 +1895,10 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     "<title>"));
   p->print(room_id);
   p->print(F(" - Settings</title>"
-    "<style>"
-    "body{font-family:Arial,sans-serif;background:#fff;margin:0;padding:0;}"
-    ".header{display:flex;background:#ffcc00;color:#000;padding:10px 15px;font-size:18px;font-weight:bold;}"
-    ".header-left{flex:1;}.header-right{flex:1;text-align:right;font-size:15px;}"
-    ".container{display:flex;min-height:calc(100vh - 60px);}"
-    ".sidebar{width:80px;padding:10px 5px;background:#fff;border-right:3px solid #c00;box-sizing:border-box;flex-shrink:0;}"
-    ".sidebar a{display:block;background:#369;color:#fff;padding:8px;margin:8px auto;text-decoration:none;font-weight:bold;font-size:12px;border-radius:6px;text-align:center;width:60px;}"
-    ".sidebar a:hover{background:#036;}.sidebar a.active{background:#c00;}"
-    ".main{flex:1;padding:20px;overflow-y:auto;}"
-    "table{width:100%;border-collapse:collapse;margin:10px 0;}"
-    "td.lbl{width:38%;padding:9px 6px;font-weight:bold;color:#369;border-bottom:1px solid #eee;vertical-align:middle;}"
-    "td.inp{padding:9px 6px;border-bottom:1px solid #eee;vertical-align:middle;}"
-    "input[type=text],input[type=password],input[type=number],select{width:100%;padding:7px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;}"
-    ".btn{background:#369;color:#fff;padding:11px 28px;border:none;border-radius:6px;font-size:15px;cursor:pointer;margin:15px 8px;}"
-    ".btn:hover{background:#036;}"
-    ".btn-red{background:#c00;}.btn-red:hover{background:#900;}"
-    "@media(max-width:800px){.container{flex-direction:column;}.sidebar{width:100%;border-right:none;border-bottom:3px solid #c00;display:flex;justify-content:center;}.sidebar a{margin:0 3px;}}"
-    "</style></head><body>"
+    "<style>"));
+  p->print(FPSTR(SHARED_CSS));
+  p->print(FPSTR(SETTINGS_EXTRA_CSS));
+  p->print(F("</style></head><body>"
     "<div class=\"header\">"
     "<div class=\"header-left\">"));
   p->print(room_id);
@@ -2324,25 +2259,10 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     AsyncResponseStream *p = request->beginResponseStream("text/html; charset=utf-8");
     p->print(F("<!DOCTYPE html><html><head><meta charset='utf-8'>"
       "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-      "<title>Matter</title><style>"
-      "body{font-family:Arial,sans-serif;background:#fff;margin:0;padding:0;}"
-      ".header{display:flex;background:#ffcc00;color:#000;padding:10px 15px;font-size:18px;font-weight:bold;align-items:center;}"
-      ".header-left{flex:1;}.header-right{flex:1;text-align:right;font-size:15px;}"
-      ".container{display:flex;min-height:calc(100vh - 60px);}"
-      ".sidebar{width:80px;padding:10px 5px;background:#fff;border-right:3px solid #c00;box-sizing:border-box;flex-shrink:0;}"
-      ".sidebar a{display:block;background:#369;color:#fff;padding:8px;margin:8px auto;text-decoration:none;font-weight:bold;font-size:12px;border-radius:6px;text-align:center;width:60px;}"
-      ".sidebar a:hover{background:#036;}.sidebar a.active{background:#c00;}"
-      ".main{flex:1;padding:30px;}"
-      ".card{background:#e6f0ff;border:2px solid #369;border-radius:10px;padding:25px;max-width:520px;margin:20px 0;}"
-      ".code{font-family:monospace;font-size:30px;font-weight:bold;color:#003366;background:#fff;padding:14px 22px;border-radius:6px;border:2px solid #369;display:inline-block;letter-spacing:4px;margin:14px 0;}"
-      ".ok{color:#060;font-size:22px;font-weight:bold;margin-bottom:10px;}"
-      ".btn-reset{background:#c00;color:#fff;padding:11px 26px;border:none;border-radius:6px;font-size:15px;cursor:pointer;margin-top:18px;}"
-      ".btn-reset:hover{background:#900;}"
-      ".hint{font-size:13px;color:#666;margin-top:8px;}"
-      "@media(max-width:600px){.container{flex-direction:column;}"
-      ".sidebar{width:100%;border-right:none;border-bottom:3px solid #c00;display:flex;justify-content:center;}"
-      ".sidebar a{margin:0 3px;}}"
-      "</style></head><body>"
+      "<title>Matter</title><style>"));
+    p->print(FPSTR(SHARED_CSS));
+    p->print(FPSTR(MATTER_EXTRA_CSS));
+    p->print(F("</style></head><body>"
       "<div class='header'><div class='header-left'>"));
     p->print(room_id);
     p->print(F("</div><div class='header-right'>Matter / HomeKit</div></div>"
