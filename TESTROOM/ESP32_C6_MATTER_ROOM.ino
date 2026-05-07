@@ -1,21 +1,19 @@
-// ESP32-C6 MATTER ROOM v2.23 — 8 mei 2026
+// ESP32-C6 MATTER ROOM v2.24 — 8 mei 2026
 // Zarlar thuisautomatisering — Room controller met Matter/Apple Home integratie
 // Filip Delannoy — Zarlardinge (BE)
 //
 // PARTITIETABEL: Compileer met "partitions_16mb.csv" in de schetsmap (Custom partition scheme):
 //   nvs (20 KB), otadata (8 KB), app0 (6 MB), app1 (6 MB), spiffs (~4 MB)
 //
-// v2.23 (8mei26): Heap-optimalisatie Fase 1 — CSS/JS naar PROGMEM (~20 KB winst)
-//                 Shared CSS + pagina-specifieke CSS/JS → PROGMEM (geen heap tijdens request)
-//                 Header vereenvoudigd — volledige history in Overnamedocument
-//                 Verwachte winst: largest free block 31 KB → 48-56 KB
+// v2.24 (8mei26): Heap-optimalisatie alternatief — shared CSS helper functie (~3-5 KB winst)
+//                 Serial version string verwijderd (verwarrend bij troubleshoot)
+// v2.23 (8mei26): PROGMEM experiment — werkte niet (FPSTR kopieert alsnog naar heap)
 // v2.22 (1mei26): /capabilities endpoint voor Portal verlichting UI (pixel nicknames JSON)
 // v2.21 (13apr26): KISS — heating_mode/vent_mode verwijderd, Matter thermostat mode=home_mode
 // v2.20 (13apr26): Crash-stabiliteit — NVS crashlog fix, Matter interval 30s, CO2 timeout 50ms
 //
 // Hardware: ESP32-C6 32-pin clone — 192.168.0.80 (Eetplaats referentie)
 // Arduino IDE: Board=ESP32C6 Dev Module, Flash=16MB, USB CDC On Boot=Enabled
-
 
 
 // v2.9 FIX: Verplicht voor ESP32-C6 (RISC-V) in Arduino IDE — zonder dit werkt Serial niet correct
@@ -478,86 +476,21 @@ void handleSerialCommands() {
 // fault=true + critical=false → oranje ⚠ (verdachte waarde / functioneel alarm)
 // Optionele sensors: enkel aanroepen binnen bestaande if(sensor_enabled) blokken
 
-// ======================== PROGMEM HTML/CSS (v2.23) ========================
-
-// Shared CSS (alle 4 pagina's)
-const char SHARED_CSS[] PROGMEM = R"rawliteral(
-body{font-family:Arial,sans-serif;background:#fff;margin:0;padding:0;}
-.header{display:flex;background:#ffcc00;color:#000;padding:10px 15px;font-size:18px;font-weight:bold;align-items:center;}
-.header-left{flex:1;}
-.header-right{flex:1;text-align:right;font-size:15px;}
-.container{display:flex;min-height:calc(100vh - 60px);}
-.sidebar{width:80px;padding:10px 5px;background:#fff;border-right:3px solid #c00;box-sizing:border-box;flex-shrink:0;}
-.sidebar a{display:block;background:#369;color:#fff;padding:8px;margin:8px auto;text-decoration:none;font-weight:bold;font-size:12px;border-radius:6px;text-align:center;width:60px;}
-.sidebar a:hover{background:#036;}
-.sidebar a.active{background:#c00;}
-@media(max-width:600px){
-.container{flex-direction:column;}
-.sidebar{width:100%;border-right:none;border-bottom:3px solid #c00;display:flex;justify-content:center;}
-.sidebar a{margin:0 3px;}
+// ======================== HELPER: Shared CSS (v2.24) ========================
+// Schrijft gedeelde CSS direct naar stream — vermijdt F() overhead
+void writeSharedCSS(AsyncResponseStream *p) {
+  p->print("body{font-family:Arial,sans-serif;background:#fff;margin:0;padding:0;}");
+  p->print(".header{display:flex;background:#ffcc00;color:#000;padding:10px 15px;font-size:18px;font-weight:bold;align-items:center;}");
+  p->print(".header-left{flex:1;}.header-right{flex:1;text-align:right;font-size:15px;}");
+  p->print(".container{display:flex;min-height:calc(100vh - 60px);}");
+  p->print(".sidebar{width:80px;padding:10px 5px;background:#fff;border-right:3px solid #c00;box-sizing:border-box;flex-shrink:0;}");
+  p->print(".sidebar a{display:block;background:#369;color:#fff;padding:8px;margin:8px auto;text-decoration:none;font-weight:bold;font-size:12px;border-radius:6px;text-align:center;width:60px;}");
+  p->print(".sidebar a:hover{background:#036;}.sidebar a.active{background:#c00;}");
+  p->print("@media(max-width:600px){");
+  p->print(".container{flex-direction:column;}");
+  p->print(".sidebar{width:100%;border-right:none;border-bottom:3px solid #c00;display:flex;justify-content:center;}");
+  p->print(".sidebar a{margin:0 3px;}}");
 }
-)rawliteral";
-
-// Homepage extra CSS
-const char HOMEPAGE_EXTRA_CSS[] PROGMEM = R"rawliteral(
-.main{flex:1;padding:15px;overflow-y:auto;}
-.group-title{font-size:17px;font-style:italic;font-weight:bold;color:#369;margin:20px 0 8px 0;}
-table{width:100%;border-collapse:collapse;margin-bottom:15px;}
-td.label{color:#369;font-size:13px;padding:8px 5px;width:30%;border-bottom:1px solid #ddd;vertical-align:middle;}
-td.value{background:#e6f0ff;font-size:13px;padding:8px 5px;width:100px;border-bottom:1px solid #ddd;text-align:center;vertical-align:middle;}
-td.control{font-size:13px;padding:8px 5px;border-bottom:1px solid #ddd;text-align:right;vertical-align:middle;}
-.slider{width:150px;height:28px;}
-.dot{display:inline-block;width:14px;height:14px;border-radius:50%;vertical-align:middle;}
-.switch{position:relative;display:inline-block;width:50px;height:28px;vertical-align:middle;}
-.switch input{opacity:0;width:0;height:0;}
-.slider-switch{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#ccc;transition:.4s;border-radius:28px;}
-.slider-switch:before{position:absolute;content:"";height:20px;width:20px;left:4px;bottom:4px;background:#fff;transition:.4s;border-radius:50%;}
-input:checked + .slider-switch{background:#369;}
-input:checked + .slider-switch:before{transform:translateX(22px);}
-@media(max-width:600px){
-.group-title{font-size:16px;margin:15px 0 6px 0;}
-td.label{font-size:12px;padding:6px 4px;width:40%;}
-td.value{font-size:12px;padding:6px 4px;width:auto;}
-td.control{padding:6px 4px;}
-.slider{width:100%;max-width:200px;}
-}
-)rawliteral";
-
-// Settings extra CSS
-const char SETTINGS_EXTRA_CSS[] PROGMEM = R"rawliteral(
-.main{flex:1;padding:20px;overflow-y:auto;}
-table{width:100%;border-collapse:collapse;margin:10px 0;}
-td.lbl{width:38%;padding:9px 6px;font-weight:bold;color:#369;border-bottom:1px solid #eee;vertical-align:middle;}
-td.inp{padding:9px 6px;border-bottom:1px solid #eee;vertical-align:middle;}
-input[type=text],input[type=password],input[type=number],select{width:100%;padding:7px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;}
-.btn{background:#369;color:#fff;padding:11px 28px;border:none;border-radius:6px;font-size:15px;cursor:pointer;margin:15px 8px;}
-.btn:hover{background:#036;}
-.btn-red{background:#c00;}
-.btn-red:hover{background:#900;}
-@media(max-width:800px){
-.sidebar a{margin:0 3px;}
-}
-)rawliteral";
-
-// Update extra CSS
-const char UPDATE_EXTRA_CSS[] PROGMEM = R"rawliteral(
-.main{flex:1;padding:30px;text-align:center;}
-.btn{background:#369;color:#fff;padding:11px 22px;border:none;border-radius:7px;cursor:pointer;font-size:15px;margin:8px;}
-.btn:hover{background:#036;}
-.btn-red{background:#c00;}
-.btn-red:hover{background:#900;}
-)rawliteral";
-
-// Matter extra CSS
-const char MATTER_EXTRA_CSS[] PROGMEM = R"rawliteral(
-.main{flex:1;padding:30px;}
-.card{background:#e6f0ff;border:2px solid #369;border-radius:10px;padding:25px;max-width:520px;margin:20px 0;}
-.code{font-family:monospace;font-size:30px;font-weight:bold;color:#003366;background:#fff;padding:14px 22px;border-radius:6px;border:2px solid #369;display:inline-block;letter-spacing:4px;margin:14px 0;}
-.ok{color:#060;font-size:22px;font-weight:bold;margin-bottom:10px;}
-.btn-reset{background:#c00;color:#fff;padding:11px 26px;border:none;border-radius:6px;font-size:15px;cursor:pointer;margin-top:18px;}
-.btn-reset:hover{background:#900;}
-.hint{font-size:13px;color:#666;margin-top:8px;}
-)rawliteral";
 
 // ==============================================================================
 
@@ -811,7 +744,7 @@ void setup() {
   Serial.begin(115200);
   delay(1500);
   while (Serial.available()) Serial.read();  // flush
-  Serial.println("\n\n=== ROOM Controller — ESP32-C6_MATTER_ROOM_15mar_2200 ===");
+  // Version print verwijderd v2.24
 
   // v2.4 FIX 7: Crash-logging — lees vorige crash uit NVS bij elke boot
   {
@@ -1402,10 +1335,40 @@ void setup() {
       "<title>"));
     p->print(room_id);
     p->print(F(" Status</title>"
-      "<style>"));
-    p->print(FPSTR(SHARED_CSS));
-    p->print(FPSTR(HOMEPAGE_EXTRA_CSS));
-    p->print(F("</style></head><body>"
+      "<style>"
+      "body{font-family:Arial,sans-serif;background:#fff;margin:0;padding:0;}"
+      ".header{display:flex;background:#ffcc00;color:#000;padding:10px 15px;font-size:18px;font-weight:bold;align-items:center;}"
+      ".header-left{flex:1;}.header-right{flex:1;text-align:right;font-size:15px;}"
+      ".container{display:flex;min-height:calc(100vh - 60px);}"
+      ".sidebar{width:80px;padding:10px 5px;background:#fff;border-right:3px solid #c00;box-sizing:border-box;flex-shrink:0;}"
+      ".sidebar a{display:block;background:#369;color:#fff;padding:8px;margin:8px auto;text-decoration:none;font-weight:bold;font-size:12px;border-radius:6px;text-align:center;width:60px;}"
+      ".sidebar a:hover{background:#036;}.sidebar a.active{background:#c00;}"
+      ".main{flex:1;padding:15px;overflow-y:auto;}"
+      ".group-title{font-size:17px;font-style:italic;font-weight:bold;color:#369;margin:20px 0 8px 0;}"
+      "table{width:100%;border-collapse:collapse;margin-bottom:15px;}"
+      "td.label{color:#369;font-size:13px;padding:8px 5px;width:30%;border-bottom:1px solid #ddd;vertical-align:middle;}"
+      "td.value{background:#e6f0ff;font-size:13px;padding:8px 5px;width:100px;border-bottom:1px solid #ddd;text-align:center;vertical-align:middle;}"
+      "td.control{font-size:13px;padding:8px 5px;border-bottom:1px solid #ddd;text-align:right;vertical-align:middle;}"
+      ".slider{width:150px;height:28px;}"
+      ".dot{display:inline-block;width:14px;height:14px;border-radius:50%;vertical-align:middle;}"
+      ".switch{position:relative;display:inline-block;width:50px;height:28px;vertical-align:middle;}"
+      ".switch input{opacity:0;width:0;height:0;}"
+      ".slider-switch{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#ccc;transition:.4s;border-radius:28px;}"
+      ".slider-switch:before{position:absolute;content:\"\";height:20px;width:20px;left:4px;bottom:4px;background:#fff;transition:.4s;border-radius:50%;}"
+      "input:checked + .slider-switch{background:#369;}"
+      "input:checked + .slider-switch:before{transform:translateX(22px);}"
+      "@media(max-width:600px){"
+      ".container{flex-direction:column;}"
+      ".sidebar{width:100%;border-right:none;border-bottom:3px solid #c00;padding:10px 0;display:flex;justify-content:center;}"
+      ".sidebar a{width:80px;margin:0 5px;}"
+      ".main{padding:10px;}"
+      ".group-title{font-size:16px;margin:15px 0 6px 0;}"
+      "td.label{font-size:12px;padding:6px 4px;width:40%;}"
+      "td.value{font-size:12px;padding:6px 4px;width:auto;}"
+      "td.control{padding:6px 4px;}"
+      ".slider{width:100%;max-width:200px;}"
+      "}"
+      "</style></head><body>"
       "<div class=\"header\">"
       "<div class=\"header-left\">"));
     p->print(room_id);
@@ -1763,10 +1726,18 @@ void setup() {
     p->print(F("<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
       "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
       "<title>OTA</title>"
-      "<style>"));
-    p->print(FPSTR(SHARED_CSS));
-    p->print(FPSTR(UPDATE_EXTRA_CSS));
-    p->print(F("</style></head><body>"
+      "<style>"
+      "body{font-family:Arial,sans-serif;background:#fff;margin:0;padding:0;}"
+      ".header{display:flex;background:#ffcc00;color:#000;padding:10px 15px;font-size:18px;font-weight:bold;}"
+      ".header-left{flex:1;}.header-right{flex:1;text-align:right;font-size:15px;}"
+      ".container{display:flex;min-height:calc(100vh - 60px);}"
+      ".sidebar{width:80px;padding:10px 5px;background:#fff;border-right:3px solid #c00;flex-shrink:0;}"
+      ".sidebar a{display:block;background:#369;color:#fff;padding:8px;margin:8px auto;text-decoration:none;font-weight:bold;font-size:12px;border-radius:6px;text-align:center;width:60px;}"
+      ".sidebar a:hover{background:#036;}.sidebar a.active{background:#c00;}"
+      ".main{flex:1;padding:30px;text-align:center;}"
+      ".btn{background:#369;color:#fff;padding:11px 22px;border:none;border-radius:7px;cursor:pointer;font-size:15px;margin:8px;}"
+      ".btn:hover{background:#036;}.btn-red{background:#c00;}.btn-red:hover{background:#900;}"
+      "</style></head><body>"
       "<div class=\"header\"><div class=\"header-left\">"));
     p->print(room_id);
     p->print(F("</div><div class=\"header-right\">"));
@@ -1895,10 +1866,24 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     "<title>"));
   p->print(room_id);
   p->print(F(" - Settings</title>"
-    "<style>"));
-  p->print(FPSTR(SHARED_CSS));
-  p->print(FPSTR(SETTINGS_EXTRA_CSS));
-  p->print(F("</style></head><body>"
+    "<style>"
+    "body{font-family:Arial,sans-serif;background:#fff;margin:0;padding:0;}"
+    ".header{display:flex;background:#ffcc00;color:#000;padding:10px 15px;font-size:18px;font-weight:bold;}"
+    ".header-left{flex:1;}.header-right{flex:1;text-align:right;font-size:15px;}"
+    ".container{display:flex;min-height:calc(100vh - 60px);}"
+    ".sidebar{width:80px;padding:10px 5px;background:#fff;border-right:3px solid #c00;box-sizing:border-box;flex-shrink:0;}"
+    ".sidebar a{display:block;background:#369;color:#fff;padding:8px;margin:8px auto;text-decoration:none;font-weight:bold;font-size:12px;border-radius:6px;text-align:center;width:60px;}"
+    ".sidebar a:hover{background:#036;}.sidebar a.active{background:#c00;}"
+    ".main{flex:1;padding:20px;overflow-y:auto;}"
+    "table{width:100%;border-collapse:collapse;margin:10px 0;}"
+    "td.lbl{width:38%;padding:9px 6px;font-weight:bold;color:#369;border-bottom:1px solid #eee;vertical-align:middle;}"
+    "td.inp{padding:9px 6px;border-bottom:1px solid #eee;vertical-align:middle;}"
+    "input[type=text],input[type=password],input[type=number],select{width:100%;padding:7px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;}"
+    ".btn{background:#369;color:#fff;padding:11px 28px;border:none;border-radius:6px;font-size:15px;cursor:pointer;margin:15px 8px;}"
+    ".btn:hover{background:#036;}"
+    ".btn-red{background:#c00;}.btn-red:hover{background:#900;}"
+    "@media(max-width:800px){.container{flex-direction:column;}.sidebar{width:100%;border-right:none;border-bottom:3px solid #c00;display:flex;justify-content:center;}.sidebar a{margin:0 3px;}}"
+    "</style></head><body>"
     "<div class=\"header\">"
     "<div class=\"header-left\">"));
   p->print(room_id);
@@ -2259,10 +2244,25 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     AsyncResponseStream *p = request->beginResponseStream("text/html; charset=utf-8");
     p->print(F("<!DOCTYPE html><html><head><meta charset='utf-8'>"
       "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-      "<title>Matter</title><style>"));
-    p->print(FPSTR(SHARED_CSS));
-    p->print(FPSTR(MATTER_EXTRA_CSS));
-    p->print(F("</style></head><body>"
+      "<title>Matter</title><style>"
+      "body{font-family:Arial,sans-serif;background:#fff;margin:0;padding:0;}"
+      ".header{display:flex;background:#ffcc00;color:#000;padding:10px 15px;font-size:18px;font-weight:bold;align-items:center;}"
+      ".header-left{flex:1;}.header-right{flex:1;text-align:right;font-size:15px;}"
+      ".container{display:flex;min-height:calc(100vh - 60px);}"
+      ".sidebar{width:80px;padding:10px 5px;background:#fff;border-right:3px solid #c00;box-sizing:border-box;flex-shrink:0;}"
+      ".sidebar a{display:block;background:#369;color:#fff;padding:8px;margin:8px auto;text-decoration:none;font-weight:bold;font-size:12px;border-radius:6px;text-align:center;width:60px;}"
+      ".sidebar a:hover{background:#036;}.sidebar a.active{background:#c00;}"
+      ".main{flex:1;padding:30px;}"
+      ".card{background:#e6f0ff;border:2px solid #369;border-radius:10px;padding:25px;max-width:520px;margin:20px 0;}"
+      ".code{font-family:monospace;font-size:30px;font-weight:bold;color:#003366;background:#fff;padding:14px 22px;border-radius:6px;border:2px solid #369;display:inline-block;letter-spacing:4px;margin:14px 0;}"
+      ".ok{color:#060;font-size:22px;font-weight:bold;margin-bottom:10px;}"
+      ".btn-reset{background:#c00;color:#fff;padding:11px 26px;border:none;border-radius:6px;font-size:15px;cursor:pointer;margin-top:18px;}"
+      ".btn-reset:hover{background:#900;}"
+      ".hint{font-size:13px;color:#666;margin-top:8px;}"
+      "@media(max-width:600px){.container{flex-direction:column;}"
+      ".sidebar{width:100%;border-right:none;border-bottom:3px solid #c00;display:flex;justify-content:center;}"
+      ".sidebar a{margin:0 3px;}}"
+      "</style></head><body>"
       "<div class='header'><div class='header-left'>"));
     p->print(room_id);
     p->print(F("</div><div class='header-right'>Matter / HomeKit</div></div>"
