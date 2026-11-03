@@ -12,7 +12,7 @@ Room controllers van het Zarlar-thuisautomatiseringssysteem (Zarlardinge): een E
 | **Draait op** | room80 (`192.168.0.80`): het TESTROOM-testbord met alle sensoren. Rij R-EETPL op de matrix van het Dashboard |
 | **Board** | ESP32-C6-DevKitM-1 (clone), 32-pin, 16 MB, op het Zarlar shield |
 | **Apple Home** | Via de RPi-bridge (`server.js` + plugin `matterbridge-zarlar`): toestel "Eetplaats" in de woning Zarlardinge. De ESP32 zelf doet geen Matter meer |
-| **Logging** | Het Zarlar Dashboard (`192.168.0.60`) haalt `/json` op en stuurt het naar Google Sheets (`ROOM_GoogleScript.gs`, Sheet "R-ROOMS Log"). De controller post zelf niets |
+| **Logging** | Het Zarlar Dashboard (`192.168.0.60`) haalt `/json` op en stuurt het **elke 5 min** naar Google Sheets (`ROOM_GoogleScript.gs`, Sheet "R-ROOMS Log"). De controller post zelf niets. Het ritme stel je in op het Dashboard (`/settings` → Poll interval × 5), niet in deze sketch. Ontbreekt er één rij rond een flash of herstart, dan was de controller op dat moment niet bereikbaar: normaal |
 | **Portal (RPi)** | `192.168.0.50:3000` gebruikt `/json`, `/capabilities`, `/toggle_pixel_mode`, `/toggle_pixel`, `/setcolor` en `/set_home` |
 
 ## Waarom v3.0 zonder Matter
@@ -28,11 +28,20 @@ Met Matter (v2.24) zat room80 voortdurend tegen de geheugengrens. Uit de Sheet, 
 
 Bij de HVAC (v2.0) en het Dashboard (v6.0) leverde het weghalen van Matter een grootste blok van ±200–250 KB op en geen herstarts meer.
 
-**Meetplan v3.0** (na het flashen, 48 u):
+**Eerste meting v3.0** (OTA op 3 nov 2026 om 18:07; de Sheet-rijen vlak voor en na de flash):
+
+| | v2.24 (18:02, uptime ±58 u) | v3.0 (18:12, uptime 300 s) |
+|---|---|---|
+| Vrij geheugen | 18 % | **68 %** |
+| Grootste blok | 28 KB | **247 KB** |
+| Heap min (laagste ooit) | 2 KB | **233 KB** |
+
+Dezelfde winst als bij de HVAC en het Dashboard. De sensorwaarden lopen gewoon door.
+
+**Nog in te vullen na 48 u (tot 5 nov 2026 ±18:10):**
 
 | Meting v3.0 | Waarde |
 |---|---|
-| Opstart (Serial: "Free heap" / "Largest block" aan het einde van `setup()`) | |
 | Vrij geheugen en grootste blok (Sheet, mediaan / laagste over 48 u) | |
 | Herstarts in 48 u | |
 
