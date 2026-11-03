@@ -80,9 +80,26 @@ Het menu links (of bovenaan op een gsm) heeft op elke technische pagina een **�
 
 ## Verbeterplan
 
-Dit is de sketch voor **alle** rooms: ze vervangt stap voor stap de Photons. Daarom eerst betrouwbaarheid, dan gebruiksgemak. Telkens één versie per stap, code pas na GO; JSON-keys en adressen blijven gelijk, tenzij uitdrukkelijk afgesproken (Dashboard, Portal, bridge en Sheet hangen ervan af).
+Dit is de sketch voor **alle** rooms: ze vervangt stap voor stap de Photons. Daarom eerst betrouwbaarheid, dan de pagina's, dan pas uitrol.
 
-### A. Betrouwbaarheid
+**Spelregels:** één versie per stap · code pas na GO · na elke flash 48 u testen (Sheet: geheugen en herstarts) · `/json`-keys en bedieningsadressen blijven gelijk, tenzij uitdrukkelijk afgesproken (Dashboard, Portal, RPi-bridge en Sheet hangen ervan af) · README en versiekop bij elke stap bijwerken.
+
+| Fase | Versie | Wat | Status |
+|---|---|---|---|
+| — | v3.0 | Matter verwijderd | ✅ 3/11 |
+| — | v3.1 | Landingspagina `/` (`landing.h`), technische pagina naar `/advanced` | ✅ 3/11 · 48 u-test loopt |
+| **A. Betrouwbaarheid** | v3.2 | Versie en diagnose zichtbaar | |
+| | v3.3 | WiFi robuuster | |
+| | v3.4 | CO₂ niet-blokkerend · geen sensormetingen in AP-mode | |
+| | v3.5 | mDNS terug | |
+| **B. Pagina's apart en opgefrist** | v3.6 | `/update` → `ota.h`, met voortgangsbalk | |
+| | v3.7 | `/advanced` → `advanced.h` | |
+| | v3.8 | `/settings` → `settings.h` | |
+| **C. Klaar voor alle rooms** | v3.9 | LDR-schaal gelijk met de Sjalay (samen met Dashboard en Sheet) | |
+| | v3.10 | Gelijk met de Photons: ontbrekende functies toevoegen | |
+| | — | Uitrol: elke Photon-room krijgt een ESP32 met deze sketch | |
+
+### Fase A — Betrouwbaarheid
 
 | Versie | Wat | Waarom |
 |---|---|---|
@@ -91,38 +108,33 @@ Dit is de sketch voor **alle** rooms: ze vervangt stap voor stap de Photons. Daa
 | v3.4 | **CO₂ niet-blokkerend** (nu wacht `pulseIn()` tot 2 × 50 ms per meting) en **geen sensormetingen in AP-mode** | Minder haperingen van webserver en pixels; `/settings` vlot bij de eerste installatie |
 | v3.5 | **mDNS terug:** `<kamer>.local`, enkel na een geldige WiFi-verbinding | Rooms vind je op naam i.p.v. op IP |
 
-### B. Eén sketch voor alle rooms
+### Fase B — Pagina's apart en opgefrist
+
+**Waarom apart.** De landingspagina staat sinds v3.1 in een eigen bestand (`landing.h`). De andere pagina's (`/advanced`, `/settings`, `/update`) worden nog stukje per stukje in de `.ino` opgebouwd, met waarden die de ESP32 er tussendoor invult (kamernaam, uptime, alle instellingen, pixelnamen). Elke pagina in een eigen `.h`-bestand geeft:
+- **overzicht:** de `.ino` bevat enkel nog logica, de `.h`-bestanden enkel pagina's; opmaak of tekst aanpassen zonder in de C++-code te zoeken;
+- **geen risico** dat de Arduino IDE het JavaScript in een `.ino` beschadigt (zoals bij de PWM-test).
+
+Geheugen win je er niet mee: de teksten staan nu al in het flashgeheugen (`F("...")`).
+
+**Hoe.** Een pagina in een `.h` is vaste HTML + JavaScript. De waarden haalt de pagina zelf op: live-waarden uit `/json` (bestaat al), vaste waarden (versie, IP, instellingen) uit een klein JSON-adres dat alleen bij het laden gelezen wordt. Daarom gebeuren bij elke verhuis meteen drie opfrissingen:
+
+1. **Live-gegevens en vaste gegevens scheiden.** Nu haalt de statuspagina elke 3 s de volledige `/json` op (32 waarden, dezelfde als voor de Sheet) en zoekt ze elke tabelrij **via de tekst van het label** ("bevat het label *Humidity*?"). Hernoem je een label, dan wordt die waarde stil niet meer bijgewerkt; ook waarden die niet veranderen (versie, IP, dimsnelheid, lichttijd) gaan mee in die cyclus. *Nieuw:* vaste waarden één keer bij het laden, live-waarden via een vaste `id` per veld. *Voordeel:* labels vrij aanpasbaar, korter en overzichtelijker script, minder werk per 3 s. `/json` blijft ongewijzigd.
+2. **Statuscirkels.** Aan/uit-toestanden (verwarming, thermostaat, thuis, bed, beweging, dauwpuntalarm, pixels) zijn nu kleine bolletjes van 14 px. *Nieuw (zoals Sjalay en de landingspagina):* een cirkel rond een icoon, wit = rust, lichtrood met rode rand = actief. *Voordeel:* op een gsm in één oogopslag leesbaar, ook voor wie kleuren slecht onderscheidt.
+3. **Korte, eenduidige labels.** De sectietitels zijn al kort, maar de labels mengen Nederlands en Engels ("Room temp", "Humidity", "Heating setpoint" naast "Dauwpunt"). *Nieuw:* alles kort en consequent in het Nederlands.
+
+| Versie | Pagina | Opmerking |
+|---|---|---|
+| v3.6 | `/update` → `ota.h` | Klein: eerste test van de aanpak. Met voortgangsbalk en uitleg over het juiste `.bin`-bestand |
+| v3.7 | `/advanced` → `advanced.h` | Grootste winst in onderhoudbaarheid (punten 1-3 volledig) |
+| v3.8 | `/settings` → `settings.h` | Grootste en meest vervlochten pagina, daarom als laatste |
+
+### Fase C — Klaar voor alle rooms
 
 | Versie | Wat |
 |---|---|
-| ✅ v3.1 | **Landingspagina voor gewone gebruikers** (zoals de Sjalay), zie hieronder en "Pagina's" |
-| v3.6 | **LDR-schaal gelijk met de Sjalay:** 0 = donker, 100 = fel. Nu zijn er twee vaste drempels (`LDR_DARK_THRESHOLD` en een harde "> 50" voor de nacht); dat wordt er één, instelbaar in `/settings`. Raakt ook het Dashboard (matrix) en de Sheet: samen aanpassen |
-| v3.7 | **OTA met voortgangsbalk** en uitleg over het juiste `.bin`-bestand op de pagina zelf |
-| — | **Gelijk met de Photons:** nagaan welke functies de Photon-rooms hebben die deze sketch nog mist (Photon-room-sketch nodig) |
-
-**Landingspagina (v3.1, gedaan).** Tot v3.0 opende `http://<room>/` meteen de volledige technische statuspagina (HVAC, verlichting, beweging, bewaking, controller), met waarden als RSSI, heap en PIR-tellers. Voor een huisgenoot of gast is dat te veel. Naar het voorbeeld van de Sjalay:
-
-| Pagina | Voor wie | Inhoud |
-|---|---|---|
-| `/` **landingspagina** | iedereen | Grote kamertemperatuur met het setpoint en een schuifbalk · tegels per lamp (met de pixelnamen uit `/settings`): tikken = aan/uit · kleurkeuze · bed-modus · thuis/weg · onderaan ⚙ naar de technische pagina |
-| `/advanced` (de huidige statuspagina) | Filip | Alle metingen en diagnose, zoals nu |
-| `/settings`, `/update` | Filip | Ongewijzigd |
-
-Op **elke** pagina staat bovenaan een **🏠-icoon** dat terugleidt naar de landingspagina. `/json` en alle bedieningsadressen blijven gelijk, dus Dashboard, Portal en Apple Home merken niets.
-
-### C. Webpagina's opfrissen (later, telkens een kleine versie)
-
-**1. Live-gegevens en vaste gegevens scheiden.** De statuspagina haalt nu elke 3 s de volledige `/json` op (32 waarden, dezelfde als voor de Sheet) en zoekt daarna elke tabelrij op **via de tekst van het label** (bv. "bevat het label *Humidity*?"). Dat werkt, maar is breekbaar: hernoem je een label, dan wordt die waarde stil niet meer bijgewerkt. Ook waarden die niet veranderen terwijl je kijkt (versie, IP, instellingen zoals dimsnelheid of lichttijd) gaan mee in die cyclus.
-- *Voorstel:* vaste gegevens één keer invullen bij het laden van de pagina (door de ESP32 zelf), en de live-waarden bijwerken via een vaste `id` per veld in plaats van via de labeltekst.
-- *Voordeel:* labels mag je vrij aanpassen (bv. vertalen) zonder dat iets stilvalt, het script wordt korter en overzichtelijker, en de browser doet per 3 s minder werk. `/json` zelf blijft ongewijzigd. Geheugenwinst op de ESP32 is er nauwelijks (sinds v3.0 is er ruim genoeg); het gaat om onderhoudbaarheid.
-
-**2. Statuscirkels.** Aan/uit-toestanden (verwarming, thermostaat, thuis, bed, beweging, dauwpuntalarm, pixels) staan nu als kleine bolletjes van 14 px in een gekleurde of grijze tint.
-- *Voorstel (Sjalay `.icring`):* een cirkel rond het icoon (🔥, 🛏️, 👋…): **wit = rust**, **lichtrood gevuld met rode rand = actief**.
-- *Voordeel:* op een gsm in één oogopslag leesbaar, ook van op afstand en voor wie kleuren slecht onderscheidt (de vorm verandert, niet alleen de kleur), en overal dezelfde betekenis.
-
-**3. Korte, eenduidige titels en labels.** De sectietitels zijn al kort (HVAC, VERLICHTING, BEWEGING, BEWAKING, CONTROLLER), maar de labels mengen Nederlands en Engels ("Room temp", "Humidity", "Heating setpoint" naast "Dauwpunt", "Ventilatie snelheid").
-- *Voorstel:* alles in het Nederlands, kort en consequent (bv. "Temperatuur", "Vochtigheid", "Gewenst").
-- *Voordeel:* rustiger en duidelijker voor iedereen; samen met punt 1 te doen, want dan hangt er geen code meer aan de labeltekst.
+| v3.9 | **LDR-schaal gelijk met de Sjalay:** 0 = donker, 100 = fel. Nu zijn er twee vaste drempels (`LDR_DARK_THRESHOLD` en een harde "> 50" voor de nacht); dat wordt er één, instelbaar in `/settings`. Raakt ook de matrix van het Dashboard en de Sheet: samen aanpassen, oude Sheet-rijen omrekenen (`100 − LDR`) |
+| v3.10 | **Gelijk met de Photons:** nagaan welke functies de Photon-rooms hebben die deze sketch nog mist en die toevoegen (Photon-room-sketch nodig) |
+| — | **Uitrol:** per kamer een ESP32 met deze sketch in plaats van de Photon; instellingen via `/settings`; RPi-bridge en Dashboard krijgen de nieuwe room erbij |
 
 ## Versiegeschiedenis
 
