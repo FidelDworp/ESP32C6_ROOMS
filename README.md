@@ -8,7 +8,7 @@ Room controllers van het Zarlar-thuisautomatiseringssysteem (Zarlardinge): een E
 
 | | |
 |---|---|
-| **Actieve sketch** | **v3.0** (3 nov 2026), **zonder Matter** — `TESTROOM/ESP32_C6_ROOM.ino` |
+| **Actieve sketch** | **v3.1** (3 nov 2026), zonder Matter, met landingspagina — `TESTROOM/ESP32_C6_ROOM.ino` + `TESTROOM/landing.h` |
 | **Draait op** | room80 (`192.168.0.80`): het TESTROOM-testbord met alle sensoren. Rij R-EETPL op de matrix van het Dashboard |
 | **Board** | ESP32-C6-DevKitM-1 (clone), 32-pin, 16 MB, op het Zarlar shield |
 | **Apple Home** | Via de RPi-bridge (`server.js` + plugin `matterbridge-zarlar`): toestel "Eetplaats" in de woning Zarlardinge. De ESP32 zelf doet geen Matter meer |
@@ -38,18 +38,31 @@ Bij de HVAC (v2.0) en het Dashboard (v6.0) leverde het weghalen van Matter een g
 
 Dezelfde winst als bij de HVAC en het Dashboard. De sensorwaarden lopen gewoon door.
 
-**Nog in te vullen na 48 u (tot 5 nov 2026 ±18:10):**
+**Nog in te vullen na 48 u** (de test start opnieuw bij het flashen van v3.1):
 
-| Meting v3.0 | Waarde |
+| Meting v3.1 | Waarde |
 |---|---|
 | Vrij geheugen en grootste blok (Sheet, mediaan / laagste over 48 u) | |
 | Herstarts in 48 u | |
+
+## Pagina's
+
+| Adres | Voor wie | Inhoud |
+|---|---|---|
+| `/` | iedereen | **Landingspagina:** grote kamertemperatuur met het gewenste setpoint (→) en een schuifbalk (10-30 °C); 🔥-ring rood = verwarming vraagt warmte · een tegel per lamp met de pixelnamen uit `/settings`; aan = tegel in de gekozen kleur. De bewegingslampen (pixel 0, en pixel 1 als MOV2 aan staat) wisselen bij een tik tussen *automatisch* (aan bij beweging in het donker) en *altijd aan*; de andere lampen gewoon aan/uit · kleurkeuze · 🛏️ bed-modus (donkerblauw = aan: bewegingslampen blijven uit) · 🏠 thuis/weg (groen = thuis) · ⚙️ naar de technische pagina |
+| `/advanced` | Filip | Technische statuspagina (alle metingen, diagnose) — tot v3.0 was dit `/` |
+| `/settings` | Filip | Instellingen (kamernaam, WiFi, sensoren aan/uit, pixels en hun namen …) |
+| `/update` | Filip | OTA |
+| `/json` | Dashboard, Portal, RPi-bridge | Live-gegevens (ongewijzigd) |
+
+Het menu links (of bovenaan op een gsm) heeft op elke technische pagina een **🏠** naar de landingspagina.
 
 ## Bestanden
 
 | Pad | Inhoud |
 |---|---|
 | `TESTROOM/ESP32_C6_ROOM.ino` | Actieve ROOM-sketch (versie in de kop van het bestand) |
+| `TESTROOM/landing.h` | Landingspagina `/` (sinds v3.1). Apart bestand zodat de Arduino IDE het JavaScript niet aanpast. **Moet in dezelfde map als het `.ino`-bestand staan** |
 | `TESTROOM/ROOM_GoogleScript.gs` | Google Apps Script: 37 kolommen A–AK |
 | `TESTROOM/partitions.csv` | Partitietabel 16 MB (2 × 6 MB app, voor OTA). Moet naast het `.ino`-bestand staan |
 | `TESTROOM/old/` | Archief: v2.8 (maart 2026). Alleen ter referentie |
@@ -65,7 +78,7 @@ Dezelfde winst als bij de HVAC en het Dashboard. De sensorwaarden lopen gewoon d
 
 **Na een update naar v3.0:** de oude Eetplaats-tegels in de testwoning "Matter Home" verdwijnen. De tegels in Zarlardinge (via de RPi) blijven werken. Daarna mag de testwoning "Matter Home" weg (Portal Plan AP26).
 
-## Verbeterplan (na de 48 u-test van v3.0)
+## Verbeterplan
 
 Dit is de sketch voor **alle** rooms: ze vervangt stap voor stap de Photons. Daarom eerst betrouwbaarheid, dan gebruiksgemak. Telkens één versie per stap, code pas na GO; JSON-keys en adressen blijven gelijk, tenzij uitdrukkelijk afgesproken (Dashboard, Portal, bridge en Sheet hangen ervan af).
 
@@ -73,21 +86,21 @@ Dit is de sketch voor **alle** rooms: ze vervangt stap voor stap de Photons. Daa
 
 | Versie | Wat | Waarom |
 |---|---|---|
-| v3.1 | **Versie en diagnose zichtbaar:** één `#define ROOM_VERSION`, getoond op elke pagina, in `/settings` en bij het opstarten. In `/settings` ook uptime, reden van de laatste herstart en vrij geheugen | Nu is nergens te zien welke versie op een room draait; bij 8 rooms onmisbaar |
-| v3.2 | **WiFi robuuster:** geen modem-slaap (`WiFi.setSleep(false)`) en periodiek opnieuw verbinden | Les uit de PWM-test (onbereikbaar in de kelder) |
-| v3.3 | **CO₂ niet-blokkerend** (nu wacht `pulseIn()` tot 2 × 50 ms per meting) en **geen sensormetingen in AP-mode** | Minder haperingen van webserver en pixels; `/settings` vlot bij de eerste installatie |
-| v3.4 | **mDNS terug:** `<kamer>.local`, enkel na een geldige WiFi-verbinding | Rooms vind je op naam i.p.v. op IP |
+| v3.2 | **Versie en diagnose zichtbaar:** één `#define ROOM_VERSION`, getoond op elke pagina, in `/settings` en bij het opstarten. In `/settings` ook uptime, reden van de laatste herstart en vrij geheugen | Nu is nergens te zien welke versie op een room draait; bij 8 rooms onmisbaar |
+| v3.3 | **WiFi robuuster:** geen modem-slaap (`WiFi.setSleep(false)`) en periodiek opnieuw verbinden | Les uit de PWM-test (onbereikbaar in de kelder) |
+| v3.4 | **CO₂ niet-blokkerend** (nu wacht `pulseIn()` tot 2 × 50 ms per meting) en **geen sensormetingen in AP-mode** | Minder haperingen van webserver en pixels; `/settings` vlot bij de eerste installatie |
+| v3.5 | **mDNS terug:** `<kamer>.local`, enkel na een geldige WiFi-verbinding | Rooms vind je op naam i.p.v. op IP |
 
 ### B. Eén sketch voor alle rooms
 
 | Versie | Wat |
 |---|---|
-| v3.5 | **Landingspagina voor gewone gebruikers** (zoals de Sjalay), zie hieronder |
+| ✅ v3.1 | **Landingspagina voor gewone gebruikers** (zoals de Sjalay), zie hieronder en "Pagina's" |
 | v3.6 | **LDR-schaal gelijk met de Sjalay:** 0 = donker, 100 = fel. Nu zijn er twee vaste drempels (`LDR_DARK_THRESHOLD` en een harde "> 50" voor de nacht); dat wordt er één, instelbaar in `/settings`. Raakt ook het Dashboard (matrix) en de Sheet: samen aanpassen |
 | v3.7 | **OTA met voortgangsbalk** en uitleg over het juiste `.bin`-bestand op de pagina zelf |
 | — | **Gelijk met de Photons:** nagaan welke functies de Photon-rooms hebben die deze sketch nog mist (Photon-room-sketch nodig) |
 
-**Landingspagina (v3.5).** Vandaag opent `http://<room>/` meteen de volledige technische statuspagina (HVAC, verlichting, beweging, bewaking, controller), met waarden als RSSI, heap en PIR-tellers. Voor een huisgenoot of gast is dat te veel. Naar het voorbeeld van de Sjalay:
+**Landingspagina (v3.1, gedaan).** Tot v3.0 opende `http://<room>/` meteen de volledige technische statuspagina (HVAC, verlichting, beweging, bewaking, controller), met waarden als RSSI, heap en PIR-tellers. Voor een huisgenoot of gast is dat te veel. Naar het voorbeeld van de Sjalay:
 
 | Pagina | Voor wie | Inhoud |
 |---|---|---|
@@ -115,7 +128,8 @@ Op **elke** pagina staat bovenaan een **🏠-icoon** dat terugleidt naar de land
 
 | Versie | Datum | Wat |
 |---|---|---|
-| **v3.0** | 3 nov 2026 | Matter verwijderd; Apple Home via de RPi-bridge. Verder ongewijzigd (JSON-keys, endpoints, NVS) |
+| **v3.1** | 3 nov 2026 | Landingspagina `/` (landing.h); technische statuspagina naar `/advanced`; 🏠 in het menu |
+| v3.0 | 3 nov 2026 | Matter verwijderd; Apple Home via de RPi-bridge. Verder ongewijzigd (JSON-keys, endpoints, NVS) |
 | v2.24 | 8 mei 2026 | Gedeelde CSS-helper (heap), versieregel op serial verwijderd |
 | v2.22 | 1 mei 2026 | `/capabilities` voor de verlichting in de Portal |
 | v2.21 | 13 apr 2026 | Thuis/Weg vereenvoudigd (heating_mode/vent_mode weg) |
