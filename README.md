@@ -4,7 +4,7 @@ Room controllers van het Zarlar-thuisautomatiseringssysteem (Zarlardinge): een E
 
 **Systeembrede referentie:** [`Zarlar_Master_Overnamedocument.md`](https://github.com/FidelDworp/ZarlarApp/blob/main/ESP32_Zarlar/Zarlar_Master_Overnamedocument.md), §7 (ROOM) en §3 (softwareregels). Hardware, pinout en de `/json`-keys staan daar, niet in deze repo.
 
-## Status (3 november 2026)
+## Status (5 november 2026)
 
 | | |
 |---|---|
@@ -38,12 +38,17 @@ Bij de HVAC (v2.0) en het Dashboard (v6.0) leverde het weghalen van Matter een g
 
 Dezelfde winst als bij de HVAC en het Dashboard. De sensorwaarden lopen gewoon door.
 
-**Nog in te vullen na 48 u** (de test start opnieuw bij het flashen van v3.1):
+**Test v3.1** (flash 3 nov 2026 ±19:55, Sheet tot 5 nov 14:39, 511 rijen):
 
 | Meting v3.1 | Waarde |
 |---|---|
-| Vrij geheugen en grootste blok (Sheet, mediaan / laagste over 48 u) | |
-| Herstarts in 48 u | |
+| Vrij geheugen | mediaan **68 %**, laagste 66 % |
+| Grootste blok | mediaan **247 KB**, laagste 239 KB |
+| Heap min (laagste ooit) | 230–264 KB, daalt niet: geen lek |
+| Herstarts | 3 (4/11 23:28, 5/11 12:27 en 14:33), alle drie door werk aan het testbord (verhuis naar de eetplaats, opties gewijzigd, CM1106 los, MOV2 naar 3V3). Vlak ervoor telkens 247–251 KB vrij: **geen herstart door de sketch** |
+| Logging | elke 5 min; 3 losse gemiste rijen (één gemiste poll van het Dashboard, uptime liep door) |
+
+**Besluit:** v3.1 is stabiel. Geen enkele herstart meer zoals met Matter (±1 per dag).
 
 ## Pagina's
 
@@ -76,64 +81,80 @@ Het menu links (of bovenaan op een gsm) heeft op elke technische pagina een **�
 2. Daarna via OTA: *Sketch → Export Compiled Binary*. In `build/esp32.esp32.esp32c6/` staan meerdere `.bin`-bestanden: kies **enkel `ESP32_C6_ROOM.ino.bin`**, niet `.bootloader.bin`, `.partitions.bin` of `.merged.bin`. Upload dat op `http://<ip>/update`; de controller herstart vanzelf.
 3. Staat Flash Size per ongeluk op 4 MB (zichtbaar als `FlashSize=4M` in de compile-uitvoer), dan kan de OTA mislukken: eerst op 16 MB zetten en opnieuw exporteren.
 
-**Na een update naar v3.0:** de oude Eetplaats-tegels in de testwoning "Matter Home" verdwijnen. De tegels in Zarlardinge (via de RPi) blijven werken. Daarna mag de testwoning "Matter Home" weg (Portal Plan AP26).
+**Na een update naar v3.0:** de oude Eetplaats-tegels in de testwoning "Matter Home" verdwijnen. De tegels in Zarlardinge (via de RPi) blijven werken. De testwoning "Matter Home" kan pas weg (Portal Plan AP26) als ook de ECO-boiler geen Matter meer heeft: dat is de laatste ESP32 met Matter.
 
 ## Verbeterplan
 
-Dit is de sketch voor **alle** rooms: ze vervangt stap voor stap de Photons. Daarom eerst betrouwbaarheid, dan de pagina's, dan pas uitrol.
+Dit is de sketch voor **alle** rooms: ze vervangt stap voor stap de Photons. **Beslist 5 nov 2026: eerst de functies** die nodig zijn om de rooms over te zetten (de B&B eerst), daarna pas de pagina's herwerken. Hardware per room: zie `README_ROOM_ACCESS_aansluitingen.md`.
 
 **Spelregels:** één versie per stap · code pas na GO · na elke flash 48 u testen (Sheet: geheugen en herstarts) · `/json`-keys en bedieningsadressen blijven gelijk, tenzij uitdrukkelijk afgesproken (Dashboard, Portal, RPi-bridge en Sheet hangen ervan af) · README en versiekop bij elke stap bijwerken.
 
-| Fase | Versie | Wat | Status |
-|---|---|---|---|
-| — | v3.0 | Matter verwijderd | ✅ 3/11 |
-| — | v3.1 | Landingspagina `/` (`landing.h`), technische pagina naar `/advanced` | ✅ 3/11 · 48 u-test loopt |
-| **A. Betrouwbaarheid** | v3.2 | Versie en diagnose zichtbaar | |
-| | v3.3 | WiFi robuuster | |
-| | v3.4 | CO₂ niet-blokkerend · geen sensormetingen in AP-mode | |
-| | v3.5 | mDNS terug | |
-| **B. Pagina's apart en opgefrist** | v3.6 | `/update` → `ota.h`, met voortgangsbalk | |
-| | v3.7 | `/advanced` → `advanced.h` | |
-| | v3.8 | `/settings` → `settings.h` | |
-| **C. Klaar voor alle rooms** | v3.9 | LDR-schaal gelijk met de Sjalay (samen met Dashboard en Sheet) | |
-| | v3.10 | Gelijk met de Photons: ontbrekende functies toevoegen | |
-| | — | Uitrol: elke Photon-room krijgt een ESP32 met deze sketch | |
+| Fase | Versie | Wat | Voor | Status |
+|---|---|---|---|---|
+| — | v3.0 | Matter verwijderd | | ✅ 3/11 |
+| — | v3.1 | Landingspagina `/` (`landing.h`), technische pagina naar `/advanced` | | ✅ 3/11 |
+| **A. Basis** | v3.2 | Versie en diagnose zichtbaar | alle rooms | |
+| | v3.3 | WiFi robuuster + mDNS terug | alle rooms | |
+| **B. Functies** | v3.4 | **SCD41** (CO2 + temp + vocht via I2C) · CO2-PWM weg · geen metingen in AP-mode · **GAS v1.6** | B&B, BADK, ZITPL | |
+| | → | **B&B gaat live** | B&B | |
+| | v3.5 | **Opruimen:** stofsensor en lichtstraal volledig weg, ook hun `/json`-keys | alle rooms | |
+| | v3.6 | **Buitenlicht** op IO2 (PWM-E, oostkant) | B&B | |
+| | v3.7 | **Pixelklok** na de Powerpixels | ZITPL | |
+| **C. Pagina's** | v3.8 | `/update` → `ota.h`, met voortgangsbalk | alle rooms | |
+| | v3.9 | `/advanced` → `advanced.h` | alle rooms | |
+| | v3.10 | `/settings` → `settings.h` | alle rooms | |
+| **D. Later** | v3.11 | LDR-schaal gelijk met de Sjalay (samen met Dashboard en Sheet) | alle rooms | |
+| | — | Zonlicht (TSL2561) delen tussen rooms: **optioneel, lage prioriteit** | | |
+| | — | Uitrol: elke Photon-room krijgt een ESP32 met deze sketch | | |
 
-### Fase A — Betrouwbaarheid
+### Fase A — Basis
 
 | Versie | Wat | Waarom |
 |---|---|---|
 | v3.2 | **Versie en diagnose zichtbaar:** één `#define ROOM_VERSION`, getoond op elke pagina, in `/settings` en bij het opstarten. In `/settings` ook uptime, reden van de laatste herstart en vrij geheugen | Nu is nergens te zien welke versie op een room draait; bij 8 rooms onmisbaar |
-| v3.3 | **WiFi robuuster:** geen modem-slaap (`WiFi.setSleep(false)`) en periodiek opnieuw verbinden | Les uit de PWM-test (onbereikbaar in de kelder) |
-| v3.4 | **CO₂ niet-blokkerend** (nu wacht `pulseIn()` tot 2 × 50 ms per meting) en **geen sensormetingen in AP-mode** | Minder haperingen van webserver en pixels; `/settings` vlot bij de eerste installatie |
-| v3.5 | **mDNS terug:** `<kamer>.local`, enkel na een geldige WiFi-verbinding | Rooms vind je op naam i.p.v. op IP |
+| v3.3 | **WiFi robuuster:** geen modem-slaap (`WiFi.setSleep(false)`) en periodiek opnieuw verbinden. **mDNS terug:** `<kamer>.local`, enkel na een geldige WiFi-verbinding | Les uit de PWM-test (onbereikbaar in de kelder); rooms vinden op naam |
 
-### Fase B — Pagina's apart en opgefrist
+### Fase B — Functies
 
-**Waarom apart.** De landingspagina staat sinds v3.1 in een eigen bestand (`landing.h`). De andere pagina's (`/advanced`, `/settings`, `/update`) worden nog stukje per stukje in de `.ino` opgebouwd, met waarden die de ESP32 er tussendoor invult (kamernaam, uptime, alle instellingen, pixelnamen). Elke pagina in een eigen `.h`-bestand geeft:
-- **overzicht:** de `.ino` bevat enkel nog logica, de `.h`-bestanden enkel pagina's; opmaak of tekst aanpassen zonder in de C++-code te zoeken;
-- **geen risico** dat de Arduino IDE het JavaScript in een `.ino` beschadigt (zoals bij de PWM-test).
+**v3.4 SCD41** (Sensirion SCD41 op de I2C-bus bij de controller, samen met de TSL2561: SDA IO13, SCL IO11, adres 0x62)
+- **Niet-blokkerend:** periodieke meting in de sensor zelf; de sketch leest om de 5 s als er een nieuwe waarde klaarstaat. `pulseIn()`, `readCO2()` en `CO2_PWM` (IO18) verdwijnen. IO18 wordt vrij.
+- **CO2** blijft in `/json` key `k` en stuurt de ventilatie zoals nu (400–800 ppm → 0–100 %).
+- **Temperatuur en vocht van de SCD41** komen **apart** van die van de DHT22, in twee **nieuwe keys achteraan**: `ak` = SCD-temp (°C), `al` = SCD-vocht (%). (`ae`/`af` zijn al bezet door het geheugen, `ah`–`aj` door de extra DS18B20's.) De DHT22 blijft de kamertemperatuur en het vocht leveren (`e`, `h`); de SCD-waarden zijn alleen extra in de UI en de Sheet.
+- **`/settings`:** SCD41 aan/uit (vervangt "CO2 aan/uit"), **ASC aan/uit** (aan in kamers die gelucht worden, uit in afgesloten ruimtes), **temperatuuroffset**, knop **"kalibreren in buitenlucht"** (FRC op ±425 ppm).
+- **Geen sensormetingen in AP-mode:** `/settings` reageert vlot bij de eerste installatie.
+- **GAS v1.6** (`ROOM_GoogleScript.gs`) samen met v3.4 in gebruik nemen: kolommen voor `ak` en `al` erbij, Stof (`l`) en Beam (`aa`, `ab`) eruit. Het script leest per key, dus oudere sketches loggen gewoon verder. Daarna `setupHeaders()` één keer uitvoeren en "Implementaties beheren → potlood → nieuwe versie" (nooit een nieuwe implementatie). Oude rijen in de Sheet hebben de oude kolomindeling: archiveren in een apart tabblad.
 
-Geheugen win je er niet mee: de teksten staan nu al in het flashgeheugen (`F("...")`).
+**v3.5 Opruimen:** de stofsensor (Sharp, IO12/IO7) en de lichtstraal (LDR2 op IO2) volledig weg: code, instellingen (`dust_en`, `beam_en`, `beam_thresh`), UI en de `/json`-keys `l`, `aa` en `ab`. Het Dashboard en de RPi gebruiken die keys niet (nagekeken 5/11). IO2 komt vrij voor v3.6.
 
-**Hoe.** Een pagina in een `.h` is vaste HTML + JavaScript. De waarden haalt de pagina zelf op: live-waarden uit `/json` (bestaat al), vaste waarden (versie, IP, instellingen) uit een klein JSON-adres dat alleen bij het laden gelezen wordt. Daarom gebeuren bij elke verhuis meteen drie opfrissingen:
+**v3.6 Buitenlicht** (B&B: LED-modules oost E1/E2 via de buffer 3,3 → 5 V)
+- Optionele uitgang op IO2, aan/uit in `/settings`. PWM, dus dimbaar.
+- Aan bij beweging op MOV2 (buiten, trap) en/of MOV1 (binnen), instelbaar; alleen 's nachts.
+- Instelbaar: duur na beweging, helderheid, omkeren (0 V = aan).
+- Veilige opstart: uitgang op "uit" vóór WiFi en de rest starten.
 
-1. **Live-gegevens en vaste gegevens scheiden.** Nu haalt de statuspagina elke 3 s de volledige `/json` op (32 waarden, dezelfde als voor de Sheet) en zoekt ze elke tabelrij **via de tekst van het label** ("bevat het label *Humidity*?"). Hernoem je een label, dan wordt die waarde stil niet meer bijgewerkt; ook waarden die niet veranderen (versie, IP, dimsnelheid, lichttijd) gaan mee in die cyclus. *Nieuw:* vaste waarden één keer bij het laden, live-waarden via een vaste `id` per veld. *Voordeel:* labels vrij aanpasbaar, korter en overzichtelijker script, minder werk per 3 s. `/json` blijft ongewijzigd.
-2. **Statuscirkels.** Aan/uit-toestanden (verwarming, thermostaat, thuis, bed, beweging, dauwpuntalarm, pixels) zijn nu kleine bolletjes van 14 px. *Nieuw (zoals Sjalay en de landingspagina):* een cirkel rond een icoon, wit = rust, lichtrood met rode rand = actief. *Voordeel:* op een gsm in één oogopslag leesbaar, ook voor wie kleuren slecht onderscheidt.
-3. **Korte, eenduidige labels.** De sectietitels zijn al kort, maar de labels mengen Nederlands en Engels ("Room temp", "Humidity", "Heating setpoint" naast "Dauwpunt"). *Nieuw:* alles kort en consequent in het Nederlands.
+**v3.7 Pixelklok** (ZITPL): een reeks pixels **na** de lichtgroepen (Powerpixels) als klok: uur, minuut en seconde, helderheid instelbaar, tijd via NTP met zomer- en wintertijd. Aantal klokpixels instelbaar (12).
+
+### Fase C — Pagina's apart en opgefrist
+
+**Waarom apart.** De landingspagina staat sinds v3.1 in een eigen bestand (`landing.h`). De andere pagina's (`/advanced`, `/settings`, `/update`) worden nog stukje per stukje in de `.ino` opgebouwd. Elke pagina in een eigen `.h`-bestand geeft overzicht (de `.ino` bevat enkel nog logica) en voorkomt dat de Arduino IDE het JavaScript in een `.ino` beschadigt. Geheugen win je er niet mee.
+
+**Hoe.** Vaste HTML + JavaScript; live-waarden uit `/json`, vaste waarden (versie, IP, instellingen) uit een klein JSON-adres dat alleen bij het laden gelezen wordt. Bij elke verhuis meteen drie opfrissingen:
+1. **Live en vaste gegevens scheiden**, live-waarden via een vaste `id` per veld (nu zoekt het script de rij via de labeltekst).
+2. **Statuscirkels** zoals de Sjalay en de landingspagina (wit = rust, lichtrood met rode rand = actief).
+3. **Korte, eenduidige labels**, consequent in het Nederlands.
 
 | Versie | Pagina | Opmerking |
 |---|---|---|
-| v3.6 | `/update` → `ota.h` | Klein: eerste test van de aanpak. Met voortgangsbalk en uitleg over het juiste `.bin`-bestand |
-| v3.7 | `/advanced` → `advanced.h` | Grootste winst in onderhoudbaarheid (punten 1-3 volledig) |
-| v3.8 | `/settings` → `settings.h` | Grootste en meest vervlochten pagina, daarom als laatste |
+| v3.8 | `/update` → `ota.h` | Klein: eerste test van de aanpak. Met voortgangsbalk en uitleg over het juiste `.bin`-bestand |
+| v3.9 | `/advanced` → `advanced.h` | Grootste winst in onderhoudbaarheid |
+| v3.10 | `/settings` → `settings.h` | Grootste en meest vervlochten pagina, daarom als laatste |
 
-### Fase C — Klaar voor alle rooms
+### Fase D — Later
 
 | Versie | Wat |
 |---|---|
-| v3.9 | **LDR-schaal gelijk met de Sjalay:** 0 = donker, 100 = fel. Nu zijn er twee vaste drempels (`LDR_DARK_THRESHOLD` en een harde "> 50" voor de nacht); dat wordt er één, instelbaar in `/settings`. Raakt ook de matrix van het Dashboard en de Sheet: samen aanpassen, oude Sheet-rijen omrekenen (`100 − LDR`) |
-| v3.10 | **Gelijk met de Photons:** nagaan welke functies de Photon-rooms hebben die deze sketch nog mist en die toevoegen (Photon-room-sketch nodig) |
+| v3.11 | **LDR-schaal gelijk met de Sjalay:** 0 = donker, 100 = fel; één instelbare nachtdrempel. Raakt ook het Dashboard en de Sheet: samen aanpassen |
+| — | **Zonlicht delen** (TSL2561 in één room, de andere lezen die lux): optioneel, lage prioriteit. Dag/nacht blijft voorlopig uit de kamer-LDR komen |
 | — | **Uitrol:** per kamer een ESP32 met deze sketch in plaats van de Photon; instellingen via `/settings`; RPi-bridge en Dashboard krijgen de nieuwe room erbij |
 
 ## Versiegeschiedenis
