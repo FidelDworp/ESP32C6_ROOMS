@@ -8,7 +8,7 @@ Room controllers van het Zarlar-thuisautomatiseringssysteem (Zarlardinge): een E
 
 | | |
 |---|---|
-| **Actieve sketch** | **v3.1** (3 nov 2026), zonder Matter, met landingspagina — `TESTROOM/ESP32_C6_ROOM.ino` + `TESTROOM/landing.h` |
+| **Actieve sketch** | **v3.2** (5 nov 2026), zonder Matter, met landingspagina en diagnose — `TESTROOM/ESP32_C6_ROOM.ino` + `TESTROOM/landing.h` |
 | **Draait op** | room80 (`192.168.0.80`): het TESTROOM-testbord met alle sensoren. Rij R-EETPL op de matrix van het Dashboard |
 | **Board** | ESP32-C6-DevKitM-1 (clone), 32-pin, 16 MB, op het Zarlar shield |
 | **Apple Home** | Via de RPi-bridge (`server.js` + plugin `matterbridge-zarlar`): toestel "Eetplaats" in de woning Zarlardinge. De ESP32 zelf doet geen Matter meer |
@@ -93,7 +93,7 @@ Dit is de sketch voor **alle** rooms: ze vervangt stap voor stap de Photons. **B
 |---|---|---|---|---|
 | — | v3.0 | Matter verwijderd | | ✅ 3/11 |
 | — | v3.1 | Landingspagina `/` (`landing.h`), technische pagina naar `/advanced` | | ✅ 3/11 |
-| **A. Basis** | v3.2 | Versie en diagnose zichtbaar | alle rooms | |
+| **A. Basis** | v3.2 | Versie en diagnose zichtbaar | alle rooms | ⏳ klaar, flashen + 48 u |
 | | v3.3 | WiFi robuuster + mDNS terug | alle rooms | |
 | **B. Functies** | v3.4 | **SCD41** (CO2 + temp + vocht via I2C) · CO2-PWM weg · geen metingen in AP-mode · **GAS v1.6** | B&B, BADK, ZITPL | |
 | | → | **B&B gaat live** | B&B | |
@@ -111,7 +111,7 @@ Dit is de sketch voor **alle** rooms: ze vervangt stap voor stap de Photons. **B
 
 | Versie | Wat | Waarom |
 |---|---|---|
-| v3.2 | **Versie en diagnose zichtbaar:** één `#define ROOM_VERSION`, getoond op elke pagina, in `/settings` en bij het opstarten. In `/settings` ook uptime, reden van de laatste herstart en vrij geheugen | Nu is nergens te zien welke versie op een room draait; bij 8 rooms onmisbaar |
+| v3.2 | **Versie en diagnose zichtbaar:** één `#define ROOM_VERSION`, getoond op elke pagina, in `/settings` en bij het opstarten. In `/settings` ook uptime, reden van de laatste herstart (stroom, software/OTA, crash, watchdog, spanningsdip), aantal opstarts, geheugen en WiFi | Nu is nergens te zien welke versie op een room draait en waarom hij herstartte; bij 8 rooms onmisbaar |
 | v3.3 | **WiFi robuuster:** geen modem-slaap (`WiFi.setSleep(false)`) en periodiek opnieuw verbinden. **mDNS terug:** `<kamer>.local`, enkel na een geldige WiFi-verbinding | Les uit de PWM-test (onbereikbaar in de kelder); rooms vinden op naam |
 
 ### Fase B — Functies
@@ -161,7 +161,8 @@ Dit is de sketch voor **alle** rooms: ze vervangt stap voor stap de Photons. **B
 
 | Versie | Datum | Wat |
 |---|---|---|
-| **v3.1** | 3 nov 2026 | Landingspagina `/` (landing.h); technische statuspagina naar `/advanced`; 🏠 in het menu |
+| **v3.2** | 5 nov 2026 | Versie en diagnose zichtbaar: `ROOM_VERSION` op elke pagina en bij het opstarten; in `/settings` een blok Diagnose (uptime, reden laatste herstart, aantal opstarts, geheugen, WiFi). "Crashteller" heet nu "Lage-heap meldingen". Geen nieuwe `/json`-keys |
+| v3.1 | 3 nov 2026 | Landingspagina `/` (landing.h); technische statuspagina naar `/advanced`; 🏠 in het menu |
 | v3.0 | 3 nov 2026 | Matter verwijderd; Apple Home via de RPi-bridge. Verder ongewijzigd (JSON-keys, endpoints, NVS) |
 | v2.24 | 8 mei 2026 | Gedeelde CSS-helper (heap), versieregel op serial verwijderd |
 | v2.22 | 1 mei 2026 | `/capabilities` voor de verlichting in de Portal |
