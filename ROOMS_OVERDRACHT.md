@@ -1,6 +1,6 @@
 # Overdracht — project "Rooms" (Zarlar ROOM-controllers)
 
-*Stand 5 november 2026, 22:15 — Filip Delannoy (FiDel), Zarlardinge (BE)*
+*Stand 5 november 2026, 22:45 — Filip Delannoy (FiDel), Zarlardinge (BE)*
 
 Dit document start een nieuw gesprek over de **ROOM-sketch** en de overstap van de Photon-rooms naar ESP32-C6. Het vat samen wat er tot nu toe (HVAC-control-gesprekken tot 5/11) beslist en gebouwd is.
 
@@ -21,17 +21,17 @@ Dit document start een nieuw gesprek over de **ROOM-sketch** en de overstap van 
 |---|---|
 | [`ESP32C6_ROOMS`](https://github.com/FidelDworp/ESP32C6_ROOMS) | **ROOM-sketch** (`TESTROOM/ESP32_C6_ROOM.ino` + `landing.h`), `ROOM_GoogleScript.gs`, `partitions.csv`, README met het **Verbeterplan** |
 | [`PHOTON_ROOMS`](https://github.com/FidelDworp/PHOTON_ROOMS) | Oude Photon-sketches die nog in huis draaien: R1-BandB, R2-BADK, R3-INKOM, R4-KEUK, R5-WASPL, R6-EETPL, R7-ZITPL, R8-ACCESS (+ S-HVAC, S-ECO_SOLAR, S-OUTSIDE, archief) |
-| [`ESP32C6_HVAC`](https://github.com/FidelDworp/esp32c6_hvac) | HVAC-controller (`ESP32C6_HVAC/ESP32C6_HVAC.ino`), v2.0 zonder Matter, AnaBoX-ventilatie |
-| [`ESP32C6_ECO-boiler`](https://github.com/FidelDworp/ESP32C6_ECO-boiler) | ECO-boiler-controller, v2.0 zonder Matter (`Productie/ESP32-C6_ECO-boiler/`), `ECO_GoogleScript.gs` |
+| [`ESP32C6_HVAC`](https://github.com/FidelDworp/esp32c6_hvac) | HVAC-controller (`Productie/ESP32C6_HVAC.ino`), v2.0 zonder Matter, AnaBoX-ventilatie |
+| [`ESP32C6_ECO-boiler`](https://github.com/FidelDworp/ESP32C6_ECO-boiler) | ECO-boiler-controller, v2.0 zonder Matter (`Productie/ESP32-C6_ECO-boiler.ino`, naar de submap `Productie/ESP32-C6_ECO-boiler/`), `ECO_GoogleScript.gs` |
 | [`ZarlarApp`](https://github.com/FidelDworp/ZarlarApp) (lokaal en als push-doel: `Zarlardinge_Dashboards`) | `ESP32_Zarlar/`: **Master-overnamedocument**, Dashboard-sketch, `zarlar-rpi/` (**server.js**, plugin **matterbridge-zarlar**, `Zarlar_Portal_Plan.md`, `public/`) |
 | [`SJALAY-YSERMONDE`](https://github.com/FidelDworp/SJALAY-YSERMONDE) | Sjalay-controller (vakantiehuis Recht) v1.8: bron van de "goodies" voor ROOM v3.4/v3.5 |
 | [`HVAC_WONING`](https://github.com/FidelDworp/HVAC_WONING) | Woning HVAC (Maarten): `ESP32_PWM_Test.ino` + `pagina.h` v1.5, AnaBoX 0–10 V voor de Begetube 350 R |
 | [`ESP32C6_Smart-Energy`](https://github.com/FidelDworp/ESP32C6_Smart-Energy) | S-ENERGY-controller (HomeWizard), post niet zelf naar Google |
 
-**Nog te pushen** (gemaakt op 5/11, nog niet in de repo's):
-- `ESP32C6_ROOMS`: v3.2 (`ESP32_C6_ROOM.ino`, `landing.h`) in `TESTROOM/`, `README.md` (root, met het nieuwe plan), `README_ROOM_ACCESS_aansluitingen.md` en `Zarlar_Photon_inventaris_v3.xlsx`. Op GitHub stond op 5/11 nog v2.24 (met Matter).
-- `ESP32C6_ECO-boiler`: v2.0 + nieuwe README, oude bestanden opruimen (`CHANGELOG.md`, `Productie/-Zarlar_Overnamedocument.md`, `Productie/partitions.csv` naar de sketchmap, Photon-bestand naar `old/`).
-- `ZarlarApp`: Master-document (met §17 Optimalisatieplan) en Portal Plan, als FiDel ze nog niet pushte.
+**Stand GitHub (nagekeken 5/11 22:45):**
+- `ESP32C6_ROOMS`: **in orde**: v3.2 (`ESP32_C6_ROOM.ino`, `landing.h`), README met plan en beslissingen, aansluitingen-README, inventaris, deze overdracht.
+- `ESP32C6_ECO-boiler`: sketch hernoemd naar `ESP32-C6_ECO-boiler.ino` (v2.0). **Nog te doen:** sketch + `partitions.csv` naar de submap `Productie/ESP32-C6_ECO-boiler/` (de Arduino IDE wil een map met dezelfde naam als de `.ino`), `Productie/-Zarlar_Overnamedocument.md` weg, `old/S-ECO_SOLAR_Photon` → `.cpp`.
+- `ZarlarApp`: laatste commit 3/11 (Master §17). Master en Portal Plan pushen als er sindsdien iets wijzigde.
 
 ## 3. Het systeem in het kort
 
@@ -49,28 +49,28 @@ Dit document start een nieuw gesprek over de **ROOM-sketch** en de overstap van 
 
 ## 4. ROOM-sketch: stand en plan
 
-**Versies:** v3.0 Matter weg · v3.1 landingspagina (`landing.h`), technische pagina op `/advanced` (stabiel getest: 68 %, 247 KB, herstarts alleen door werk aan het bord) · **v3.2** versie (`ROOM_VERSION`) op elke pagina + blok Diagnose in `/settings` (herstartreden, opstarts, geheugen, WiFi).
+**Versies:** v3.0 Matter weg · v3.1 landingspagina (`landing.h`), technische pagina op `/advanced` (stabiel getest: 68 %, 247 KB, herstarts alleen door werk aan het bord) · **v3.2** versie (`ROOM_VERSION`) op elke pagina + blok Diagnose in `/settings` (herstartreden, opstarts, geheugen, WiFi), op GitHub.
 
 **Verbeterplan** (volledig in de README van `ESP32C6_ROOMS`; beslist: **eerst functies, dan pagina's**):
 
 | Versie | Wat |
 |---|---|
 | v3.3 | WiFi robuuster (geen modemslaap, periodiek opnieuw verbinden) + mDNS `<kamer>.local` |
-| v3.4 | **Temperatuurbewaking zoals de Sjalay:** DS18B20-foutenreeks (3 → "ontbreekt"), 85 °C negeren, DHT22 laatste geldige waarde + herstart na 5 fouten, terugval alleen < 5 min oud, melding groen/oranje/rood, verwarming geblokkeerd zonder betrouwbare sensor; tabel "Alle DS18B20-sensoren" |
-| v3.5 | **Verwarmingslogica zoals de Sjalay:** effectief setpoint = max(setpoint, dauwpunt + marge), dauwpunt aan/uit, marge −10…+10, hysterese 0,2–5,0 (± band), minimum setpoint (onderkant schuifbalk, standaard 10), landingspagina "IST (→ SOLL)", nieuwe key `ak` |
-| v3.6 | **SCD41** (I2C, CO2 + temp + vocht), CO2-PWM weg, keys `al`/`am`, ASC/offset/FRC in `/settings`, **GAS v1.6** → daarna **B&B live** |
+| v3.4 | **Temperatuurbewaking zoals de Sjalay:** DS18B20-foutenreeks (3 → "ontbreekt"), 85 °C negeren, DHT22 laatste geldige waarde + herstart na 5 fouten, terugval alleen < 5 min oud, melding groen/oranje/rood, verwarming geblokkeerd zonder betrouwbare sensor; tabel "Alle DS18B20-sensoren"; **maximum 6 DS18B20's** (nieuwe keys `an`, `ao`) |
+| v3.5 | **Verwarmingslogica zoals de Sjalay:** effectief setpoint = max(setpoint, dauwpunt + marge), dauwpunt aan/uit, marge −10…+10, hysterese 0,2–5,0 (± band), minimum setpoint (onderkant schuifbalk, standaard 10), landingspagina "IST (→ SOLL)", nieuwe key `ak`; dauwpuntbeveiliging ook bij Thuis + thermostaatcontact |
+| v3.6 | **SCD41** (I2C, CO2 + temp + vocht), CO2-PWM weg, keys `al`/`am`, ASC/offset/FRC in `/settings`, **GAS v1.6** (+ kolommen `aj`, `ak`, `an`, `ao`) → daarna **B&B live** |
 | v3.7 | Stofsensor en lichtstraal volledig weg (ook keys `l`, `aa`, `ab`) |
 | v3.8 | Buitenlicht oost (B&B, PWM op IO2) |
 | v3.9 | Pixelklok (ZITPL) |
 | v3.10–v3.12 | Pagina's naar `ota.h`, `advanced.h`, `settings.h` |
 | v3.13 | LDR-schaal 0 = donker (zoals Sjalay), samen met Dashboard en Sheet |
 
-**Nog te beslissen (FiDel):**
-1. `ak` (effectief setpoint) ook loggen in de Sheet? (voorstel: ja)
-2. Dauwpuntbeveiliging ook bij "Thuis + thermostaatcontact"? (nu volgt de room dan de wandthermostaat)
-3. Maximum DS18B20's per room: 4 (zoals nu, keys `f`, `ah`–`aj`) of 6?
+**Beslist (5/11):**
+1. `ak` (effectief setpoint) loggen in de Sheet: **ja** (GAS v1.6).
+2. Dauwpuntbeveiliging ook bij "Thuis + thermostaatcontact": **ja**. `b` = thermostaat vraagt **of** kamer onder dauwpunt + marge; veiligheden gaan voor.
+3. Maximum DS18B20's per room: **6** (keys `f`, `ah`–`aj`, nieuw `an`, `ao`).
 
-**Bekende `/json`-keys ROOM** (v3.2): a uptime · b heating_on · c setpoint · d tstat · e temp DHT · f temp DS primair · g vent % · h vocht · i dauwpunt · j dauwpunt-alert · k CO2 · l stof · m LDR · n zon (lux) · o nacht · p bed · q/r/s RGB · t pixels aan · u pixelmodus · v thuis · w/x MOV1/2 triggers · y/z MOV1/2 licht · aa/ab beam · ac RSSI · ad heap % · ae grootste blok · af laagste heap · ag DS-aantal · ah–aj extra DS. Gepland: ak, al, am.
+**Bekende `/json`-keys ROOM** (v3.2): a uptime · b heating_on · c setpoint · d tstat · e temp DHT · f temp DS primair · g vent % · h vocht · i dauwpunt · j dauwpunt-alert · k CO2 · l stof · m LDR · n zon (lux) · o nacht · p bed · q/r/s RGB · t pixels aan · u pixelmodus · v thuis · w/x MOV1/2 triggers · y/z MOV1/2 licht · aa/ab beam · ac RSSI · ad heap % · ae grootste blok · af laagste heap · ag DS-aantal · ah–aj extra DS 2–4. Gepland: an/ao DS 5–6 (v3.4), ak effectief setpoint (v3.5), al/am SCD41-temp/vocht (v3.6). Het Dashboard en de Portal gebruiken ag–aj niet; GAS v1.5 logt ag–ai, niet aj.
 
 ## 5. Hardware: van Photon naar ESP32 (per room)
 
