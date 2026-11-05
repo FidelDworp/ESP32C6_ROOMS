@@ -1,5 +1,5 @@
 // ============================================================================
-// landing.h — landingspagina "/" van de ROOM-sketch (hoort bij v3.1)
+// landing.h — landingspagina "/" van de ROOM-sketch (hoort bij v3.2; v3.2: versie onderaan)
 // Eenvoudige pagina voor huisgenoten en gasten: temperatuur + setpoint, lampen,
 // kleur, bed-modus, thuis/weg. Technische pagina: /advanced (⚙ onderaan).
 //
@@ -62,7 +62,7 @@ const char LANDING_MIDDEN[] PROGMEM = R"HTML(</div><div class="box">
  <label class="kleur"><input type="color" id="kl">kleur</label>
 </div>
 <div class="uitleg">🛏️ bed-modus: de bewegingslampen blijven uit · 🏠 groen = thuis</div>
-<div class="voet"><a href="/advanced" title="Technische pagina">⚙️</a></div>
+<div class="voet"><span id="ver" style="font-size:11px;color:#999;margin-right:8px"></span><a href="/advanced" title="Technische pagina">⚙️</a></div>
 </div>
 )HTML";
 
@@ -94,5 +94,5 @@ $('sl').addEventListener('input',function(){$('slv').textContent=this.value+' °
 $('sl').addEventListener('change',function(){knop('/set_setpoint?setpoint='+this.value);});
 $('kl').addEventListener('change',function(){var v=this.value;
  knop('/setcolor?r='+parseInt(v.substr(1,2),16)+'&g='+parseInt(v.substr(3,2),16)+'&b='+parseInt(v.substr(5,2),16));});
-tegels();ververs();setInterval(ververs,3000);
+$('ver').textContent=CFG.ver||'';tegels();ververs();setInterval(ververs,3000);
 </script></body></html>)HTML";
