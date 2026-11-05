@@ -1,10 +1,17 @@
-// ESP32-C6 ROOM v3.1 — 3 nov 2026 — zonder Matter
+// ESP32-C6 ROOM v3.2 — 5 nov 2026 — zonder Matter
 // Zarlar thuisautomatisering — Room controller (Apple Home via de RPi-bridge, niet meer via Matter op de ESP32)
 // Filip Delannoy — Zarlardinge (BE)
 //
 // PARTITIETABEL: Compileer met "partitions.csv" in de schetsmap (Custom partition scheme):
 //   nvs (20 KB), otadata (8 KB), app0 (6 MB), app1 (6 MB), spiffs (~4 MB)
 //
+// v3.2 (5nov26): VERSIE EN DIAGNOSE ZICHTBAAR. Eén #define ROOM_VERSION, getoond onderaan de
+//                 landingspagina, in de kop van /advanced, /update en /settings en bij het opstarten.
+//                 /settings: blok "Diagnose" met versie, uptime, reden laatste herstart
+//                 (esp_reset_reason: stroom, software/OTA, crash, watchdog, spanningsdip),
+//                 aantal opstarts (NVS "crash-log"/"boots"), geheugen (vrij %, grootste blok,
+//                 laagste ooit) en WiFi-signaal. De vroegere "Crashteller" heet nu "Lage-heap meldingen"
+//                 (dat is wat hij telt: grootste blok < 25 KB). Geen nieuwe /json-keys, geen andere bediening.
 // v3.1 (3nov26): LANDINGSPAGINA (zoals de Sjalay). "/" = eenvoudige pagina voor iedereen
 //                 (landing.h): temperatuur + setpoint-schuifbalk, een tegel per lamp (pixelnamen;
 //                 MOV-pixels wisselen tussen automatisch en altijd aan), kleur, bed-modus,
@@ -50,6 +57,28 @@
 #include <nvs.h>
 #include <nvs_flash.h>
 #include "landing.h"     // v3.1: landingspagina "/"
+#include <esp_system.h>      // v3.2: esp_reset_reason()
+
+#define ROOM_VERSION "v3.2"  // v3.2: enige plaats met het versienummer
+
+// v3.2: reden van de laatste herstart, leesbaar
+esp_reset_reason_t boot_reason = ESP_RST_UNKNOWN;
+uint32_t boot_count = 0;
+const char* resetReasonText(esp_reset_reason_t r) {
+  switch (r) {
+    case ESP_RST_POWERON:   return "Stroom aangezet";
+    case ESP_RST_EXT:       return "Reset-knop / extern";
+    case ESP_RST_SW:        return "Software (OTA, instellingen of serieel R)";
+    case ESP_RST_PANIC:     return "CRASH (fout in de software)";
+    case ESP_RST_INT_WDT:   return "Watchdog (interrupt)";
+    case ESP_RST_TASK_WDT:  return "Watchdog (taak hing vast)";
+    case ESP_RST_WDT:       return "Watchdog (andere)";
+    case ESP_RST_DEEPSLEEP: return "Uit diepe slaap";
+    case ESP_RST_BROWNOUT:  return "Spanningsdip (brown-out)";
+    case ESP_RST_SDIO:      return "SDIO";
+    default:                return "Onbekend";
+  }
+}
 Preferences preferences;     // Globale Preferences instantie
 
 
@@ -601,7 +630,17 @@ void setup() {
   Serial.begin(115200);
   delay(1500);
   while (Serial.available()) Serial.read();  // flush
-  // Version print verwijderd v2.24
+  // v3.2: versie, reden herstart en opstartteller
+  boot_reason = esp_reset_reason();
+  {
+    Preferences bootPrefs;
+    bootPrefs.begin("crash-log", false);
+    boot_count = bootPrefs.getUInt("boots", 0) + 1;
+    bootPrefs.putUInt("boots", boot_count);
+    bootPrefs.end();
+  }
+  Serial.printf("\n=== ESP32-C6 ROOM %s ===\n", ROOM_VERSION);
+  Serial.printf("[BOOT] Opstart #%u — reden: %s\n", boot_count, resetReasonText(boot_reason));
 
   // v2.4 FIX 7: Crash-logging — lees vorige crash uit NVS bij elke boot
   {
@@ -613,9 +652,9 @@ void setup() {
     uint32_t crashCnt = crashPrefs.getUInt("count", 0);
     crashPrefs.end();
     if (crashCnt > 0) {
-      Serial.printf("[BOOT] ⚠️  Vorige crash (#%u): %s\n", crashCnt, lastCrash);
+      Serial.printf("[BOOT] ⚠️  Lage-heap meldingen: %u (laatste: %s)\n", crashCnt, lastCrash);
     } else {
-      Serial.println("[BOOT] Geen crashes geregistreerd.");
+      Serial.println("[BOOT] Geen lage-heap meldingen.");
     }
   }
   Serial.println("Commando's: 'R' = NVS reset, 'reset_nvs', 'status'");
@@ -1038,7 +1077,7 @@ void setup() {
       p->print(FPSTR(LANDING_KOP));
       p->print(room_id);
       p->print(FPSTR(LANDING_MIDDEN));
-      p->print(F("<script>var CFG={mov2:"));
+      p->print(F("<script>var CFG={ver:\"ROOM " ROOM_VERSION "\",mov2:"));
       p->print(mov2_enabled ? 1 : 0);
       p->print(F(",px:["));
       for (int i = 0; i < pixels_num; i++) {
@@ -1111,7 +1150,7 @@ void setup() {
       "<div class=\"header\">"
       "<div class=\"header-left\">"));
     p->print(room_id);
-    p->print(F("</div><div class=\"header-right\">"));
+    p->print(F("<span style=\"font-size:12px;font-weight:normal;opacity:.75\"> &middot; ROOM " ROOM_VERSION "</span></div><div class=\"header-right\">"));
     p->print(uptime_sec);
     p->print(F(" s &nbsp;&nbsp; "));
     p->print(getFormattedDateTime());
@@ -1479,7 +1518,7 @@ void setup() {
       "</style></head><body>"
       "<div class=\"header\"><div class=\"header-left\">"));
     p->print(room_id);
-    p->print(F("</div><div class=\"header-right\">"));
+    p->print(F("<span style=\"font-size:12px;font-weight:normal;opacity:.75\"> &middot; ROOM " ROOM_VERSION "</span></div><div class=\"header-right\">"));
     p->print(uptime_sec);
     p->print(F(" s</div></div>"
       "<div class=\"container\">"
@@ -1626,7 +1665,7 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     "<div class=\"header\">"
     "<div class=\"header-left\">"));
   p->print(room_id);
-  p->print(F("</div><div class=\"header-right\">Instellingen</div></div>"
+  p->print(F("<span style=\"font-size:12px;font-weight:normal;opacity:.75\"> &middot; ROOM " ROOM_VERSION "</span></div><div class=\"header-right\">Instellingen</div></div>"
     "<div class=\"container\">"
     "<div class=\"sidebar\" style=\"flex-wrap:wrap\">"
     "<a href=\"/\" title=\"Start\" style=\"width:36px\">&#127968;</a>"
@@ -1642,21 +1681,36 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
   p->print(mac_address);
   p->print(F("</code></td></tr>"));
 
-  // v2.4 Crash-log weergave
+  // v3.2: Diagnose (versie, uptime, herstart, geheugen, WiFi) + lage-heap meldingen (vroeger "Crashteller")
   {
     Preferences crashPrefs;
     crashPrefs.begin("crash-log", true);
     uint32_t crashCnt = crashPrefs.getUInt("count", 0);
     String crashReason = crashPrefs.getString("reason", "geen");
     crashPrefs.end();
+    unsigned long up = millis() / 1000;
+    bool slecht = (boot_reason == ESP_RST_PANIC || boot_reason == ESP_RST_INT_WDT || boot_reason == ESP_RST_TASK_WDT ||
+                   boot_reason == ESP_RST_WDT || boot_reason == ESP_RST_BROWNOUT);
+    p->print(F("<tr><td colspan=\"2\" style=\"background:#336699;color:#fff;font-weight:bold;padding:6px 8px;\">Diagnose</td></tr>"));
+    p->print(F("<tr><td class=\"lbl\">Versie</td><td class=\"inp\"><b>ROOM " ROOM_VERSION "</b></td></tr>"));
+    p->printf("<tr><td class=\"lbl\">Uptime</td><td class=\"inp\">%lu d %lu u %lu min</td></tr>",
+      up / 86400, (up % 86400) / 3600, (up % 3600) / 60);
+    p->printf("<tr><td class=\"lbl\">Laatste herstart</td><td class=\"inp\"><b style=\"color:%s\">%s</b></td></tr>",
+      slecht ? "#c00" : "#0a0", resetReasonText(boot_reason));
+    p->printf("<tr><td class=\"lbl\">Aantal opstarts</td><td class=\"inp\">%u</td></tr>", boot_count);
+    p->printf("<tr><td class=\"lbl\">Geheugen</td><td class=\"inp\">vrij %d %% &middot; grootste blok %u KB &middot; laagste ooit %u KB</td></tr>",
+      (int)((ESP.getFreeHeap() * 100) / ESP.getHeapSize()),
+      (unsigned)(ESP.getMaxAllocHeap() / 1024), (unsigned)(ESP.getMinFreeHeap() / 1024));
+    p->printf("<tr><td class=\"lbl\">WiFi-signaal</td><td class=\"inp\">%d dBm</td></tr>", (int)WiFi.RSSI());
     const char* crashColor = crashCnt > 0 ? "#c00" : "#0a0";
-    p->printf("<tr><td class=\"lbl\">Crashteller</td><td class=\"inp\"><b style=\"color:%s\">%u</b>", crashColor, crashCnt);
+    p->printf("<tr><td class=\"lbl\">Lage-heap meldingen</td><td class=\"inp\"><b style=\"color:%s\">%u</b>", crashColor, crashCnt);
     if (crashCnt > 0) {
-      p->print(F(" &nbsp; <a href=\"/clear_crash_log\" style=\"font-size:12px;color:#369;\" onclick=\"return confirm('Crash-log wissen?');\">Wissen</a>"));
+      p->print(F(" &nbsp; <code style=\"font-size:12px;\">"));
+      p->print(crashReason);
+      p->print(F("</code> &nbsp; <a href=\"/clear_crash_log\" style=\"font-size:12px;color:#369;\" onclick=\"return confirm('Meldingen wissen?');\">Wissen</a>"));
     }
-    p->print(F("</td></tr><tr><td class=\"lbl\">Laatste crash</td><td class=\"inp\"><code style=\"font-size:12px;\">"));
-    p->print(crashReason);
-    p->print(F("</code></td></tr>"));
+    p->print(F("</td></tr>"));
+    p->print(F("<tr><td colspan=\"2\" style=\"background:#336699;color:#fff;font-weight:bold;padding:6px 8px;\">Instellingen</td></tr>"));
   }
 
   p->print(F("<tr><td class=\"lbl\">Room naam</td><td class=\"inp\"><input type=\"text\" name=\"room_id\" value=\""));
