@@ -97,7 +97,7 @@ Bijgekomen op 5 nov 2026: de **"goodies" van de Sjalay-controller** (v1.8, repo 
 | — | v3.1 | Landingspagina `/` (`landing.h`), technische pagina naar `/advanced` | | ✅ 3/11 |
 | **A. Basis** | v3.2 | Versie en diagnose zichtbaar | alle rooms | ⏳ geflasht 5/11, 48 u-test |
 | | v3.3 | WiFi robuuster + mDNS terug | alle rooms | |
-| **B. Functies** | v3.4 | **Temperatuurbewaking** (zoals de Sjalay) + overzicht alle DS18B20's | alle rooms | |
+| **B. Functies** | v3.4 | **Temperatuurbewaking** (zoals de Sjalay) + overzicht alle DS18B20's, **maximum 6** (nieuwe keys `an`, `ao`) | alle rooms | |
 | | v3.5 | **Verwarmingslogica zoals de Sjalay:** effectief setpoint, dauwpunt aan/uit, marge −10…+10, instelbare hysterese, minimum setpoint, landingspagina "IST (→ SOLL)" | alle rooms | |
 | | v3.6 | **SCD41** (CO2 + temp + vocht via I2C) · CO2-PWM weg · geen metingen in AP-mode · **GAS v1.6** | B&B, BADK, ZITPL | |
 | | → | **B&B gaat live** | B&B | |
@@ -111,13 +111,15 @@ Bijgekomen op 5 nov 2026: de **"goodies" van de Sjalay-controller** (v1.8, repo 
 | | — | Zonlicht (TSL2561) delen tussen rooms: **optioneel, lage prioriteit** | | |
 | | — | Uitrol: elke Photon-room krijgt een ESP32 met deze sketch | | |
 
-### Nieuwe `/json`-keys (voorstel)
+### Nieuwe `/json`-keys (beslist 5 nov 2026)
 
-Alle nieuwe keys komen **achteraan**; bestaande keys blijven ongewijzigd, op `l`, `aa` en `ab` na (vervallen in v3.7). `ae`/`af` zijn bezet door het geheugen, `ah`–`aj` door de extra DS18B20's.
+Alle nieuwe keys komen **achteraan**; bestaande keys blijven ongewijzigd, op `l`, `aa` en `ab` na (vervallen in v3.7). `ae`/`af` zijn bezet door het geheugen, `ah`–`aj` door de extra DS18B20's 2–4. Het Dashboard en de Portal gebruiken `ag`–`aj` niet (nagekeken 5/11); alleen de Sheet.
 
 | Key | Inhoud | Sinds | In de Sheet |
 |---|---|---|---|
-| `ak` | Effectief setpoint (°C, 1 decimaal) = het echte doel na dauwpuntcorrectie | v3.5 | ja (te bevestigen) |
+| `an` | DS18B20 nr. 5 (°C) | v3.4 | ja (vanaf GAS v1.6) |
+| `ao` | DS18B20 nr. 6 (°C) | v3.4 | ja (vanaf GAS v1.6) |
+| `ak` | Effectief setpoint (°C, 1 decimaal) = het echte doel na dauwpuntcorrectie | v3.5 | ja (vanaf GAS v1.6) |
 | `al` | SCD41-temperatuur (°C) | v3.6 | ja |
 | `am` | SCD41-vochtigheid (%) | v3.6 | ja |
 
@@ -158,10 +160,10 @@ Alle nieuwe keys komen **achteraan**; bestaande keys blijven ongewijzigd, op `l`
 
 **Overzicht alle DS18B20's** (zoals de Sjalay)
 - Op `/advanced` een tabel **"Alle DS18B20-sensoren"**: aantal gevonden, per sensor bijnaam, rol (kamer = primair), temperatuur, en **"ontbreekt"** bij een foutenreeks.
-- Bestaat al en blijft: tot 4 sensoren, bijnamen, keuze primaire sensor en "opnieuw scannen" in `/settings`, CRC-controle.
-- Maximum blijft **4 sensoren** (JSON `f`, `ah`–`aj`); meer kan later als het nodig blijkt (te bevestigen).
+- Bestaat al en blijft: bijnamen, keuze primaire sensor en "opnieuw scannen" in `/settings`, CRC-controle.
+- **Maximum van 4 naar 6 sensoren** (beslist 5/11): JSON `f` (primair), `ah`–`aj` (2–4) en nieuw **`an`, `ao`** (5–6). Bijnamen en primaire keuze ook voor sensor 5 en 6.
 
-**Geen nieuwe `/json`-keys.** `e` (DHT22-temp) en `h` (vocht) tonen voortaan de laatste geldige waarde in plaats van 0.
+**`/json`:** nieuwe keys **`an`, `ao`** (DS18B20 nr. 5 en 6). `e` (DHT22-temp) en `h` (vocht) tonen voortaan de laatste geldige waarde in plaats van 0.
 
 #### v3.5 Verwarmingslogica zoals de Sjalay (v1.4, v1.5, v1.8)
 
@@ -172,7 +174,7 @@ Alle nieuwe keys komen **achteraan**; bestaande keys blijven ongewijzigd, op `l`
 - **Echte hysterese**: verwarming AAN onder effectief setpoint − hysterese/2, UIT boven effectief setpoint + hysterese/2; ertussen blijft de stand behouden.
 - **Veiligheid, altijd actief:** UIT zodra de kamertemperatuur het maximum (30 °C) bereikt; UIT als er geen betrouwbare kamertemperatuur is (v3.4).
 
-**ROOM-uitzondering: Thuis + thermostaatcontact.** Staat de room op Thuis en is het thermostaatcontact ingeschakeld, dan volgt `b` de thermostaat aan de muur (zoals nu). Te bevestigen: grijpt de dauwpuntbeveiliging ook dan in (verwarming aan als de kamer onder dauwpunt + marge zakt, ook als de thermostaat uit staat)?
+**ROOM-uitzondering: Thuis + thermostaatcontact.** Staat de room op Thuis en is het thermostaatcontact ingeschakeld, dan volgt `b` de thermostaat aan de muur (zoals nu), **met dauwpuntbeveiliging** (beslist 5/11): `b` = thermostaat vraagt **of** kamer onder dauwpunt + marge (met hysterese), ook als de thermostaat uit staat. Alleen als de dauwpuntbeveiliging aan staat. De veiligheden (30 °C, geen betrouwbare sensor) gaan altijd voor.
 
 **`/settings`** (nieuw of gewijzigd)
 
@@ -202,7 +204,7 @@ Sensirion SCD41 op de I2C-bus bij de controller, samen met de TSL2561 (SDA IO13,
 - **Temperatuur en vocht van de SCD41** komen **apart** van die van de DHT22, in de nieuwe keys **`al`** (SCD-temp) en **`am`** (SCD-vocht). De DHT22 blijft vocht en dauwpunt leveren (`e`, `h`); de SCD-waarden zijn extra in de UI en de Sheet.
 - **`/settings`:** SCD41 aan/uit (vervangt "CO2 aan/uit"), **ASC aan/uit** (aan in kamers die gelucht worden, uit in afgesloten ruimtes), **temperatuuroffset**, knop **"kalibreren in buitenlucht"** (FRC op ±425 ppm).
 - **Geen sensormetingen in AP-mode:** `/settings` reageert vlot bij de eerste installatie.
-- **GAS v1.6** (`ROOM_GoogleScript.gs`) samen met v3.6 in gebruik nemen: kolommen voor `ak`, `al` en `am` erbij, Stof (`l`) en Beam (`aa`, `ab`) eruit. Het script leest per key, dus oudere sketches loggen gewoon verder. Daarna `setupHeaders()` één keer uitvoeren en "Implementaties beheren → potlood → nieuwe versie" (nooit een nieuwe implementatie). Oude rijen in de Sheet hebben de oude kolomindeling: archiveren in een apart tabblad.
+- **GAS v1.6** (`ROOM_GoogleScript.gs`) samen met v3.6 in gebruik nemen: kolommen voor `aj` (DS4, ontbreekt in v1.5), `ak`, `al`, `am`, `an` en `ao` erbij, Stof (`l`) en Beam (`aa`, `ab`) eruit. Het script leest per key, dus oudere sketches loggen gewoon verder. Daarna `setupHeaders()` één keer uitvoeren en "Implementaties beheren → potlood → nieuwe versie" (nooit een nieuwe implementatie). Oude rijen in de Sheet hebben de oude kolomindeling: archiveren in een apart tabblad.
 
 #### v3.7 Opruimen
 
@@ -242,13 +244,13 @@ Een reeks pixels **na** de lichtgroepen (Powerpixels) als klok: uur, minuut en s
 | — | **Zonlicht delen** (TSL2561 in één room, de andere lezen die lux): optioneel, lage prioriteit. Dag/nacht blijft voorlopig uit de kamer-LDR komen |
 | — | **Uitrol:** per kamer een ESP32 met deze sketch in plaats van de Photon; instellingen via `/settings`; RPi-bridge en Dashboard krijgen de nieuwe room erbij |
 
-### Nog te beslissen (FiDel)
+### Beslist (5 nov 2026)
 
-| # | Vraag | Voorstel |
+| # | Vraag | Beslissing |
 |---|---|---|
-| 1 | Effectief setpoint `ak` ook loggen in de Sheet? | ja |
-| 2 | Dauwpuntbeveiliging ook bij Thuis + thermostaatcontact? | open |
-| 3 | Maximum aantal DS18B20's per room: 4 of 6? | 4 |
+| 1 | Effectief setpoint `ak` ook loggen in de Sheet? | **ja** (GAS v1.6) |
+| 2 | Dauwpuntbeveiliging ook bij Thuis + thermostaatcontact? | **ja** (v3.5) |
+| 3 | Maximum aantal DS18B20's per room: 4 of 6? | **6**, nieuwe keys `an`, `ao` (v3.4) |
 
 ## Versiegeschiedenis
 
