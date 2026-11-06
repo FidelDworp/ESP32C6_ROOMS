@@ -8,7 +8,7 @@ Room controllers van het Zarlar-thuisautomatiseringssysteem (Zarlardinge): een E
 
 | | |
 |---|---|
-| **Actieve sketch** | **v3.2** (5 nov 2026), zonder Matter, met landingspagina en diagnose — `TESTROOM/ESP32_C6_ROOM.ino` + `TESTROOM/landing.h` |
+| **Actieve sketch** | **v3.2** (5 nov 2026), zonder Matter, met landingspagina en diagnose — map `ESP32_C6_ROOM/` |
 | **Draait op** | room80 (`192.168.0.80`): het TESTROOM-testbord met alle sensoren. Rij R-EETPL op de matrix van het Dashboard |
 | **Board** | ESP32-C6-DevKitM-1 (clone), 32-pin, 16 MB, op het Zarlar shield |
 | **Apple Home** | Via de RPi-bridge (`server.js` + plugin `matterbridge-zarlar`): toestel "Eetplaats" in de woning Zarlardinge. De ESP32 zelf doet geen Matter meer |
@@ -66,11 +66,15 @@ Het menu links (of bovenaan op een gsm) heeft op elke technische pagina een **�
 
 | Pad | Inhoud |
 |---|---|
-| `TESTROOM/ESP32_C6_ROOM.ino` | Actieve ROOM-sketch (versie in de kop van het bestand) |
-| `TESTROOM/landing.h` | Landingspagina `/` (sinds v3.1). Apart bestand zodat de Arduino IDE het JavaScript niet aanpast. **Moet in dezelfde map als het `.ino`-bestand staan** |
-| `TESTROOM/ROOM_GoogleScript.gs` | Google Apps Script: 37 kolommen A–AK |
-| `TESTROOM/partitions.csv` | Partitietabel 16 MB (2 × 6 MB app, voor OTA). Moet naast het `.ino`-bestand staan |
-| `TESTROOM/old/` | Archief: v2.8 (maart 2026). Alleen ter referentie |
+| `ROOM_STANDAARD.md` | **De ROOM-standaard:** wat er in elke room zit en wat niet. Eerst lezen |
+| `ESP32_C6_ROOM/` | **De sketch.** Open deze map in de Arduino IDE |
+| `ESP32_C6_ROOM/ESP32_C6_ROOM.ino` | ROOM-sketch (versie in de kop en in `ROOM_VERSION`) |
+| `ESP32_C6_ROOM/landing.h` | Landingspagina `/` (sinds v3.1). Apart bestand zodat de Arduino IDE het JavaScript niet aanpast |
+| `ESP32_C6_ROOM/partitions.csv` | Partitietabel 16 MB (2 × 6 MB app, voor OTA). Wordt automatisch gebruikt omdat hij naast het `.ino`-bestand staat |
+| `GoogleScript/ROOM_GoogleScript.gs` | Google Apps Script voor de Sheet "R-ROOMS Log" (37 kolommen A–AK) |
+| `docs/aansluitingen.md` | Ombouw per room van Photon naar ESP32: aansluitingen, meten, buffer voor ACCESS |
+| `docs/Zarlar_Photon_inventaris_v3.xlsx` | Inventaris van alle Photon-signalen per room en ACCESS |
+| `old/` | Archief: v2.8 (maart 2026), de laatste versie vóór Matter. Alleen ter referentie |
 
 ## Compileren en uploaden
 
@@ -85,7 +89,7 @@ Het menu links (of bovenaan op een gsm) heeft op elke technische pagina een **�
 
 ## Verbeterplan
 
-Dit is de sketch voor **alle** rooms: ze vervangt stap voor stap de Photons. **Beslist 5 nov 2026: eerst de functies** die nodig zijn om de rooms over te zetten (de B&B eerst), daarna pas de pagina's herwerken. **Wat er in een room zit (en wat niet): [`ROOM_STANDAARD.md`](ROOM_STANDAARD.md)** (vastgelegd 6 nov 2026). Ombouw per room: `README_ROOM_ACCESS_aansluitingen.md`.
+Dit is de sketch voor **alle** rooms: ze vervangt stap voor stap de Photons. **Beslist 5 nov 2026: eerst de functies** die nodig zijn om de rooms over te zetten (de B&B eerst), daarna pas de pagina's herwerken. **Wat er in een room zit (en wat niet): [`ROOM_STANDAARD.md`](ROOM_STANDAARD.md)** (vastgelegd 6 nov 2026). Ombouw per room: [`docs/aansluitingen.md`](docs/aansluitingen.md).
 
 Bijgekomen op 5 nov 2026: de **"goodies" van de Sjalay-controller** (v1.8, repo `SJALAY-YSERMONDE`): temperatuurbewaking, de volledige verwarmings- en dauwpuntlogica, instelbare hysterese en een overzicht van alle DS18B20's (v3.4 en v3.5).
 
@@ -199,7 +203,7 @@ Wordt het minimum boven het opgeslagen setpoint gezet, dan wordt het setpoint me
 
 #### v3.6 SCD41
 
-Sensirion SCD41 op de I2C-bus bij de controller (SDA IO13, SCL IO11, adres 0x62). Hardware en kalibratie: `README_ROOM_ACCESS_aansluitingen.md` §6.1.
+Sensirion SCD41 op de I2C-bus bij de controller (SDA IO13, SCL IO11, adres 0x62). Hardware en kalibratie: `docs/aansluitingen.md` §6.1.
 - **Niet-blokkerend:** periodieke meting in de sensor zelf; de sketch leest om de 5 s als er een nieuwe waarde klaarstaat. `pulseIn()`, `readCO2()` en `CO2_PWM` (IO18) verdwijnen. IO18 wordt vrij.
 - **CO2** blijft in `/json` key `k` en stuurt de ventilatie zoals nu (400–800 ppm → 0–100 %).
 - **Temperatuur en vocht van de SCD41** komen **apart** van die van de DHT22, in de nieuwe keys **`al`** (SCD-temp) en **`am`** (SCD-vocht). De DHT22 blijft vocht en dauwpunt leveren (`e`, `h`); de SCD-waarden zijn extra in de UI en de Sheet.
