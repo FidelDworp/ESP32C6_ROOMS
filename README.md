@@ -85,7 +85,7 @@ Het menu links (of bovenaan op een gsm) heeft op elke technische pagina een **�
 
 ## Verbeterplan
 
-Dit is de sketch voor **alle** rooms: ze vervangt stap voor stap de Photons. **Beslist 5 nov 2026: eerst de functies** die nodig zijn om de rooms over te zetten (de B&B eerst), daarna pas de pagina's herwerken. Hardware per room: zie `README_ROOM_ACCESS_aansluitingen.md`.
+Dit is de sketch voor **alle** rooms: ze vervangt stap voor stap de Photons. **Beslist 5 nov 2026: eerst de functies** die nodig zijn om de rooms over te zetten (de B&B eerst), daarna pas de pagina's herwerken. **Wat er in een room zit (en wat niet): [`ROOM_STANDAARD.md`](ROOM_STANDAARD.md)** (vastgelegd 6 nov 2026). Ombouw per room: `README_ROOM_ACCESS_aansluitingen.md`.
 
 Bijgekomen op 5 nov 2026: de **"goodies" van de Sjalay-controller** (v1.8, repo `SJALAY-YSERMONDE`): temperatuurbewaking, de volledige verwarmings- en dauwpuntlogica, instelbare hysterese en een overzicht van alle DS18B20's (v3.4 en v3.5).
 
@@ -102,13 +102,13 @@ Bijgekomen op 5 nov 2026: de **"goodies" van de Sjalay-controller** (v1.8, repo 
 | | v3.6 | **SCD41** (CO2 + temp + vocht via I2C) · CO2-PWM weg · geen metingen in AP-mode · **GAS v1.6** | B&B, BADK, ZITPL | |
 | | → | **B&B gaat live** | B&B | |
 | | v3.7 | **Opruimen:** stofsensor en lichtstraal volledig weg, ook hun `/json`-keys | alle rooms | |
-| | v3.8 | **Buitenlicht** op IO2 (PWM-E, oostkant) | B&B | |
-| | v3.9 | **Pixelklok** na de Powerpixels | ZITPL | |
-| **C. Pagina's** | v3.10 | `/update` → `ota.h`, met voortgangsbalk | alle rooms | |
-| | v3.11 | `/advanced` → `advanced.h` | alle rooms | |
-| | v3.12 | `/settings` → `settings.h` | alle rooms | |
-| **D. Later** | v3.13 | LDR-schaal gelijk met de Sjalay (samen met Dashboard en Sheet) | alle rooms | |
-| | — | Zonlicht (TSL2561) delen tussen rooms: **optioneel, lage prioriteit** | | |
+| | v3.8 | **Generieke I/O** GP1–GP4 op de vrije pinnen van RoomSense en Option | alle rooms | |
+| **C. Pagina's** | v3.9 | `/update` → `ota.h`, met voortgangsbalk | alle rooms | |
+| | v3.10 | `/advanced` → `advanced.h` | alle rooms | |
+| | v3.11 | `/settings` → `settings.h` | alle rooms | |
+| **D. Later** | v3.12 | LDR-schaal gelijk met de Sjalay (samen met Dashboard en Sheet) | alle rooms | |
+
+Niet meer in dit plan (6 nov 2026, zie `ROOM_STANDAARD.md` §1.5): het **buitenlicht** van de B&B (eigen controllers ACCESS2, ACCESS3…), de **pixelklok** (eigen ESP32 in de ZITPL) en de **TSL2561**.
 | | — | Uitrol: elke Photon-room krijgt een ESP32 met deze sketch | | |
 
 ### Nieuwe `/json`-keys (beslist 5 nov 2026)
@@ -122,6 +122,7 @@ Alle nieuwe keys komen **achteraan**; bestaande keys blijven ongewijzigd, op `l`
 | `ak` | Effectief setpoint (°C, 1 decimaal) = het echte doel na dauwpuntcorrectie | v3.5 | ja (vanaf GAS v1.6) |
 | `al` | SCD41-temperatuur (°C) | v3.6 | ja |
 | `am` | SCD41-vochtigheid (%) | v3.6 | ja |
+| `ap`–`as` | Generieke I/O GP1–GP4: 0/1 (digitaal), 0–100 % (analoog of PWM), leeg als de pin uit staat | v3.8 | ja (kolommen al in GAS v1.6) — **keys te bevestigen** |
 
 ### Fase A — Basis
 
@@ -198,28 +199,34 @@ Wordt het minimum boven het opgeslagen setpoint gezet, dan wordt het setpoint me
 
 #### v3.6 SCD41
 
-Sensirion SCD41 op de I2C-bus bij de controller, samen met de TSL2561 (SDA IO13, SCL IO11, adres 0x62). Hardware en kalibratie: `README_ROOM_ACCESS_aansluitingen.md` §6.1.
+Sensirion SCD41 op de I2C-bus bij de controller (SDA IO13, SCL IO11, adres 0x62). Hardware en kalibratie: `README_ROOM_ACCESS_aansluitingen.md` §6.1.
 - **Niet-blokkerend:** periodieke meting in de sensor zelf; de sketch leest om de 5 s als er een nieuwe waarde klaarstaat. `pulseIn()`, `readCO2()` en `CO2_PWM` (IO18) verdwijnen. IO18 wordt vrij.
 - **CO2** blijft in `/json` key `k` en stuurt de ventilatie zoals nu (400–800 ppm → 0–100 %).
 - **Temperatuur en vocht van de SCD41** komen **apart** van die van de DHT22, in de nieuwe keys **`al`** (SCD-temp) en **`am`** (SCD-vocht). De DHT22 blijft vocht en dauwpunt leveren (`e`, `h`); de SCD-waarden zijn extra in de UI en de Sheet.
 - **`/settings`:** SCD41 aan/uit (vervangt "CO2 aan/uit"), **ASC aan/uit** (aan in kamers die gelucht worden, uit in afgesloten ruimtes), **temperatuuroffset**, knop **"kalibreren in buitenlucht"** (FRC op ±425 ppm).
 - **Geen sensormetingen in AP-mode:** `/settings` reageert vlot bij de eerste installatie.
-- **GAS v1.6** (`ROOM_GoogleScript.gs`) samen met v3.6 in gebruik nemen: kolommen voor `aj` (DS4, ontbreekt in v1.5), `ak`, `al`, `am`, `an` en `ao` erbij, Stof (`l`) en Beam (`aa`, `ab`) eruit. Het script leest per key, dus oudere sketches loggen gewoon verder. Daarna `setupHeaders()` één keer uitvoeren en "Implementaties beheren → potlood → nieuwe versie" (nooit een nieuwe implementatie). Oude rijen in de Sheet hebben de oude kolomindeling: archiveren in een apart tabblad.
+- **GAS v1.6** (`ROOM_GoogleScript.gs`) samen met v3.6 in gebruik nemen: kolommen voor `aj` (DS4, ontbreekt in v1.5), `ak`, `al`, `am`, `an`, `ao` en `ap`–`as` (generieke I/O, gevuld vanaf v3.8) erbij, Stof (`l`) en Beam (`aa`, `ab`) eruit. Het script leest per key, dus oudere sketches loggen gewoon verder. Daarna `setupHeaders()` één keer uitvoeren en "Implementaties beheren → potlood → nieuwe versie" (nooit een nieuwe implementatie). Oude rijen in de Sheet hebben de oude kolomindeling: archiveren in een apart tabblad.
 
 #### v3.7 Opruimen
 
-De stofsensor (Sharp, IO12/IO7) en de lichtstraal (LDR2 op IO2) volledig weg: code, instellingen (`dust_en`, `beam_en`, `beam_thresh`), UI en de `/json`-keys `l`, `aa` en `ab`. Het Dashboard en de RPi gebruiken die keys niet (nagekeken 5/11). IO2 komt vrij voor v3.8.
+De stofsensor (Sharp, IO12/IO7) en de lichtstraal (LDR2 op IO2) volledig weg: code, instellingen (`dust_en`, `beam_en`, `beam_thresh`), UI en de `/json`-keys `l`, `aa` en `ab`. Het Dashboard en de RPi gebruiken die keys niet (nagekeken 5/11). Ook de **TSL2561**-code weg (niet meer in de standaard); key `n` blijft bestaan met waarde 0. IO2, IO7 en IO12 komen vrij voor de generieke I/O (v3.8).
 
-#### v3.8 Buitenlicht (B&B: LED-modules oost E1/E2 via de buffer 3,3 → 5 V)
+#### v3.8 Generieke I/O (GP1–GP4)
 
-- Optionele uitgang op IO2, aan/uit in `/settings`. PWM, dus dimbaar.
-- Aan bij beweging op MOV2 (buiten, trap) en/of MOV1 (binnen), instelbaar; alleen 's nachts.
-- Instelbaar: duur na beweging, helderheid, omkeren (0 V = aan).
-- Veilige opstart: uitgang op "uit" vóór WiFi en de rest starten.
+De vrije pinnen van RoomSense en Option worden algemeen bruikbaar, zonder de sketch aan te passen. Volledige beschrijving: `ROOM_STANDAARD.md` §1.4.
 
-#### v3.9 Pixelklok (ZITPL)
+| Naam | Pin | Mogelijk |
+|---|---|---|
+| GP1 | RoomSense 4 = IO12 | digitaal in / uit / PWM |
+| GP2 | RoomSense 5 = IO7 | digitaal in / uit / PWM |
+| GP3 | Option 3 = IO2 | digitaal in / uit / PWM, analoog in |
+| GP4 | Option 4 = IO18 | digitaal in / uit / PWM |
 
-Een reeks pixels **na** de lichtgroepen (Powerpixels) als klok: uur, minuut en seconde, helderheid instelbaar, tijd via NTP met zomer- en wintertijd. Aantal klokpixels instelbaar (12).
+- **`/settings`:** per pin modus (uit · digitale ingang · analoge ingang (alleen GP3) · digitale uitgang · PWM-uitgang), bijnaam, pull-up. Standaard: uit.
+- **`/advanced`:** per pin bijnaam, modus en waarde; uitgangen met een knop of schuifbalk.
+- **`/json`:** keys `ap`–`as` (te bevestigen).
+- **Bediening van uitgangen:** nieuw adres, voorstel `/set_gp?n=1..4&v=0..100` (te bevestigen).
+- **Veilige opstart:** elke GP-pin start als ingang zonder pull-up; een uitgang wordt pas actief na het laden van de instellingen.
 
 ### Fase C — Pagina's apart en opgefrist
 
@@ -232,16 +239,15 @@ Een reeks pixels **na** de lichtgroepen (Powerpixels) als klok: uur, minuut en s
 
 | Versie | Pagina | Opmerking |
 |---|---|---|
-| v3.10 | `/update` → `ota.h` | Klein: eerste test van de aanpak. Met voortgangsbalk en uitleg over het juiste `.bin`-bestand |
-| v3.11 | `/advanced` → `advanced.h` | Grootste winst in onderhoudbaarheid |
-| v3.12 | `/settings` → `settings.h` | Grootste en meest vervlochten pagina, daarom als laatste |
+| v3.9 | `/update` → `ota.h` | Klein: eerste test van de aanpak. Met voortgangsbalk en uitleg over het juiste `.bin`-bestand |
+| v3.10 | `/advanced` → `advanced.h` | Grootste winst in onderhoudbaarheid |
+| v3.11 | `/settings` → `settings.h` | Grootste en meest vervlochten pagina, daarom als laatste |
 
 ### Fase D — Later
 
 | Versie | Wat |
 |---|---|
-| v3.13 | **LDR-schaal gelijk met de Sjalay:** 0 = donker, 100 = fel; één instelbare nachtdrempel. Raakt ook het Dashboard en de Sheet: samen aanpassen |
-| — | **Zonlicht delen** (TSL2561 in één room, de andere lezen die lux): optioneel, lage prioriteit. Dag/nacht blijft voorlopig uit de kamer-LDR komen |
+| v3.12 | **LDR-schaal gelijk met de Sjalay:** 0 = donker, 100 = fel; één instelbare nachtdrempel. Raakt ook het Dashboard en de Sheet: samen aanpassen |
 | — | **Uitrol:** per kamer een ESP32 met deze sketch in plaats van de Photon; instellingen via `/settings`; RPi-bridge en Dashboard krijgen de nieuwe room erbij |
 
 ### Beslist (5 nov 2026)
