@@ -18,7 +18,7 @@ Wat per room verschilt, is een **instelling** in `/settings` (opgeslagen in NVS)
 | Pixel-line | Pixels en Powerpixels (zie §1.3) |
 | I2C-bus | Bij de controller, SDA IO13 / SCL IO11, 3,3 V |
 
-**Gouden regel: een ESP32-pin ziet nooit meer dan 3,3 V.** De voeding van een sensor mag 5 V zijn, het signaal niet. Elke ader meten vóór aansluiten ([`docs/aansluitingen.md`](docs/aansluitingen.md) §4.3).
+**Gouden regel: een ESP32-pin ziet nooit meer dan 3,3 V.** De voeding van een sensor mag 5 V zijn, het signaal niet. Elke ader meten vóór aansluiten ([`aansluitingen.md`](aansluitingen.md) §4.3).
 
 ### 1.1 Kern: in elke room
 

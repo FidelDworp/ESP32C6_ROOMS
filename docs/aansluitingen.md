@@ -1,7 +1,7 @@
 # Zarlar ROOM en ACCESS: aansluitingen bij de overstap van Photon naar ESP32-C6
 
 *v0.3 — 5 nov 2026 — Filip Delannoy (FiDel). Status: plan, nog niets omgebouwd.*
-> **De standaard staat in [`ROOM_STANDAARD.md`](../ROOM_STANDAARD.md)** (6 nov 2026). Waar dit document afwijkt (buitenlicht oost in de B&B, pixelklok, TSL2561), geldt de standaard: die gaan naar eigen controllers of vervallen.
+> **De standaard staat in [`ROOM_STANDAARD.md`](ROOM_STANDAARD.md)** (6 nov 2026). Waar dit document afwijkt (buitenlicht oost in de B&B, pixelklok, TSL2561), geldt de standaard: die gaan naar eigen controllers of vervallen.
 
 *Bron: inventaris `Zarlar_Photon_inventaris_v3.xlsx` (Photon-sketches R1–R8, tekening "ACCESS-WASPL bedrading").*
 

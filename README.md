@@ -66,12 +66,14 @@ Het menu links (of bovenaan op een gsm) heeft op elke technische pagina een **�
 
 | Pad | Inhoud |
 |---|---|
-| `ROOM_STANDAARD.md` | **De ROOM-standaard:** wat er in elke room zit en wat niet. Eerst lezen |
 | `ESP32_C6_ROOM/` | **De sketch.** Open deze map in de Arduino IDE |
 | `ESP32_C6_ROOM/ESP32_C6_ROOM.ino` | ROOM-sketch (versie in de kop en in `ROOM_VERSION`) |
 | `ESP32_C6_ROOM/landing.h` | Landingspagina `/` (sinds v3.1). Apart bestand zodat de Arduino IDE het JavaScript niet aanpast |
 | `ESP32_C6_ROOM/partitions.csv` | Partitietabel 16 MB (2 × 6 MB app, voor OTA). Wordt automatisch gebruikt omdat hij naast het `.ino`-bestand staat |
+| `bin/ESP32_C6_ROOM_v3.3.ino.bin` | **Klaar om te uploaden** via `/update` (gecompileerd door Claude, zie hieronder). Alleen de laatste versie |
 | `GoogleScript/ROOM_GoogleScript.gs` | Google Apps Script voor de Sheet "R-ROOMS Log" (37 kolommen A–AK) |
+| `docs/ROOM_STANDAARD.md` | **De ROOM-standaard:** wat er in elke room zit en wat niet. Eerst lezen |
+| `docs/ROOMS_OVERDRACHT.md` | Overdracht voor een nieuw gesprek met Claude: werkwijze, stand, beslissingen, open punten |
 | `docs/aansluitingen.md` | Ombouw per room van Photon naar ESP32: aansluitingen, meten, buffer voor ACCESS |
 | `docs/Zarlar_Photon_inventaris_v3.xlsx` | Inventaris van alle Photon-signalen per room en ACCESS |
 | `old/` | Archief: v2.8 (maart 2026), de laatste versie vóór Matter. Alleen ter referentie |
@@ -83,13 +85,14 @@ Het menu links (of bovenaan op een gsm) heeft op elke technische pagina een **�
 **Uploaden:**
 1. De eerste keer via de USB-kabel.
 2. Daarna via OTA: *Sketch → Export Compiled Binary*. In `build/esp32.esp32.esp32c6/` staan meerdere `.bin`-bestanden: kies **enkel `ESP32_C6_ROOM.ino.bin`**, niet `.bootloader.bin`, `.partitions.bin` of `.merged.bin`. Upload dat op `http://<ip>/update`; de controller herstart vanzelf.
-3. Staat Flash Size per ongeluk op 4 MB (zichtbaar als `FlashSize=4M` in de compile-uitvoer), dan kan de OTA mislukken: eerst op 16 MB zetten en opnieuw exporteren.
+3. **Of zonder compileren:** download `bin/ESP32_C6_ROOM_v3.<x>.ino.bin` uit deze repo (knop *Download raw file*) en upload die op `http://<ip>/update`. Gecompileerd met ESP32-core 3.3.12 en de nieuwste versies van de bibliotheken (o.a. ESPAsyncWebServer 3.12.1, AsyncTCP 4.0.0, OneWireNg 0.14.1, Adafruit NeoPixel 1.15.5, DHT 1.4.7).
+4. Staat Flash Size per ongeluk op 4 MB (zichtbaar als `FlashSize=4M` in de compile-uitvoer), dan kan de OTA mislukken: eerst op 16 MB zetten en opnieuw exporteren.
 
 **Na een update naar v3.0:** de oude Eetplaats-tegels in de testwoning "Matter Home" verdwijnen. De tegels in Zarlardinge (via de RPi) blijven werken. De testwoning "Matter Home" kan pas weg (Portal Plan AP26) als ook de ECO-boiler geen Matter meer heeft: dat is de laatste ESP32 met Matter.
 
 ## Verbeterplan
 
-Dit is de sketch voor **alle** rooms: ze vervangt stap voor stap de Photons. **Beslist 5 nov 2026: eerst de functies** die nodig zijn om de rooms over te zetten (de B&B eerst), daarna pas de pagina's herwerken. **Wat er in een room zit (en wat niet): [`ROOM_STANDAARD.md`](ROOM_STANDAARD.md)** (vastgelegd 6 nov 2026). Ombouw per room: [`docs/aansluitingen.md`](docs/aansluitingen.md).
+Dit is de sketch voor **alle** rooms: ze vervangt stap voor stap de Photons. **Beslist 5 nov 2026: eerst de functies** die nodig zijn om de rooms over te zetten (de B&B eerst), daarna pas de pagina's herwerken. **Wat er in een room zit (en wat niet): [`docs/ROOM_STANDAARD.md`](docs/ROOM_STANDAARD.md)** (vastgelegd 6 nov 2026). Ombouw per room: [`docs/aansluitingen.md`](docs/aansluitingen.md).
 
 Bijgekomen op 5 nov 2026: de **"goodies" van de Sjalay-controller** (v1.8, repo `SJALAY-YSERMONDE`): temperatuurbewaking, de volledige verwarmings- en dauwpuntlogica, instelbare hysterese en een overzicht van alle DS18B20's (v3.5 en v3.6).
 
@@ -113,7 +116,7 @@ Bijgekomen op 5 nov 2026: de **"goodies" van de Sjalay-controller** (v1.8, repo 
 | | v3.12 | `/settings` → `settings.h` | alle rooms | |
 | **D. Later** | v3.13 | LDR-schaal gelijk met de Sjalay (samen met Dashboard en Sheet) | alle rooms | |
 
-Niet meer in dit plan (6 nov 2026, zie `ROOM_STANDAARD.md` §1.5): het **buitenlicht** van de B&B (eigen controllers ACCESS2, ACCESS3…), de **pixelklok** (eigen ESP32 in de ZITPL). De **TSL2561** gaat al in v3.3 weg: die sensor komt voortaan op een ACCESS- of OUTSIDE-controller, niet meer op een room.
+Niet meer in dit plan (6 nov 2026, zie `docs/ROOM_STANDAARD.md` §1.5): het **buitenlicht** van de B&B (eigen controllers ACCESS2, ACCESS3…), de **pixelklok** (eigen ESP32 in de ZITPL). De **TSL2561** gaat al in v3.3 weg: die sensor komt voortaan op een ACCESS- of OUTSIDE-controller, niet meer op een room.
 | | — | Uitrol: elke Photon-room krijgt een ESP32 met deze sketch | | |
 
 ### Nieuwe `/json`-keys (beslist 5 nov 2026)
@@ -134,7 +137,7 @@ Alle nieuwe keys komen **achteraan**; bestaande keys blijven ongewijzigd, op `l`
 | Versie | Wat | Waarom |
 |---|---|---|
 | v3.2 | **Versie en diagnose zichtbaar:** één `#define ROOM_VERSION`, getoond op elke pagina, in `/settings` en bij het opstarten. In `/settings` ook uptime, reden van de laatste herstart (stroom, software/OTA, crash, watchdog, spanningsdip), aantal opstarts, geheugen en WiFi | Nu is nergens te zien welke versie op een room draait en waarom hij herstartte; bij 8 rooms onmisbaar |
-| v3.3 | **Stabiliteit.** De TSL2561 en zijn code verdwijnen uit de room (de sensor hoort op een ACCESS- of OUTSIDE-controller, zie `ROOM_STANDAARD.md`); key `n` blijft, waarde 0. Na een herstart door watchdog of crash toont `/settings` → Diagnose de **laatste stap** die de sketch uitvoerde (bv. "DHT22 lezen", "pixels tonen", "webpagina /settings"), bewaard in geheugen dat een herstart overleeft. Geen seriële kabel nodig | v3.2 herstartte 4× door de interrupt-watchdog (5–7/11); de defecte TSL2561 op het testbord is de eerste verdachte |
+| v3.3 | **Stabiliteit.** De TSL2561 en zijn code verdwijnen uit de room (de sensor hoort op een ACCESS- of OUTSIDE-controller, zie `docs/ROOM_STANDAARD.md`); key `n` blijft, waarde 0. Na een herstart door watchdog of crash toont `/settings` → Diagnose de **laatste stap** die de sketch uitvoerde (bv. "DHT22 lezen", "pixels tonen", "webpagina /settings"), bewaard in geheugen dat een herstart overleeft. Geen seriële kabel nodig | v3.2 herstartte 4× door de interrupt-watchdog (5–7/11); de defecte TSL2561 op het testbord is de eerste verdachte |
 | v3.4 | **WiFi robuuster:** geen modem-slaap (`WiFi.setSleep(false)`) en periodiek opnieuw verbinden. **mDNS terug:** `<kamer>.local`, enkel na een geldige WiFi-verbinding | Les uit de PWM-test (onbereikbaar in de kelder); rooms vinden op naam |
 
 ### Fase B — Functies
@@ -219,7 +222,7 @@ De stofsensor (Sharp, IO12/IO7) en de lichtstraal (LDR2 op IO2) volledig weg: co
 
 #### v3.9 Generieke I/O (GP1–GP4)
 
-De vrije pinnen van RoomSense en Option worden algemeen bruikbaar, zonder de sketch aan te passen. Volledige beschrijving: `ROOM_STANDAARD.md` §1.4.
+De vrije pinnen van RoomSense en Option worden algemeen bruikbaar, zonder de sketch aan te passen. Volledige beschrijving: `docs/ROOM_STANDAARD.md` §1.4.
 
 | Naam | Pin | Mogelijk |
 |---|---|---|
