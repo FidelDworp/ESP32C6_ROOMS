@@ -28,7 +28,6 @@ Photon-pinnen nagekeken in de productiesketches; ESP32-IO volgens de shield-mapp
 | **SCD41** CO2 + temp + vocht | — | I2C bij de controller | IO13 SDA / IO11 SCL | 3,3 V | ✅ | ✅ | — | — | — | — | ✅ tv-wand |
 | ~~TSL2561 zonlicht~~ | — | — | — | — | **vervalt in de rooms** (7/11): komt op een ACCESS- of OUTSIDE-controller |||||||
 | Thermostaatcontact | A6 | Option pin 2 | IO10 | contact naar GND | ✅ | ✅ | ✅ | via HVAC | ✅ | via HVAC | via HVAC |
-| Buitenlicht oost PWM-E | — | Option pin 3 | IO2 | LED-module 0–5 V | ✅ nieuw | — | — | — | — | — | — |
 | (vrij) | A4 | Option pin 4 | IO18 | — | reserve |||||||
 | PIR MOV2 | A5 | Option pin 5 | IO19 | HC-SR501 op 5 V (uitgang 3,3 V), alleen of via PIReX-diodebordje | ✅ trap | — | ✅ toilet + vestiaire | — | ✅ 2× plafond | — | — |
 
@@ -43,33 +42,13 @@ Photon-pinnen nagekeken in de productiesketches; ESP32-IO volgens de shield-mapp
 
 **Thermostaat:** KEUK, EETPL en ZITPL zijn rechtstreeks bedraad naar de HVAC. B&B, BADK, INKOM en WASPL sturen een bericht naar de HVAC.
 
-**Oostkant buiten:** MOV-E en PWM-E gaan van ACCESS naar de **B&B-controller**: PIR binnen (MOV1), PIR buiten bovenaan de trap (MOV2) en uitgang PWM-E op Option pin 3.
+**Oostkant buiten:** ~~MOV-E en PWM-E naar de B&B-controller~~ — **vervallen** volgens de ROOM-standaard (6/11): het buitenlicht oost komt op een eigen controller **ACCESS3**, zie [`ESP32C6_ACCESS/docs/ACCESS_STANDAARD.md`](https://github.com/FidelDworp/ESP32C6_ACCESS/blob/main/docs/ACCESS_STANDAARD.md).
 
 **HC-SR501:** voeding 5 V, maar de uitgang is 3,3 V (er zit een 3,3 V-regelaar op het moduletje). Een serieweerstand met klemdiodes volstaat dus als bescherming.
 
-## 2. ACCESS (buitenlicht, 4 zones)
+## 2. ACCESS (buitenlicht)
 
-Klemnummers volgens de tekening (klemmenbordjes "Sense (ACCESS)" en "Option (ACCESS)").
-
-| Klem | Signaal | Zone | Photon | ESP32-C6 | Toestel | Status |
-|---|---|---|---|---|---|---|
-| Sense 1 | MOV-W1 | W1 + D | D3 | IO3 | HC-SR501 (radar aan voordeur) | in gebruik |
-| Sense 2 | MOV-W2 | W3 + W4 | D5 | IO5 | HC-SR501 | in gebruik (via TRANSFER) |
-| Sense 3 | ~~MOV-E~~ | — | D6 | IO6 | — | vervalt → B&B |
-| Sense 4 | MOV-N1 | N1 + N2 | D7 | IO12 | HC-SR501 | bedraad, nog niet in sketch |
-| Sense 5 | ~~PWM-E~~ | — | A2 | IO7 | — | vervalt → B&B |
-| Sense 6 | PWM-N1 | N1 + N2 | A3 | IO1 | LED-module 0–5 V | bedraad, nog niet in gebruik |
-| Sense 7 / 8 | GND / +5 V | | | | | jumper shield op 5 V |
-| Option 1 | +5 V | | | | | |
-| Option 2 | PWM-S | S1 + S2 | A6 | IO10 | LED-module 0–5 V | in gebruik (via TRANSFER) |
-| Option 3 | MOV-S | S1 + S2 | A7 | IO2 | HC-SR501 | in gebruik (via TRANSFER) |
-| Option 4 | PWM-W2 | W3 + W4 | A4 | IO18 | LED-module 0–5 V | in gebruik (via TRANSFER) |
-| Option 5 | PWM-W1 | W1 + DN/DS | A5 | IO19 | LED-module 0–5 V | in gebruik |
-| Option 6 | (vrij) | | D4 | IO4 | eventueel statusbord | niet aangesloten |
-| Option 7 / 8 | GND / 3V3 | | | | | |
-
-- LED-modules: 24 V / 300 mA constante stroom, stuuringang 0–5 V. Aanname: **0 V = licht aan**; omkeren kan in de sketch.
-- AlarmiX (I2C-expander: deuren, sloten, bel, poort): voorlopig niet nodig, blijft in de planning.
+Verhuisd naar de repo **`ESP32C6_ACCESS`** (7/11): klemmen, zoneslots, LED-drivers en eisen staan in [`docs/ACCESS_STANDAARD.md`](https://github.com/FidelDworp/ESP32C6_ACCESS/blob/main/docs/ACCESS_STANDAARD.md).
 
 ## 3. Eisen voor de sketches
 
@@ -87,22 +66,12 @@ Klemnummers volgens de tekening (klemmenbordjes "Sense (ACCESS)" en "Option (ACC
 | R6 | ~~Dag/nacht uit één TSL2561~~: **vervallen** (7/11). Dag/nacht uit de eigen LDR; de TSL2561 komt op ACCESS of OUTSIDE | — |
 | R7 | **Powerpixels** als lichtgroepen; R7: 2 Powerpixels (muurspots, tv-achtergrond) | nakijken |
 | R8 | **Pixelklok** (12 pixels na de Powerpixels) voor R7 | nieuw |
-| R9 | **B&B: buitenlicht oost** — PWM-E (IO2) aan bij MOV2 (en MOV1?), duur en helderheid instelbaar, alleen 's nachts | nieuw |
+| R9 | ~~B&B: buitenlicht oost via de room~~ | **vervallen** → ACCESS3 (ROOM-standaard 6/11) |
 | R10 | Stofsensor, alert-LDR en CO2-PWM uit de code | opruimen |
 
-### 3.2 ACCESS-sketch (nieuw, `ESP32_C6_ACCESS`)
+### 3.2 ACCESS-sketch
 
-Zelfde basis als de andere ESP32-sketches: vast IP, `/json`, `/settings`, `/update` (OTA), geen Matter, Apple Home via de RPi-bridge.
-
-| # | Eis |
-|---|---|
-| A1 | 4 zones (W1, W2, S, N1), elk met PIR-ingang en dimbare uitgang (PWM op elke pin) |
-| A2 | Per zone instelbaar: aan/uit, automatisch, duur na beweging (Photon: 30 s), helderheid |
-| A3 | Alleen 's nachts automatisch (dag/nacht uit R6) |
-| A4 | Koppeling tussen zones instelbaar (vandaag schakelt W1 ook W2 mee) |
-| A5 | Uitgang omkeerbaar per zone (0 V = aan, of 5 V = aan) |
-| A6 | Veilige opstart: lichten uit tot de sketch draait (zie §5, pull-up op de bufferingang) |
-| A7 | `/json` met PIR-status, helderheid per zone, uptime, heap; tegels via de RPi-bridge |
+Verhuisd naar [`ESP32C6_ACCESS/docs/ACCESS_STANDAARD.md`](https://github.com/FidelDworp/ESP32C6_ACCESS/blob/main/docs/ACCESS_STANDAARD.md) (7/11).
 
 ## 4. Per room: wat doen met de bestaande sensoren
 
@@ -115,7 +84,7 @@ Zelfde basis als de andere ESP32-sketches: vast IP, `/json`, `/settings`, `/upda
 
 | Room | RoomSense-kant | Option-kant | Nieuw |
 |---|---|---|---|
-| **R1 B&B** | ✅ al op 3V3 | TSTAT: blijft. MOV2 (HC-SR501, trap): blijft op 5 V, signaal meten. CM1106: **verwijderd**. | SCD41 bij de controller. PWM-E op Option pin 3 met de buffer van §5 + kabel naar de LED-modules oost (E1/E2). |
+| **R1 B&B** | ✅ al op 3V3 | TSTAT: blijft. MOV2 (HC-SR501, trap): blijft op 5 V, signaal meten. CM1106: **verwijderd**. | SCD41 bij de controller. (Buitenlicht oost: niet meer via de room, maar via ACCESS3.) |
 | **R2 BADK** | ombouwen naar 3V3 | TSTAT: blijft. | SCD41 bij de controller. |
 | **R3 INKOM** | ombouwen naar 3V3; **stofsensor (Sharp) loskoppelen** | TSTAT: blijft. MOV2 (toilet + vestiaire, 2 PIR's): blijft op 5 V, signaal meten. **Alert-LDR loskoppelen.** | — |
 | **R4 KEUK** | ombouwen naar 3V3 | niets (TSTAT via HVAC); Option-kabel niet nodig | — (CO2 verhuist naar ZITPL) |
@@ -134,7 +103,9 @@ Per room, met de kabels aangesloten op de sensoren maar **nog niet op het shield
 
 Tip: een **1 kΩ in serie** op de MOV2-ader (bv. in het klemmenbordje) beschermt de ESP32 als er toch eens iets misloopt, en hindert de werking niet.
 
-## 5. ACCESS en B&B: buffer 3,3 → 5 V voor de LED-modules
+## 5. ACCESS: buffer 3,3 → 5 V voor de LED-modules
+
+> **7/11:** de Photon stuurt dezelfde drivers vandaag met 3,3 V en dat werkt. De ACCESS-controllers starten daarom **zonder** buffer; deze buffer komt er alleen als een test toont dat het licht niet volledig uit gaat of niet goed dimt (zie `ACCESS_STANDAARD.md` §1.2).
 
 De LED-modules buiten (24 V / 300 mA) hebben een stuuringang van 0–5 V. Met 3,3 V uit de ESP32 halen ze hun volle bereik niet, en bij "0 V = aan" gaat het licht dan ook niet volledig uit. Per uitgang een kleine buffer, met de hand op een gaatjesprint of op het bestaande klemmenbordje:
 
@@ -155,7 +126,6 @@ De LED-modules buiten (24 V / 300 mA) hebben een stuuringang van 0–5 V. Met 3,
 |---|---|---|---|
 | ACCESS Sense 6 | PWM-N1 | IO1 (op het shield al 10k pull-up naar 3V3) | 1 |
 | ACCESS Option 2, 4, 5 | PWM-S, PWM-W2, PWM-W1 | IO10, IO18, IO19 | 3 |
-| B&B Option 3 | PWM-E | IO2 | 1 |
 
 **ACCESS-ingangen** (HC-SR501, uitgang 3,3 V): **1 kΩ in serie**, verder niets. Op Sense 1 (IO3) zeker niet groter dan 1 kΩ: IO3 heeft op het shield een 4,7 kΩ pull-up voor de T-BUS. Met 1 kΩ blijft "laag" ±0,6 V, onder de drempel van 0,8 V. Shield-jumper Sense pin 8 voor ACCESS op **5 V** (HC-SR501's en buffer).
 
@@ -172,7 +142,7 @@ De LED-modules buiten (24 V / 300 mA) hebben een stuuringang van 0–5 V. Met 3,
 
 ### 6.2 Uitrol
 
-1. B&B als eerste room: MOV2 meten (§4.3), SCD41 plaatsen, buffer PWM-E maken, kabel oost trekken.
+1. B&B als eerste room: MOV2 meten (§4.3), SCD41 plaatsen. (Buitenlicht oost: later via ACCESS3.)
 2. ROOM-sketch: eerst een plan voor R3, R5, R6 en R9 (§3.1), code pas na GO.
 3. De andere rooms één per één: RoomSense ombouwen, meten, ESP32 in de plaats van de Photon.
 4. ACCESS: buffers maken, ACCESS-sketch (§3.2) eerst op het testbord.
