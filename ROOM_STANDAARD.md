@@ -1,6 +1,6 @@
 # ROOM-standaard (Zarlar)
 
-*v1.0 — 6 nov 2026 — Filip Delannoy (FiDel). Status: **vastgelegd**.*
+*v1.1 — 7 nov 2026 — Filip Delannoy (FiDel). Status: **vastgelegd**.*
 
 Elke room in Zarlardinge gebruikt **dezelfde hardware en dezelfde sketch**. Dit document legt vast wat er in een room zit en wat er bewust níet in zit. Het is het antwoord op jaren "feature creep": telkens een nieuwe sensor op de Photon-rooms deed hard- en software steeds verder uit elkaar lopen.
 
@@ -71,7 +71,7 @@ De pinnen van RoomSense en Option die niet voor de kern of de opties gebruikt wo
 |---|---|
 | Stofsensor (Sharp), alert-LDR (lichtstraal), CO2 via PWM (CM1106, MH-Z19) | Vervallen. Werd haast niet gebruikt of werkte niet op de ESP32 |
 | Relais op de controller | Worden Powerpixels |
-| TSL2561 (zonlicht) | Dag/nacht komt uit de eigen LDR met een instelbare nachtdrempel. Geen afhankelijkheid tussen rooms |
+| TSL2561 (zonlicht, lux) | **Nooit meer op een room-controller** (7/11: de defecte TSL2561 op het testbord is verdacht van herstarts). Hoort op een **ACCESS- of OUTSIDE-controller** (buiten). In de room komt dag/nacht uit de eigen LDR met een instelbare nachtdrempel |
 | OLED, keypad, vaste DS18B20-adressen | Vervallen |
 | **Buitenlicht** (oost- en noordgevel bij de B&B) | Eigen controller(s) **ACCESS2, ACCESS3…** met de ACCESS-sketch |
 | **Pixelklok** en andere extra's in de ZITPL | Eigen extra ESP32 in de zitplaats |
@@ -96,4 +96,5 @@ De pinnen van RoomSense en Option die niet voor de kern of de opties gebruikt wo
 
 | Versie | Datum | Wat |
 |---|---|---|
+| v1.1 | 7 nov 2026 | TSL2561 nooit meer op een room, wel op ACCESS of OUTSIDE |
 | v1.0 | 6 nov 2026 | Eerste vastgelegde standaard: kern, opties, Powerpixels, generieke I/O (GP1–GP4), buitenlicht en klok naar eigen controllers, TSL2561 uit de room |

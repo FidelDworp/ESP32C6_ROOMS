@@ -26,7 +26,7 @@ Photon-pinnen nagekeken in de productiesketches; ESP32-IO volgens de shield-mapp
 | LDR kamerlicht | A3 | RoomSense | IO1 | 3,3 V (analoog) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Pixels / Powerpixels | D4 | Pixel-line | IO4 | 5 V-strip, data 3,3 V | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ 2 Powerpixels + 12 klokpixels |
 | **SCD41** CO2 + temp + vocht | — | I2C bij de controller | IO13 SDA / IO11 SCL | 3,3 V | ✅ | ✅ | — | — | — | — | ✅ tv-wand |
-| TSL2561 zonlicht | — | I2C bij de controller | IO13 SDA / IO11 SCL | 3,3 V | één room naar keuze (vervangt S-OUTSIDE) |||||||
+| ~~TSL2561 zonlicht~~ | — | — | — | — | **vervalt in de rooms** (7/11): komt op een ACCESS- of OUTSIDE-controller |||||||
 | Thermostaatcontact | A6 | Option pin 2 | IO10 | contact naar GND | ✅ | ✅ | ✅ | via HVAC | ✅ | via HVAC | via HVAC |
 | Buitenlicht oost PWM-E | — | Option pin 3 | IO2 | LED-module 0–5 V | ✅ nieuw | — | — | — | — | — | — |
 | (vrij) | A4 | Option pin 4 | IO18 | — | reserve |||||||
@@ -39,7 +39,7 @@ Photon-pinnen nagekeken in de productiesketches; ESP32-IO volgens de shield-mapp
 - de 2 relais van R7 (D2/A0), want die worden Powerpixels;
 - de vaste DS18B20-adressen.
 
-**SCD41:** 4× GY-SCD41 besteld (5 nov). De sensor komt bij de controller op dezelfde I2C-bus als de TSL2561: minstens 10–20 cm van de controller en de pixels, en niet erboven. Hij vervangt de CM1106 in de B&B en op de TESTROOM; de keukensensor verhuist naar de tv-wand in de ZITPL. De DHT22 blijft.
+**SCD41:** 4× GY-SCD41 besteld (5 nov). De sensor komt bij de controller op de I2C-bus (IO13/IO11): minstens 10–20 cm van de controller en de pixels, en niet erboven. Hij vervangt de CM1106 in de B&B en op de TESTROOM; de keukensensor verhuist naar de tv-wand in de ZITPL. De DHT22 blijft.
 
 **Thermostaat:** KEUK, EETPL en ZITPL zijn rechtstreeks bedraad naar de HVAC. B&B, BADK, INKOM en WASPL sturen een bericht naar de HVAC.
 
@@ -84,7 +84,7 @@ Klemnummers volgens de tekening (klemmenbordjes "Sense (ACCESS)" en "Option (ACC
 | R3 | **SCD41 via I2C, niet-blokkerend** (vervangt CO2-PWM en `pulseIn()`); CO2 vult `/json`-key `k` en stuurt de ventilatie zoals nu; temp en vocht van de SCD41 alleen als extra regels in de UI; geen sensormetingen in AP-mode | gepland v3.4 |
 | R4 | Thermostaat: per room instelbaar "lokaal contact" of "via HVAC" | nakijken |
 | R5 | **Nachtdrempel (lux) als instelling** per room (Photon: 150–1200) | nieuw |
-| R6 | **Dag/nacht uit één TSL2561**: de room met sensor publiceert de lux, de andere rooms lezen die (via RPi of Dashboard) | nieuw |
+| R6 | ~~Dag/nacht uit één TSL2561~~: **vervallen** (7/11). Dag/nacht uit de eigen LDR; de TSL2561 komt op ACCESS of OUTSIDE | — |
 | R7 | **Powerpixels** als lichtgroepen; R7: 2 Powerpixels (muurspots, tv-achtergrond) | nakijken |
 | R8 | **Pixelklok** (12 pixels na de Powerpixels) voor R7 | nieuw |
 | R9 | **B&B: buitenlicht oost** — PWM-E (IO2) aan bij MOV2 (en MOV1?), duur en helderheid instelbaar, alleen 's nachts | nieuw |
@@ -184,4 +184,4 @@ De LED-modules buiten (24 V / 300 mA) hebben een stuuringang van 0–5 V. Met 3,
 | 1 | Is de pinvolgorde van de RJ45 op het shield (pin 1–8) dezelfde als de klemvolgorde op de tekening? |
 | 2 | Kabel van de LED-modules oost (E1/E2) naar de B&B-controller: welke weg? |
 | 3 | B&B buitenlicht oost: alleen bij MOV2 (buiten), of ook bij MOV1 (binnen)? |
-| 4 | Welke room krijgt de TSL2561? |
+| 4 | ~~Welke room krijgt de TSL2561?~~ Vervallen: geen enkele (7/11) |
