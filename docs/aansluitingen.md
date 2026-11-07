@@ -65,7 +65,7 @@ Verhuisd naar de repo **`ESP32C6_ACCESS`** (7/11): klemmen, zoneslots, LED-drive
 | R5 | **Nachtdrempel (lux) als instelling** per room (Photon: 150–1200) | nieuw |
 | R6 | ~~Dag/nacht uit één TSL2561~~: **vervallen** (7/11). Dag/nacht uit de eigen LDR; de TSL2561 komt op ACCESS of OUTSIDE | — |
 | R7 | **Powerpixels** als lichtgroepen; R7: 2 Powerpixels (muurspots, tv-achtergrond) | nakijken |
-| R8 | **Pixelklok** (12 pixels na de Powerpixels) voor R7 | nieuw |
+| R8 | ~~Pixelklok voor R7~~ | **vervallen** → eigen ESP32 in de zitplaats (ROOM-standaard 6/11) |
 | R9 | ~~B&B: buitenlicht oost via de room~~ | **vervallen** → ACCESS3 (ROOM-standaard 6/11) |
 | R10 | Stofsensor, alert-LDR en CO2-PWM uit de code | opruimen |
 
@@ -143,7 +143,7 @@ De LED-modules buiten (24 V / 300 mA) hebben een stuuringang van 0–5 V. Met 3,
 ### 6.2 Uitrol
 
 1. B&B als eerste room: MOV2 meten (§4.3), SCD41 plaatsen. (Buitenlicht oost: later via ACCESS3.)
-2. ROOM-sketch: eerst een plan voor R3, R5, R6 en R9 (§3.1), code pas na GO.
+2. ROOM-sketch: telkens een plan per versie volgens het Verbeterplan in de README, code pas na GO.
 3. De andere rooms één per één: RoomSense ombouwen, meten, ESP32 in de plaats van de Photon.
 4. ACCESS: buffers maken, ACCESS-sketch (§3.2) eerst op het testbord.
 
