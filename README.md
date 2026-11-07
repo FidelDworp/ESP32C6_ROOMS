@@ -8,7 +8,7 @@ Room controllers van het Zarlar-thuisautomatiseringssysteem (Zarlardinge): een E
 
 | | |
 |---|---|
-| **Actieve sketch** | **v3.2** (5 nov 2026), zonder Matter, met landingspagina en diagnose — map `ESP32_C6_ROOM/` |
+| **Actieve sketch** | **v3.3** (7 nov 2026), zonder Matter, met landingspagina, diagnose en "laatste stap vóór herstart" — map `ESP32_C6_ROOM/` |
 | **Draait op** | room80 (`192.168.0.80`): het TESTROOM-testbord met alle sensoren. Rij R-EETPL op de matrix van het Dashboard |
 | **Board** | ESP32-C6-DevKitM-1 (clone), 32-pin, 16 MB, op het Zarlar shield |
 | **Apple Home** | Via de RPi-bridge (`server.js` + plugin `matterbridge-zarlar`): toestel "Eetplaats" in de woning Zarlardinge. De ESP32 zelf doet geen Matter meer |
@@ -100,7 +100,7 @@ Bijgekomen op 5 nov 2026: de **"goodies" van de Sjalay-controller** (v1.8, repo 
 | — | v3.0 | Matter verwijderd | | ✅ 3/11 |
 | — | v3.1 | Landingspagina `/` (`landing.h`), technische pagina naar `/advanced` | | ✅ 3/11 |
 | **A. Basis** | v3.2 | Versie en diagnose zichtbaar | alle rooms | ⚠️ 48 u-test niet gehaald: 4 herstarts door de interrupt-watchdog (geheugen in orde) |
-| | v3.3 | **Stabiliteit:** TSL2561 weg + "laatste stap vóór herstart" bewaren (diagnose via OTA) | alle rooms | plan, wacht op GO |
+| | v3.3 | **Stabiliteit:** TSL2561 weg + "laatste stap vóór herstart" bewaren (diagnose via OTA) | alle rooms | ⏳ in de repo 7/11, te flashen + 48 u-test |
 | | v3.4 | WiFi robuuster + mDNS terug | alle rooms | |
 | **B. Functies** | v3.5 | **Temperatuurbewaking** (zoals de Sjalay) + overzicht alle DS18B20's, **maximum 6** (nieuwe keys `an`, `ao`) | alle rooms | |
 | | v3.6 | **Verwarmingslogica zoals de Sjalay:** effectief setpoint, dauwpunt aan/uit, marge −10…+10, instelbare hysterese, minimum setpoint, landingspagina "IST (→ SOLL)" | alle rooms | |
@@ -269,6 +269,7 @@ De vrije pinnen van RoomSense en Option worden algemeen bruikbaar, zonder de ske
 
 | Versie | Datum | Wat |
 |---|---|---|
+| **v3.3** | 7 nov 2026 | Stabiliteit: TSL2561 volledig weg (bibliotheek, I2C-start, instelling "Zonlicht", UI; key `n` = 0). "Laatste stap" in RTC-geheugen (loop en webserver apart); na een herstart in NVS bewaard en in `/settings` → Diagnose getoond ("Laatste stap ervoor", "Vorige herstarts": laatste drie, met reden en uptime ervoor). Gecompileerd met core 3.3.12: 25 KB kleiner dan v3.2. Geen nieuwe `/json`-keys |
 | **v3.2** | 5 nov 2026 | Versie en diagnose zichtbaar: `ROOM_VERSION` op elke pagina en bij het opstarten; in `/settings` een blok Diagnose (uptime, reden laatste herstart, aantal opstarts, geheugen, WiFi). "Crashteller" heet nu "Lage-heap meldingen". Geen nieuwe `/json`-keys |
 | v3.1 | 3 nov 2026 | Landingspagina `/` (landing.h); technische statuspagina naar `/advanced`; 🏠 in het menu |
 | v3.0 | 3 nov 2026 | Matter verwijderd; Apple Home via de RPi-bridge. Verder ongewijzigd (JSON-keys, endpoints, NVS) |

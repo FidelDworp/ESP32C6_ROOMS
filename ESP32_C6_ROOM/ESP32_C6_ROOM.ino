@@ -1,10 +1,20 @@
-// ESP32-C6 ROOM v3.2 — 5 nov 2026 — zonder Matter
+// ESP32-C6 ROOM v3.3 — 7 nov 2026 — zonder Matter
 // Zarlar thuisautomatisering — Room controller (Apple Home via de RPi-bridge, niet meer via Matter op de ESP32)
 // Filip Delannoy — Zarlardinge (BE)
 //
 // PARTITIETABEL: Compileer met "partitions.csv" in de schetsmap (Custom partition scheme):
 //   nvs (20 KB), otadata (8 KB), app0 (6 MB), app1 (6 MB), spiffs (~4 MB)
 //
+// v3.3 (7nov26): STABILITEIT. (1) TSL2561 volledig weg: bibliotheek, I2C-start (Wire), instelling
+//                 "Zonlicht" (NVS sun_en), UI-rij en loop-uitlezing. De sensor hoort niet meer op een room
+//                 (ROOM-standaard v1.1); /json-key n blijft bestaan met waarde 0. Aanleiding: 4 herstarts
+//                 door de interrupt-watchdog in de 48 u-test van v3.2, met een defecte TSL2561 op het testbord.
+//                 (2) "LAATSTE STAP": de sketch noteert wat hij aan het doen is (loop: WiFi, pixels, DHT22,
+//                 DS18B20, NVS…; web: laatste pagina/opdracht) in RTC-geheugen dat een herstart overleeft
+//                 (niet een stroomonderbreking). Bij de volgende opstart wordt dat met de reden en de uptime
+//                 vóór de herstart bewaard in NVS ("crash-log": h1–h3) en getoond in /settings → Diagnose
+//                 ("Vorige herstarts"). Zo is de oorzaak van een watchdog of crash via de browser te zien,
+//                 zonder seriële kabel. "Wissen" wist nu ook die lijst. /json en bediening ongewijzigd.
 // v3.2 (5nov26): VERSIE EN DIAGNOSE ZICHTBAAR. Eén #define ROOM_VERSION, getoond onderaan de
 //                 landingspagina, in de kop van /advanced, /update en /settings en bij het opstarten.
 //                 /settings: blok "Diagnose" met versie, uptime, reden laatste herstart
@@ -47,7 +57,6 @@
 #include <Update.h>           // Voor OTA update
 #include <DHT.h>
 #include <OneWireNg_CurrentPlatform.h>  // C6 compatibel (vervangt OneWire + DallasTemperature)
-#include <Adafruit_TSL2561_U.h>
 
 #include <Adafruit_NeoPixel.h>
 #include <time.h>
@@ -58,8 +67,9 @@
 #include <nvs_flash.h>
 #include "landing.h"     // v3.1: landingspagina "/"
 #include <esp_system.h>      // v3.2: esp_reset_reason()
+#include <esp_attr.h>        // v3.3: RTC_NOINIT_ATTR voor "laatste stap"
 
-#define ROOM_VERSION "v3.2"  // v3.2: enige plaats met het versienummer
+#define ROOM_VERSION "v3.3"  // v3.2: enige plaats met het versienummer
 
 // v3.2: reden van de laatste herstart, leesbaar
 esp_reset_reason_t boot_reason = ESP_RST_UNKNOWN;
@@ -79,6 +89,36 @@ const char* resetReasonText(esp_reset_reason_t r) {
     default:                return "Onbekend";
   }
 }
+
+// v3.3: "LAATSTE STAP" — overleeft watchdog, crash en software-herstart (niet stroom uit).
+// Twee sporen: de loop-taak en de webserver-taak (AsyncTCP) lopen apart.
+enum CrumbLoop : uint8_t {
+  CL_NONE = 0, CL_SETUP, CL_WIFI, CL_SERIAL, CL_FADE, CL_PIR, CL_PIXLOGIC, CL_HEAT,
+  CL_DSSCAN, CL_IDLE, CL_NVS, CL_DHT, CL_DS, CL_LDR, CL_DUST, CL_CO2, CL_REST, CL_COUNT
+};
+const char* const CRUMB_LOOP_TXT[CL_COUNT] = {
+  "onbekend", "opstarten (setup)", "WiFi-controle", "seriële commando's", "pixels dimmen/tonen",
+  "PIR lezen", "pixel-logica", "verwarmingslogica", "DS18B20 opnieuw zoeken", "wachten (rust)",
+  "NVS schrijven (heap-log)", "DHT22 lezen", "DS18B20 lezen", "LDR lezen", "stofsensor lezen",
+  "CO2 lezen (PWM)", "berekeningen"
+};
+enum CrumbWeb : uint8_t {
+  CW_NONE = 0, CW_LANDING, CW_ADVANCED, CW_JSON, CW_CAPS, CW_SETTINGS, CW_SAVE, CW_OTA,
+  CW_PIXEL, CW_COLOR, CW_HOME, CW_SETPOINT, CW_OTHER, CW_COUNT
+};
+const char* const CRUMB_WEB_TXT[CW_COUNT] = {
+  "geen", "/ (landingspagina)", "/advanced", "/json", "/capabilities", "/settings", "/save_settings",
+  "/update (OTA)", "pixel aan/uit", "kleur", "thuis/weg", "setpoint", "andere opdracht"
+};
+#define CRUMB_MAGIC 0x5A524D33UL   // "ZRM3"
+RTC_NOINIT_ATTR uint32_t crumb_magic;
+RTC_NOINIT_ATTR uint8_t  crumb_loop;     // huidige stap in loop()
+RTC_NOINIT_ATTR uint8_t  crumb_web;      // laatste webopdracht
+RTC_NOINIT_ATTR uint32_t crumb_web_s;    // uptime (s) van die webopdracht
+RTC_NOINIT_ATTR uint32_t crumb_up_s;     // laatst gekende uptime (s)
+static inline void crumbL(uint8_t c) { crumb_loop = c; }
+static inline void crumbW(uint8_t c) { crumb_web = c; crumb_web_s = millis() / 1000; }
+char prev_step[96] = "";   // v3.3: laatste stap vóór deze herstart (voor /settings)
 Preferences preferences;     // Globale Preferences instantie
 
 
@@ -103,7 +143,6 @@ Preferences preferences;     // Globale Preferences instantie
 #define SENSOR_HUMI_MAX   99     // %   — boven = sensor defect (rood)
 #define SENSOR_RSSI_WARN  (-75)  // dBm — zwak signaal (oranje)
 #define SENSOR_RSSI_CRIT  (-85)  // dBm — kritiek signaal (rood)
-#define SENSOR_LUX_MAX    65000  // lux — >= 65535 = I2C garbage (TSL2561)
 
 
 // NVS keys (const voor netheid en veiligheid)
@@ -121,7 +160,6 @@ const char* NVS_LDR_DARK            = "ldr_dark";
 const char* NVS_BEAM_THRESHOLD      = "beam_thresh";
 const char* NVS_CO2_ENABLED         = "co2_en";
 const char* NVS_DUST_ENABLED        = "dust_en";
-const char* NVS_SUN_ENABLED         = "sun_en";
 const char* NVS_MOV2_ENABLED        = "mov2_en";
 const char* NVS_TSTAT_ENABLED       = "tstat_en";
 const char* NVS_BEAM_ENABLED        = "beam_en";
@@ -150,8 +188,6 @@ const char* NVS_DS_PRIMARY          = "ds_primary";      // Index van primaire s
 // Initialize libraries
 DHT dht(DHT_PIN, DHT22);
 OneWireNg_CurrentPlatform ow(ONE_WIRE_PIN, false);  // C6 compatibel 1-Wire
-Adafruit_TSL2561_Unified tsl = Adafruit_TSL2561_Unified(TSL2561_ADDR_FLOAT, 12345);
-bool tsl_available = false;  // v2.5: vlag — voorkomt herhaalde I2C-errors als sensor niet gevonden bij init
 Adafruit_NeoPixel pixels(1, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);  // Tijdelijk 1, lengte wordt in setup() gezet
 AsyncWebServer server(80);
 
@@ -185,7 +221,6 @@ int beam_alert_threshold     = 50;
 // Optionele feature enables (default 1 = aan)
 bool co2_enabled   = false;  // v1.7: default false — voorkomt WDT crash bij niet-aangesloten sensor
 bool dust_enabled  = false;  // v1.9: default false — delayMicroseconds(9680) kan WDT triggeren als sensor niet aanwezig
-bool sun_light_enabled = true;
 bool mov2_enabled  = true;
 bool tstat_enabled = true;
 bool beam_enabled  = true;
@@ -642,6 +677,37 @@ void setup() {
   Serial.printf("\n=== ESP32-C6 ROOM %s ===\n", ROOM_VERSION);
   Serial.printf("[BOOT] Opstart #%u — reden: %s\n", boot_count, resetReasonText(boot_reason));
 
+  // v3.3: "laatste stap" van vóór de herstart ophalen en in de geschiedenis (NVS h1–h3) zetten
+  {
+    bool crumbs_ok = (crumb_magic == CRUMB_MAGIC) && (boot_reason != ESP_RST_POWERON);
+    char entry[160];
+    if (crumbs_ok) {
+      uint8_t cl = crumb_loop < CL_COUNT ? crumb_loop : CL_NONE;
+      uint8_t cw = crumb_web  < CW_COUNT ? crumb_web  : CW_NONE;
+      unsigned long ago = (crumb_up_s >= crumb_web_s) ? (crumb_up_s - crumb_web_s) : 0;
+      if (cw == CW_NONE) {
+        snprintf(prev_step, sizeof(prev_step), "loop: %s", CRUMB_LOOP_TXT[cl]);
+      } else {
+        snprintf(prev_step, sizeof(prev_step), "loop: %s &middot; web: %s (%lu s ervoor)",
+                 CRUMB_LOOP_TXT[cl], CRUMB_WEB_TXT[cw], ago);
+      }
+      snprintf(entry, sizeof(entry), "#%u %s &middot; na %.1f u &middot; %s",
+               boot_count, resetReasonText(boot_reason), crumb_up_s / 3600.0f, prev_step);
+    } else {
+      snprintf(entry, sizeof(entry), "#%u %s", boot_count, resetReasonText(boot_reason));
+    }
+    Preferences histPrefs;
+    histPrefs.begin("crash-log", false);
+    String h1 = histPrefs.getString("h1", ""), h2 = histPrefs.getString("h2", "");
+    histPrefs.putString("h3", h2);
+    histPrefs.putString("h2", h1);
+    histPrefs.putString("h1", entry);
+    histPrefs.end();
+    Serial.printf("[BOOT] Laatste stap vóór de herstart: %s\n", crumbs_ok ? prev_step : "(niet gekend: stroom aan of eerste start)");
+    crumb_magic = CRUMB_MAGIC;
+    crumb_loop = CL_SETUP; crumb_web = CW_NONE; crumb_web_s = 0; crumb_up_s = 0;
+  }
+
   // v2.4 FIX 7: Crash-logging — lees vorige crash uit NVS bij elke boot
   {
     Preferences crashPrefs;
@@ -718,7 +784,6 @@ void setup() {
     
     preferences.putBool(NVS_CO2_ENABLED, false);
     preferences.putBool(NVS_DUST_ENABLED, false);
-    preferences.putBool(NVS_SUN_ENABLED, true);
     preferences.putBool(NVS_MOV2_ENABLED, true);
     preferences.putBool(NVS_TSTAT_ENABLED, true);
     preferences.putBool(NVS_BEAM_ENABLED, true);
@@ -757,7 +822,6 @@ void setup() {
   
   co2_enabled      = preferences.getBool(NVS_CO2_ENABLED, false);   // v2.5 fix: default false — anders WDT crash bij afwezige sensor
   dust_enabled     = preferences.getBool(NVS_DUST_ENABLED, false);  // v2.5 fix: default false
-  sun_light_enabled= preferences.getBool(NVS_SUN_ENABLED, true);
   mov2_enabled     = preferences.getBool(NVS_MOV2_ENABLED, true);
   num_mov_pixels = 1 + (mov2_enabled ? 1 : 0);  // v2.4 FIX 4: 'int' verwijderd — was lokale shadowing van globale variabele → globale bleef altijd 2
   tstat_enabled    = preferences.getBool(NVS_TSTAT_ENABLED, true);
@@ -862,57 +926,8 @@ void setup() {
   pinMode(TSTAT_PIN, INPUT_PULLUP);
   pinMode(OPTION_LDR, INPUT);
 
-  // TSL2561 + I2C debug:
   dht.begin();
-  if (sun_light_enabled) {
-    Serial.println("\n[TSL2561] I2C init op SDA=IO13, SCL=IO11...");
-    Wire.begin(13, 11);
-    delay(100);  // Geef I2C bus tijd om te stabiliseren
-
-    // I2C scanner: enkel via Wire — GEEN extra TSL-objecten aanmaken (beschadigt Wire-staat)
-    Serial.println("[I2C SCAN] Zoeken naar apparaten op de bus...");
-    int i2c_found = 0;
-    for (uint8_t addr = 1; addr < 127; addr++) {
-      Wire.beginTransmission(addr);
-      uint8_t err = Wire.endTransmission();
-      if (err == 0) {
-        Serial.printf("[I2C SCAN] ✓ Apparaat op 0x%02X", addr);
-        if (addr == 0x29) Serial.print("  ← TSL2561 ADDR_LOW  (ADDR→GND)");
-        if (addr == 0x39) Serial.print("  ← TSL2561 ADDR_FLOAT (ADDR zwevend)");
-        if (addr == 0x49) Serial.print("  ← TSL2561 ADDR_HIGH (ADDR→VCC)");
-        Serial.println();
-        i2c_found++;
-      }
-    }
-    if (i2c_found == 0) {
-      Serial.println("[I2C SCAN] ⚠️  Geen enkel I2C-apparaat gevonden!");
-      Serial.println("[I2C SCAN]    Controleer: SDA=IO13 SCL=IO11, voeding 3.3V, pull-ups 4k7");
-    } else {
-      Serial.printf("[I2C SCAN] %d apparaat(en) gevonden\n", i2c_found);
-    }
-
-    // Initialiseer TSL2561 op geconfigureerd adres (FLOAT = 0x39)
-    tsl_available = tsl.begin();
-    if (!tsl_available) {
-      Serial.println("[TSL2561] ⚠️  tsl.begin() MISLUKT op 0x39");
-      Serial.println("[TSL2561]    Zonlicht uitgeschakeld — waarde blijft 0");
-    } else {
-      tsl.enableAutoRange(true);
-      tsl.setIntegrationTime(TSL2561_INTEGRATIONTIME_13MS);
-      delay(20);  // Wacht op eerste conversie (13ms integratie)
-      sensors_event_t test_e;
-      memset(&test_e, 0, sizeof(test_e));
-      bool ok = tsl.getEvent(&test_e);
-      if (ok) {
-        sun_light = (int)test_e.light;
-        Serial.printf("[TSL2561] ✓ OK — eerste meting: %d lux\n", sun_light);
-        if (sun_light == 0) Serial.println("[TSL2561]   ⚠️  0 lux — sensor afgedekt of overbelicht?");
-      } else {
-        Serial.println("[TSL2561] ✓ Init OK, maar getEvent() mislukt bij eerste meting");
-      }
-    }
-    Serial.println();
-  }
+  // v3.3: TSL2561 en I2C-start verwijderd (sensor hoort niet meer op een room). I2C komt terug met de SCD41.
 
   // DS18B20: laad uit NVS of scan bij eerste boot
   if (ds_count == 0 && preferences.getInt(NVS_DS_COUNT, 0) == 0) {
@@ -1073,6 +1088,7 @@ void setup() {
   // === HOME PAGE ===
     // v3.1: LANDINGSPAGINA — eenvoudige bediening voor iedereen (zie landing.h)
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+    crumbW(CW_LANDING);  // v3.3
       AsyncResponseStream *p = request->beginResponseStream("text/html; charset=utf-8");
       p->print(FPSTR(LANDING_KOP));
       p->print(room_id);
@@ -1100,6 +1116,7 @@ void setup() {
 
     // v3.1: de vroegere statuspagina (technisch) staat nu op /advanced
     server.on("/advanced", HTTP_GET, [](AsyncWebServerRequest *request) {
+    crumbW(CW_ADVANCED);  // v3.3
     // v2.5: AsyncResponseStream — geen html.reserve(12000) meer op de heap
     AsyncResponseStream *p = request->beginResponseStream("text/html; charset=utf-8");
 
@@ -1227,17 +1244,6 @@ void setup() {
       "</table>"
       "<div class=\"group-title\">VERLICHTING</div>"
       "<table>"));
-    if (sun_light_enabled) {
-      p->print(F("<tr><td class=\"label\">Zonlicht</td><td class=\"value\">"));
-      if (tsl_available) {
-        p->printf("%d lux", sun_light);
-        // v2.8: warn als lux >= 65000 (I2C garbage waarde)
-        p->print(sensorWarn(sun_light >= SENSOR_LUX_MAX));
-      } else {
-        p->print(F("<span style='color:#c00;font-size:11px;'>I2C fout</span>"));
-      }
-      p->print(F("</td><td class=\"control\"></td></tr>"));
-    }
     p->print(F("<tr><td class=\"label\">LDR (donker=100)</td><td class=\"value\">"));
     p->print(light_ldr);
     p->print(F("</td><td class=\"control\"></td></tr>"
@@ -1398,7 +1404,6 @@ void setup() {
         "if(sl&&sl!==document.activeElement) sl.value=data.g;}"
       "else if(lbl.includes('Hardware thermostaat')) td.innerHTML=dot(data.d,'#2a9d2a');"
       "else if(lbl.includes('Verwarming aan')) td.innerHTML=dot(data.b,'#e05c00');"
-      "else if(lbl.includes('Zonlicht')) td.innerHTML=data.n+' lux'+sw(data.n>=65000);"
       "else if(lbl.includes('LDR')) td.textContent=data.m;"
       "else if(lbl.includes('NeoPixel Kleur')){"
         "td.textContent=data.q+', '+data.r+', '+data.s;"
@@ -1473,6 +1478,7 @@ void setup() {
 
   // === JSON ENDPOINT ===
     server.on("/json", HTTP_GET, [](AsyncWebServerRequest *request) {
+    crumbW(CW_JSON);  // v3.3
     request->send(200, "application/json", getJSON());
   });
 
@@ -1480,6 +1486,7 @@ void setup() {
   // Geeft pixel nicknames terug voor portal UI
   // Heap impact: ~100 bytes tijdens request (streaming), geen persistent memory
   server.on("/capabilities", HTTP_GET, [](AsyncWebServerRequest *request) {
+    crumbW(CW_CAPS);  // v3.3
     AsyncResponseStream *p = request->beginResponseStream("application/json");
     p->print(F("{\"pixels\":["));
     for (int i = 0; i < pixels_num; i++) {
@@ -1544,6 +1551,7 @@ void setup() {
 
 
   server.on("/update", HTTP_POST, [](AsyncWebServerRequest *request) {
+    crumbW(CW_OTA);  // v3.3
     bool success = !Update.hasError();
     request->send(200, "text/html", success 
       ? "<h2 style='color:#0f0'>Update succesvol!</h2><p>Rebooting...</p>" 
@@ -1574,6 +1582,7 @@ void setup() {
 
   // === REBOOT ===
   server.on("/reboot", HTTP_GET, [](AsyncWebServerRequest *request) {
+    crumbW(CW_OTHER);  // v3.3
     request->send(200, "text/html", "<h2>Rebooting ESP32...</h2>");
     delay(500);
     ESP.restart();
@@ -1583,6 +1592,7 @@ void setup() {
 
   // Toggle voor Bed (r)
   server.on("/toggle_bed", HTTP_GET, [](AsyncWebServerRequest *request) {
+    crumbW(CW_OTHER);  // v3.3
     bed = !bed;
     preferences.putBool(NVS_BED_STATE, bed);  // direct opslaan
     request->send(200, "text/plain", "OK");
@@ -1595,6 +1605,7 @@ void setup() {
 // Spaart (pixels_num - 2) × ~200 bytes handler-heap (bijv. 5 pixels = 3 handlers minder = ~600 bytes)
 // Pad: /toggle_pixel_mode?idx=N  en  /toggle_pixel?idx=N
 server.on("/toggle_pixel_mode", HTTP_GET, [](AsyncWebServerRequest *request) {
+    crumbW(CW_PIXEL);  // v3.3
   if (!request->hasParam("idx")) { request->send(400, "text/plain", "idx?"); return; }
   int i = constrain(request->getParam("idx")->value().toInt(), 0, 1);
   pixel_mode[i] = 1 - pixel_mode[i];
@@ -1604,6 +1615,7 @@ server.on("/toggle_pixel_mode", HTTP_GET, [](AsyncWebServerRequest *request) {
 });
 
 server.on("/toggle_pixel", HTTP_GET, [](AsyncWebServerRequest *request) {
+    crumbW(CW_PIXEL);  // v3.3
   if (!request->hasParam("idx")) { request->send(400, "text/plain", "idx?"); return; }
   int i = constrain(request->getParam("idx")->value().toInt(), 0, pixels_num - 1);
   pixel_on[i] = !pixel_on[i];
@@ -1618,6 +1630,7 @@ server.on("/toggle_pixel", HTTP_GET, [](AsyncWebServerRequest *request) {
 
   // === NEOPIXEL KLEURKIEZER PAGE ===
   server.on("/neopixel", HTTP_GET, [](AsyncWebServerRequest *request) {
+    crumbW(CW_COLOR);  // v3.3
     request->redirect("/");  // Kleurkiezer zit nu inline op statuspagina
   });
 
@@ -1636,6 +1649,7 @@ if (ap_mode_active) {
 
 // === SETTINGS PAGE - v2.5 AsyncResponseStream ===
 server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
+    crumbW(CW_SETTINGS);  // v3.3
   // v2.5: AsyncResponseStream — geen html.reserve(10000) meer op de heap
   AsyncResponseStream *p = request->beginResponseStream("text/html; charset=utf-8");
 
@@ -1697,6 +1711,9 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
       up / 86400, (up % 86400) / 3600, (up % 3600) / 60);
     p->printf("<tr><td class=\"lbl\">Laatste herstart</td><td class=\"inp\"><b style=\"color:%s\">%s</b></td></tr>",
       slecht ? "#c00" : "#0a0", resetReasonText(boot_reason));
+    if (prev_step[0]) {   // v3.3
+      p->printf("<tr><td class=\"lbl\">Laatste stap ervoor</td><td class=\"inp\">%s</td></tr>", prev_step);
+    }
     p->printf("<tr><td class=\"lbl\">Aantal opstarts</td><td class=\"inp\">%u</td></tr>", boot_count);
     p->printf("<tr><td class=\"lbl\">Geheugen</td><td class=\"inp\">vrij %d %% &middot; grootste blok %u KB &middot; laagste ooit %u KB</td></tr>",
       (int)((ESP.getFreeHeap() * 100) / ESP.getHeapSize()),
@@ -1710,6 +1727,24 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
       p->print(F("</code> &nbsp; <a href=\"/clear_crash_log\" style=\"font-size:12px;color:#369;\" onclick=\"return confirm('Meldingen wissen?');\">Wissen</a>"));
     }
     p->print(F("</td></tr>"));
+    // v3.3: laatste drie opstarts met reden, uptime ervoor en laatste stap
+    {
+      Preferences hp;
+      hp.begin("crash-log", true);
+      String hh[3] = { hp.getString("h1", ""), hp.getString("h2", ""), hp.getString("h3", "") };
+      hp.end();
+      p->print(F("<tr><td class=\"lbl\">Vorige herstarts</td><td class=\"inp\" style=\"font-size:12px;\">"));
+      bool any = false;
+      for (int i = 0; i < 3; i++) {
+        if (hh[i].length() == 0) continue;
+        if (any) p->print(F("<br>"));
+        p->print(hh[i]);
+        any = true;
+      }
+      if (!any) p->print(F("(nog geen)"));
+      else p->print(F(" &nbsp; <a href=\"/clear_crash_log\" style=\"color:#369;\" onclick=\"return confirm('Lijst en meldingen wissen?');\">Wissen</a>"));
+      p->print(F("</td></tr>"));
+    }
     p->print(F("<tr><td colspan=\"2\" style=\"background:#336699;color:#fff;font-weight:bold;padding:6px 8px;\">Instellingen</td></tr>"));
   }
 
@@ -1757,14 +1792,12 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
   p->printf("<tr><td class=\"lbl\">Optionele sensoren</td><td class=\"inp\">"
     "<label><input type=\"checkbox\" name=\"co2\"%s> CO&#8322;</label> "
     "<label><input type=\"checkbox\" name=\"dust\"%s> Stof</label> "
-    "<label><input type=\"checkbox\" name=\"sun\"%s> Zonlicht</label> "
     "<label><input type=\"checkbox\" name=\"mov2\"%s> MOV2</label> "
     "<label><input type=\"checkbox\" name=\"tstat\"%s> Thermostaat</label> "
     "<label><input type=\"checkbox\" name=\"beam\"%s> Beam</label>"
     "</td></tr>",
     co2_enabled ? " checked" : "",
     dust_enabled ? " checked" : "",
-    sun_light_enabled ? " checked" : "",
     mov2_enabled ? " checked" : "",
     tstat_enabled ? " checked" : "",
     beam_enabled ? " checked" : "");
@@ -1823,6 +1856,7 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
 
 // === SAVE SETTINGS ===
 server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
+    crumbW(CW_SAVE);  // v3.3
   // v2.10: geen String= toewijzing aan globals meer — char[] direct
 
   // Basisinstellingen
@@ -1841,7 +1875,6 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
   // Checkboxes
   preferences.putBool(NVS_CO2_ENABLED,    request->hasArg("co2"));
   preferences.putBool(NVS_DUST_ENABLED,   request->hasArg("dust"));
-  preferences.putBool(NVS_SUN_ENABLED,    request->hasArg("sun"));
   preferences.putBool(NVS_MOV2_ENABLED,   request->hasArg("mov2"));
   preferences.putBool(NVS_TSTAT_ENABLED,  request->hasArg("tstat"));
   preferences.putBool(NVS_BEAM_ENABLED,   request->hasArg("beam"));
@@ -1911,6 +1944,7 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
 
   // === FACTORY RESET VIA WEB ===
   server.on("/factory_reset", HTTP_GET, [](AsyncWebServerRequest *request) {
+    crumbW(CW_OTHER);  // v3.3
     request->send(200, "text/html", "<h2 style='color:#f00'>Factory reset uitgevoerd!<br>Rebooting...</h2>");
     preferences.clear();
     delay(1000);
@@ -1919,10 +1953,12 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
 
   // v2.4 FIX 7: Crash-log wissen via webUI
   server.on("/clear_crash_log", HTTP_GET, [](AsyncWebServerRequest *request) {
+    crumbW(CW_OTHER);  // v3.3
     Preferences crashPrefs;
     crashPrefs.begin("crash-log", false);
     crashPrefs.putUInt("count", 0);
     crashPrefs.putString("reason", "geen");
+    crashPrefs.remove("h1"); crashPrefs.remove("h2"); crashPrefs.remove("h3");  // v3.3
     crashPrefs.end();
     Serial.println("[CRASH-LOG] Gewist via webUI");
     request->redirect("/settings");
@@ -1933,6 +1969,7 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
   // vanuit een AsyncWebServer handler (blokkeert AsyncTCP-taak 750ms → crashes bij gelijktijdige requests).
   // Oplossing: vlag zetten, loop() voert de scan uit, response geeft een wacht-pagina die daarna redirect.
   server.on("/rescan_ds", HTTP_GET, [](AsyncWebServerRequest *request) {
+    crumbW(CW_OTHER);  // v3.3
     rescan_ds_requested = true;
     request->send(200, "text/html; charset=utf-8",
       "<h2 style='text-align:center;padding:30px;color:#336699;'>"
@@ -1946,6 +1983,7 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
 
   // === SET COLOR HANDLER ===
   server.on("/setcolor", HTTP_GET, [](AsyncWebServerRequest *request) {
+    crumbW(CW_COLOR);  // v3.3
     if (request->hasParam("r")) {
       neo_r = constrain(request->getParam("r")->value().toInt(), 0, 255);
       preferences.putUChar(NVS_NEO_R, neo_r);
@@ -1966,6 +2004,7 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
 
   // Handler voor Instelbare fade duration (slider)
   server.on("/set_fade_duration", HTTP_GET, [](AsyncWebServerRequest *request) {
+    crumbW(CW_OTHER);  // v3.3
   if (request->hasParam("duration")) {
     fade_duration = request->getParam("duration")->value().toInt();
     fade_duration = constrain(fade_duration, 1, 10);
@@ -1977,6 +2016,7 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
 
   // v2.16: Licht-aan tijd slider (0-30 min + 5s overtime)
   server.on("/set_light_on_min", HTTP_GET, [](AsyncWebServerRequest *request) {
+    crumbW(CW_OTHER);  // v3.3
     if (request->hasParam("mins")) {
       light_on_min = request->getParam("mins")->value().toInt();
       light_on_min = constrain(light_on_min, 0, 30);
@@ -1988,6 +2028,7 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
 
   // Slider Heating setpoint (wijzig alleen setpoint, geen mode-switch)
   server.on("/set_setpoint", HTTP_GET, [](AsyncWebServerRequest *request) {
+    crumbW(CW_SETPOINT);  // v3.3
   if (request->hasParam("setpoint")) {
     heating_setpoint = request->getParam("setpoint")->value().toInt();
     heating_setpoint = constrain(heating_setpoint, 10, 30);
@@ -1999,6 +2040,7 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
 
   // Slider Ventilation %
   server.on("/set_vent", HTTP_GET, [](AsyncWebServerRequest *request) {
+    crumbW(CW_OTHER);  // v3.3
     if (request->hasParam("vent")) {
       vent_percent = request->getParam("vent")->value().toInt();
       vent_percent = constrain(vent_percent, 0, 100);
@@ -2009,6 +2051,7 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
 
   // Toggle Thuis/Uit
   server.on("/toggle_home", HTTP_GET, [](AsyncWebServerRequest *request) {
+    crumbW(CW_HOME);  // v3.3
     home_mode = 1 - home_mode; // Toggle tussen 0 en 1
     preferences.putInt(NVS_HOME_MODE_STATE, home_mode);  // direct opslaan
     request->send(200, "text/plain", "OK");
@@ -2017,6 +2060,7 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
   // v2.11: Direct set Thuis/Uit via dashboard broadcast (/set_home?v=0 of ?v=1)
   // Zelfde NVS-key als toggle_home — beide endpoints zijn volledig compatibel
   server.on("/set_home", HTTP_GET, [](AsyncWebServerRequest *request) {
+    crumbW(CW_HOME);  // v3.3
     if (request->hasParam("v")) {
       home_mode = constrain(request->getParam("v")->value().toInt(), 0, 1);
       preferences.putInt(NVS_HOME_MODE_STATE, home_mode);
@@ -2051,8 +2095,10 @@ unsigned long last_slow = 0;
 
 
 void loop() {
+  crumb_up_s = millis() / 1000;   // v3.3
 
   // WiFi status bewaken — herverbinden bij verlies
+  crumbL(CL_WIFI);
   wl_status_t current_status = WiFi.status();
   if (current_status != last_wifi_status) {
     if (current_status != WL_CONNECTED && !ap_mode_active) {
@@ -2069,9 +2115,13 @@ void loop() {
     dnsServer.processNextRequest();
   }
 
+  crumbL(CL_SERIAL);
   handleSerialCommands();
 
+  crumbL(CL_FADE);
   updateFades();
+
+  crumbL(CL_PIR);
 
   // PIR op 3.3V: beweging = LOW → rising edge van HIGH naar LOW
   static bool last1 = HIGH, last2 = HIGH;
@@ -2096,6 +2146,7 @@ void loop() {
 
 
   // NeoPixel aansturing — gesaneerd & deterministisch
+  crumbL(CL_PIXLOGIC);
 
   for (int i = 0; i < pixels_num; i++) {
 
@@ -2177,6 +2228,7 @@ void loop() {
 
   // Thermostaat pinlezing + verwarmingslogica — buiten 60s-gate voor snelle respons
   // v2.21: altijd AUTO — setpoint + dauwpuntbeveiliging (heating_mode verwijderd)
+  crumbL(CL_HEAT);
   tstat_on = !digitalRead(TSTAT_PIN);
   float effective_setpoint = max((float)heating_setpoint, dew + dew_safety_margin);
   if (home_mode == 1 && tstat_enabled) {
@@ -2187,12 +2239,14 @@ void loop() {
 
   // v2.4 FIX 5: Rescan DS18B20 vanuit loop() (async-safe — delay(750) is hier WDT-safe)
   if (rescan_ds_requested) {
+    crumbL(CL_DSSCAN);
     rescan_ds_requested = false;
     scanDS18B20();
     readDS18B20temps();
     Serial.printf("[RESCAN] DS18B20: %d sensor(s) gevonden\n", ds_count);
   }
 
+  crumbL(CL_IDLE);
   if (millis() - last_slow < 60000) return;
   last_slow = millis();
   uptime_sec = millis() / 1000;
@@ -2203,6 +2257,7 @@ void loop() {
     uint32_t lb = ESP.getMaxAllocHeap();
     static bool crash_logged_this_episode = false;
     if (lb < 25000 && !crash_logged_this_episode) {
+      crumbL(CL_NVS);
       crash_logged_this_episode = true;
       Preferences crashPrefs;
       crashPrefs.begin("crash-log", false);
@@ -2221,31 +2276,18 @@ void loop() {
 
 
   // Sensoren
+  crumbL(CL_DHT);
   humi = dht.readHumidity();
   temp_dht = dht.readTemperature();
   dew = calculateDewPoint(temp_dht, humi);
+  crumbL(CL_DS);
   readDS18B20temps();  // Lees alle DS18B20 sensoren → temp_ds = primaire sensor
   
-  if (sun_light_enabled && tsl_available) {
-    sensors_event_t e;
-    memset(&e, 0, sizeof(e));
-    bool ok = tsl.getEvent(&e);
-    if (ok) {
-      sun_light = (int)e.light;
-      // Debug elke 5 minuten (300s) of eerste keer
-      static uint32_t last_tsl_debug = 0;
-      if (uptime_sec - last_tsl_debug >= 300 || last_tsl_debug == 0) {
-        last_tsl_debug = uptime_sec;
-        Serial.printf("[TSL2561] %.2f lux  (int=%d)\n", e.light, sun_light);
-      }
-    } else {
-      Serial.printf("[TSL2561] getEvent() MISLUKT @ %lus — vorige waarde %d lux bewaard\n",
-        (unsigned long)uptime_sec, sun_light);
-    }
-  }
-  
+  crumbL(CL_LDR);
   light_ldr = scaleLDR(analogRead(LDR_ANALOG));
+  crumbL(CL_DUST);
   if (dust_enabled) dust = readDust();  // v1.9: bewaakt — delayMicroseconds blokkeert WDT als sensor niet aanwezig
+  crumbL(CL_CO2);
   if (co2_enabled) co2 = readCO2();  // v1.7: bewaakt — pulseIn() blokkeert WDT als sensor niet aanwezig
   dew_alert = (temp_ds < dew) ? 1 : 0;  
   night = (light_ldr > 50) ? 1 : 0;  
@@ -2254,6 +2296,7 @@ void loop() {
   beam_alert_new = (beam_value > 50) ? 1 : 0;  // Voor p, vervangt oude beam_alert
 
 
+  crumbL(CL_REST);
   // Room temp logica: primair temp_ds (Temp2), backup temp_dht (Temp1)
   room_temp = temp_ds;
   temp_melding[0] = '\0';  // v2.7: reset char[] zonder heap-alloc
@@ -2315,9 +2358,6 @@ void loop() {
       Serial.printf("CO₂                  : %d ppm\n", co2);
     }
     Serial.printf("Ventilatie snelheid %%         : %d %%\n", vent_percent);
-    if (sun_light_enabled) {
-      Serial.printf("Zonlicht             : %d lux\n", sun_light);
-    }
     Serial.printf("LDR (donker=100)     : %d\n", light_ldr);
     Serial.printf("MOV1 PIR trig/min    : %d\n", mov1_triggers);
     if (mov2_enabled) {
