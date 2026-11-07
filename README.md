@@ -126,7 +126,7 @@ Alle nieuwe keys komen **achteraan**; bestaande keys blijven ongewijzigd, op `l`
 | `ak` | Effectief setpoint (°C, 1 decimaal) = het echte doel na dauwpuntcorrectie | v3.5 | ja (vanaf GAS v1.6) |
 | `al` | SCD41-temperatuur (°C) | v3.6 | ja |
 | `am` | SCD41-vochtigheid (%) | v3.6 | ja |
-| `ap`–`as` | Generieke I/O GP1–GP4: 0/1 (digitaal), 0–100 % (analoog of PWM), leeg als de pin uit staat | v3.8 | ja (kolommen al in GAS v1.6) — **keys te bevestigen** |
+| `ap`–`as` | Generieke I/O GP1–GP4: 0/1 (digitaal), 0–100 % (analoog of PWM), leeg als de pin uit staat | v3.8 | ja (kolommen al in GAS v1.6) — beslist 7/11 |
 
 ### Fase A — Basis
 
@@ -228,7 +228,7 @@ De vrije pinnen van RoomSense en Option worden algemeen bruikbaar, zonder de ske
 
 - **`/settings`:** per pin modus (uit · digitale ingang · analoge ingang (alleen GP3) · digitale uitgang · PWM-uitgang), bijnaam, pull-up. Standaard: uit.
 - **`/advanced`:** per pin bijnaam, modus en waarde; uitgangen met een knop of schuifbalk.
-- **`/json`:** keys `ap`–`as` (te bevestigen).
+- **`/json`:** keys `ap`–`as` (beslist 7 nov 2026).
 - **Bediening van uitgangen:** nieuw adres, voorstel `/set_gp?n=1..4&v=0..100` (te bevestigen).
 - **Veilige opstart:** elke GP-pin start als ingang zonder pull-up; een uitgang wordt pas actief na het laden van de instellingen.
 
