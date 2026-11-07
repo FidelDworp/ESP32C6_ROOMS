@@ -1,8 +1,8 @@
 # Overdracht — project "Rooms" (Zarlar ROOM-controllers)
 
-*Stand 7 november 2026, 16:00 — Filip Delannoy (FiDel), Zarlardinge (BE)*
+*Stand 7 november 2026, 16:30 — Filip Delannoy (FiDel), Zarlardinge (BE)*
 
-Dit document start een **nieuw gesprek met Claude** over de ROOM-sketch en de overstap van de Photon-rooms naar ESP32-C6. Het vat samen hoe we werken, wat er beslist en gebouwd is, en wat nog openstaat. Wie het systeem wil begrijpen, begint beter bij de [README](../README.md) en de [ROOM-standaard](ROOM_STANDAARD.md).
+Dit document start een **nieuw gesprek met Claude** over de ROOM-sketch en de overstap van de Photon-rooms naar ESP32-C6. Het vat samen hoe we werken, wat er beslist en gebouwd is, en wat nog openstaat. Overkoepelend (alle repo's, systeem, compileren in de sessie): [`ZARLAR_OVERDRACHT.md`](https://github.com/FidelDworp/Zarlardinge-Home-Automation/blob/main/docs/ZARLAR_OVERDRACHT.md). Wie het systeem wil begrijpen, begint beter bij de [README](../README.md) en de [ROOM-standaard](ROOM_STANDAARD.md).
 
 ---
 
@@ -50,7 +50,7 @@ Dit document start een **nieuw gesprek met Claude** over de ROOM-sketch en de ov
 
 | Controller | Adres | Sketch | Stand 7/11/2026 |
 |---|---|---|---|
-| **room80** (experimenteerbord, op tafel in de eetplaats) | 192.168.0.80 | ROOM | **v3.2** (v3.3 klaar om te flashen); defecte TSL2561 losgetrokken en "zonlicht" uit op 7/11 ±15:20 |
+| **room80** (experimenteerbord, op tafel in de eetplaats) | 192.168.0.80 | ROOM | **v3.3**, geflasht 7/11 ±16:00 (OTA met de .bin uit `bin/`); 48 u-test loopt; defecte TSL2561 losgetrokken |
 | HVAC (testbord slaapkamer) | 192.168.0.70 | ESP32C6_HVAC | v2.0 |
 | ECO-boiler (bordje slaapkamer) | 192.168.0.71 | ESP32-C6_ECO-boiler | v2.0 |
 | Smart Energy (bordje slaapkamer) | 192.168.0.73 · `smart-energy.local` | ESP32_C6_ENERGY | v1.30 (6/11), 48 u-test loopt |
@@ -68,7 +68,7 @@ Dit document start een **nieuw gesprek met Claude** over de ROOM-sketch en de ov
 
 ## 4. ROOM-sketch: stand en plan
 
-**Versies:** v3.0 Matter weg · v3.1 landingspagina · v3.2 versie + Diagnose in `/settings` · **v3.3** (7/11, in de repo, nog te flashen): TSL2561 weg, "laatste stap vóór herstart" in Diagnose.
+**Versies:** v3.0 Matter weg · v3.1 landingspagina · v3.2 versie + Diagnose in `/settings` · **v3.3** (7/11, geflasht ±16:00): TSL2561 weg, "laatste stap vóór herstart" in Diagnose. Eerste opstart na de OTA had nog geen stap (v3.2 noteerde er geen); "Lage-heap meldingen" gewist.
 
 **48 u-test v3.2 (5/11 21:45 → 7/11 15:05): niet gehaald.** 4 herstarts (6/11 17:10 na 19,4 u; 7/11 06:31 na 13,3 u; 07:16; 07:29), reden **"Watchdog (interrupt)"**. Geheugen in orde (grootste blok 239–247 KB, laagste 225–228 KB), RSSI −54…−62 dBm. Verdachten: **defecte TSL2561** (I2C), DHT22-uitlezing (zet interrupts uit), NeoPixel + WiFi. "Lage-heap meldingen 59" is een oude teller in NVS.
 
@@ -78,7 +78,7 @@ Dit document start een **nieuw gesprek met Claude** over de ROOM-sketch en de ov
 
 | Versie | Wat |
 |---|---|
-| **v3.3** | Stabiliteit: TSL2561 weg, laatste stap vóór herstart. **In de repo, te flashen + 48 u-test** |
+| **v3.3** | Stabiliteit: TSL2561 weg, laatste stap vóór herstart. **Geflasht 7/11, 48 u-test loopt** |
 | v3.4 | WiFi robuuster (geen modemslaap, periodiek opnieuw verbinden) + mDNS `<kamer>.local` (zoals S-ENERGY v1.30) |
 | v3.5 | Temperatuurbewaking zoals de Sjalay; max 6 DS18B20's (keys `an`, `ao`) |
 | v3.6 | Verwarmingslogica zoals de Sjalay (key `ak`; dauwpuntbeveiliging ook bij Thuis + thermostaatcontact) |
@@ -118,7 +118,7 @@ Standaard: [`ROOM_STANDAARD.md`](ROOM_STANDAARD.md). Ombouw: [`aansluitingen.md`
 ## 8. Praktisch
 
 - **Compileren (FiDel):** ESP32C6 Dev Module, **Flash 16 MB**, Partition Custom (`partitions.csv` in de sketchmap). JavaScript altijd in een `.h`-bestand.
-- **OTA:** enkel `<sketch>.ino.bin` uploaden via `http://<ip>/update`. De partitietabel kan niet via OTA veranderen. Het Dashboard heeft geen `/update`.
+- **OTA:** enkel `<sketch>.ino.bin` uploaden via `http://<ip>/update`. De partitietabel kan niet via OTA veranderen.
 - **Compileren in de Claude-sessie** (werkte op 7/11): `arduino-cli` 1.3.1 van GitHub-releases; ESP32-index `package_esp32_index.json` van de GitHub-release 3.3.12 (espressif.github.io en downloads.arduino.cc zijn niet bereikbaar), ingekort tot `esp-rv32`, `esptool_py` en `esp32c6-libs` en als `file://`-index gebruikt; bibliotheken via `git clone` (ESP32Async/ESPAsyncWebServer + AsyncTCP, adafruit DHT + Adafruit_Sensor + NeoPixel, pstolarz/OneWireNg); `--build-property runtime.tools.ctags.path=` naar een lege `ctags` (de ROOM-sketch heeft geen automatische prototypes nodig). FQBN `esp32:esp32:esp32c6:FlashSize=16M,PartitionScheme=custom,CDCOnBoot=cdc`.
 - **RPi:** `ssh fidel@192.168.0.50 'bash ~/update.sh'` voor wat al in de repo staat; vanaf de Mac `bash ~/deploy.sh "omschrijving"`.
 - **Google Apps Script:** "Implementaties beheren → potlood → nieuwe versie", nooit "nieuwe implementatie". Na kolomwijzigingen `setupHeaders()` één keer uitvoeren.
