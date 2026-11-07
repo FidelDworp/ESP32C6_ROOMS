@@ -229,7 +229,8 @@ De vrije pinnen van RoomSense en Option worden algemeen bruikbaar, zonder de ske
 - **`/settings`:** per pin modus (uit · digitale ingang · analoge ingang (alleen GP3) · digitale uitgang · PWM-uitgang), bijnaam, pull-up. Standaard: uit.
 - **`/advanced`:** per pin bijnaam, modus en waarde; uitgangen met een knop of schuifbalk.
 - **`/json`:** keys `ap`–`as` (beslist 7 nov 2026).
-- **Bediening van uitgangen:** nieuw adres, voorstel `/set_gp?n=1..4&v=0..100` (te bevestigen).
+- **Bediening van uitgangen:** nieuw adres `/set_gp?n=1..4&v=0..100` (beslist 7 nov 2026): zo kunnen ook de RPi, Apple Home of het Dashboard een vrije pin schakelen of dimmen. `v` = 0 uit, 100 volledig aan, daartussen PWM. Een pin die niet als uitgang ingesteld is, negeert de opdracht.
+- **Ingangen:** digitaal (0/1, met of zonder pull-up) op alle vier; **analoog alleen op GP3** (IO2, ADC), weergegeven als 0–100 %. Voor een LDR of spanningsdeler op GP3 een vaste weerstand (bv. 10 kΩ naar 3V3) voorzien; maximum 3,3 V op de pin.
 - **Veilige opstart:** elke GP-pin start als ingang zonder pull-up; een uitgang wordt pas actief na het laden van de instellingen.
 
 ### Fase C — Pagina's apart en opgefrist
