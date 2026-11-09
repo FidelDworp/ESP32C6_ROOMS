@@ -1,10 +1,25 @@
-// ESP32-C6 ROOM v3.3 — 7 nov 2026 — zonder Matter
+// ESP32-C6 ROOM v3.4 — 9 nov 2026 — zonder Matter
 // Zarlar thuisautomatisering — Room controller (Apple Home via de RPi-bridge, niet meer via Matter op de ESP32)
 // Filip Delannoy — Zarlardinge (BE)
 //
 // PARTITIETABEL: Compileer met "partitions.csv" in de schetsmap (Custom partition scheme):
 //   nvs (20 KB), otadata (8 KB), app0 (6 MB), app1 (6 MB), spiffs (~4 MB)
 //
+// v3.4 (9nov26): SCD41 (CO2 + temperatuur + vocht via I2C), naar voren gehaald in het verbeterplan.
+//                 (1) Bibliotheek "Sensirion I2C SCD4x" (v1.1.0, + "Sensirion Core"). I2C op IO13 (SDA) /
+//                 IO11 (SCL), 100 kHz, adres 0x62 — alleen gestart als de SCD41 aan staat in /settings.
+//                 (2) Niet-blokkerend: de sensor meet zelf elke 5 s (periodieke meting); de loop kijkt om de
+//                 5 s of er een nieuwe waarde klaarstaat en leest die in enkele ms. 3 fouten op rij of 60 s
+//                 zonder geldige meting → "ontbreekt" (waarden 0); elke 60 s een nieuwe poging.
+//                 (3) CO2 via PWM weg: pulseIn(), readCO2() en CO2_PWM (IO18) verdwenen; IO18 is vrij (GP4, v3.9).
+//                 (4) /json: k = CO2 (ppm, stuurt de ventilatie zoals voorheen, 400–800 ppm → 0–100 %).
+//                 NIEUW achteraan: al = SCD41-temperatuur (°C, 1 decimaal), am = SCD41-vocht (%). 0 = geen meting.
+//                 Alle bestaande keys ongewijzigd. De DHT22 blijft de bron voor vocht en dauwpunt.
+//                 (5) /advanced: extra rijen "SCD41 temp" en "SCD41 vocht". /settings: "SCD41 (CO2)" vervangt
+//                 "CO2" (zelfde NVS-sleutel co2_en), ASC aan/uit (scd_asc, standaard aan), temperatuuroffset
+//                 (scd_toff, standaard 4,0 °C), knop "Kalibreren in buitenlucht" (FRC 425 ppm, pas na 3 min
+//                 meten; uitgevoerd in de loop, niet in de webtaak). Diagnose: SCD41-toestand, serienummer,
+//                 leesfouten, laatste kalibratie. (6) Geen sensormetingen in AP-mode (en dan ook geen verwarmingsvraag).
 // v3.3 (7nov26): STABILITEIT. (1) TSL2561 volledig weg: bibliotheek, I2C-start (Wire), instelling
 //                 "Zonlicht" (NVS sun_en), UI-rij en loop-uitlezing. De sensor hoort niet meer op een room
 //                 (ROOM-standaard v1.1); /json-key n blijft bestaan met waarde 0. Aanleiding: 4 herstarts
@@ -68,8 +83,10 @@
 #include "landing.h"     // v3.1: landingspagina "/"
 #include <esp_system.h>      // v3.2: esp_reset_reason()
 #include <esp_attr.h>        // v3.3: RTC_NOINIT_ATTR voor "laatste stap"
+#include <Wire.h>             // v3.4: I2C voor de SCD41
+#include <SensirionI2cScd4x.h> // v3.4: bibliotheek "Sensirion I2C SCD4x" (+ "Sensirion Core")
 
-#define ROOM_VERSION "v3.3"  // v3.2: enige plaats met het versienummer
+#define ROOM_VERSION "v3.4"  // v3.2: enige plaats met het versienummer
 
 // v3.2: reden van de laatste herstart, leesbaar
 esp_reset_reason_t boot_reason = ESP_RST_UNKNOWN;
@@ -100,7 +117,7 @@ const char* const CRUMB_LOOP_TXT[CL_COUNT] = {
   "onbekend", "opstarten (setup)", "WiFi-controle", "seriële commando's", "pixels dimmen/tonen",
   "PIR lezen", "pixel-logica", "verwarmingslogica", "DS18B20 opnieuw zoeken", "wachten (rust)",
   "NVS schrijven (heap-log)", "DHT22 lezen", "DS18B20 lezen", "LDR lezen", "stofsensor lezen",
-  "CO2 lezen (PWM)", "berekeningen"
+  "SCD41 lezen (I2C)", "berekeningen"
 };
 enum CrumbWeb : uint8_t {
   CW_NONE = 0, CW_LANDING, CW_ADVANCED, CW_JSON, CW_CAPS, CW_SETTINGS, CW_SAVE, CW_OTA,
@@ -130,7 +147,9 @@ Preferences preferences;     // Globale Preferences instantie
 #define SHARP_LED     12   // IO12 - Sharp dust LED out  (was GPIO19)
 #define SHARP_ANALOG   7   // IO7  - Sharp dust analog   (was GPIO32)
 #define LDR_ANALOG     1   // IO1  - LDR1 analog         (was GPIO33, 10k pull-up naar 3V3!)
-#define CO2_PWM       18   // IO18 - CO2 PWM input       (was GPIO25)
+// IO18 vrij sinds v3.4 (was CO2 PWM) — gepland voor GP4 (v3.9)
+#define I2C_SDA       13   // v3.4: IO13 - I2C SDA (SCD41)
+#define I2C_SCL       11   // v3.4: IO11 - I2C SCL (SCD41)
 #define TSTAT_PIN     10   // IO10 - TSTAT switch        (was GPIO27)
 #define OPTION_LDR     2   // IO2  - LDR2 analog         (was GPIO14)
 #define NEOPIXEL_PIN   4   // IO4  - Pixels data         (was GPIO16)
@@ -158,7 +177,9 @@ const char* NVS_LIGHT_THRESHOLD     = "light_thresh";
 const char* NVS_MOV_WINDOW          = "mov_window";
 const char* NVS_LDR_DARK            = "ldr_dark";
 const char* NVS_BEAM_THRESHOLD      = "beam_thresh";
-const char* NVS_CO2_ENABLED         = "co2_en";
+const char* NVS_CO2_ENABLED         = "co2_en";          // v3.4: = SCD41 aan/uit
+const char* NVS_SCD_ASC             = "scd_asc";         // v3.4: bool, automatische kalibratie (standaard aan)
+const char* NVS_SCD_TOFF            = "scd_toff";        // v3.4: float, temperatuuroffset °C (standaard 4,0)
 const char* NVS_DUST_ENABLED        = "dust_en";
 const char* NVS_MOV2_ENABLED        = "mov2_en";
 const char* NVS_TSTAT_ENABLED       = "tstat_en";
@@ -219,7 +240,23 @@ int beam_alert_threshold     = 50;
 
 
 // Optionele feature enables (default 1 = aan)
-bool co2_enabled   = false;  // v1.7: default false — voorkomt WDT crash bij niet-aangesloten sensor
+bool co2_enabled   = false;  // v1.7: default false. v3.4: = SCD41 aan/uit
+// v3.4: SCD41
+SensirionI2cScd4x scd;
+bool  scd_asc        = true;    // automatische zelfkalibratie
+float scd_toff       = 4.0f;    // temperatuuroffset (°C), Sensirion-standaard
+bool  scd_ok         = false;   // sensor antwoordt en meet
+uint64_t scd_serial  = 0;
+uint32_t scd_errors  = 0;       // leesfouten sinds de opstart
+uint8_t  scd_err_run = 0;       // fouten op rij
+unsigned long scd_started_ms = 0;  // start van de periodieke meting
+unsigned long scd_last_ok_ms = 0;  // laatste geldige meting
+unsigned long scd_last_poll  = 0;
+unsigned long scd_last_try   = 0;  // laatste init-poging
+volatile bool scd_frc_requested = false;  // kalibratie gevraagd via /scd_frc, uitgevoerd in loop()
+char  scd_frc_result[64] = "";
+float scd_temp = 0.0f;          // al
+int   scd_humi = 0;             // am
 bool dust_enabled  = false;  // v1.9: default false — delayMicroseconds(9680) kan WDT triggeren als sensor niet aanwezig
 bool mov2_enabled  = true;
 bool tstat_enabled = true;
@@ -501,11 +538,84 @@ void readDS18B20temps() {
 
 // ============== EINDE DS18B20 MULTI-SENSOR ==============
 
-int readCO2() {
-  // v2.20 FIX 3: timeout 200ms → 50ms per call (totaal 100ms i.p.v. 400ms bij geen signaal)
-  unsigned long h = pulseIn(CO2_PWM, HIGH, 50000);
-  unsigned long l = pulseIn(CO2_PWM, LOW,  50000);
-  return (h < 100 || l < 100) ? 0 : (int)(5000.0 * (h - 2.0) / (h + l - 4.0));
+// ============== SCD41 (v3.4) ==============
+// Alleen aangeroepen vanuit setup() en loop() — nooit vanuit de webtaak (I2C niet gedeeld tussen taken).
+
+void scdClearValues() {
+  co2 = 0; scd_temp = 0.0f; scd_humi = 0;
+}
+
+// Start of herstart de sensor: periodieke meting stoppen, ASC en offset (alleen RAM, geen EEPROM-slijtage),
+// serienummer lezen, periodieke meting starten. Duurt ±0,6 s (stopPeriodicMeasurement wacht 500 ms).
+bool scdInit() {
+  scd_last_try = millis();
+  scd.wakeUp();                      // geen fout als de sensor al wakker is
+  scd.stopPeriodicMeasurement();     // nodig voor configuratie
+  int16_t err = scd.reinit();
+  if (!err) err = scd.getSerialNumber(scd_serial);
+  if (!err) err = scd.setAutomaticSelfCalibrationEnabled(scd_asc ? 1 : 0);
+  if (!err) err = scd.setTemperatureOffset(scd_toff);
+  if (!err) err = scd.startPeriodicMeasurement();
+  scd_ok = (err == 0);
+  scd_err_run = 0;
+  if (scd_ok) {
+    scd_started_ms = millis();
+    scd_last_ok_ms = millis();       // geef de eerste meting 60 s de tijd
+    Serial.printf("SCD41: gestart (serienr %llX, ASC %s, offset %.1f C)\n",
+                  (unsigned long long)scd_serial, scd_asc ? "aan" : "uit", scd_toff);
+  } else {
+    scdClearValues();
+    Serial.printf("SCD41: geen antwoord op I2C (fout %d)\n", err);
+  }
+  return scd_ok;
+}
+
+// Om de 5 s: nieuwe meting klaar? Dan lezen (enkele ms). Fouten tellen; na 3 op rij of 60 s zonder
+// geldige meting → "ontbreekt" (waarden 0) en elke 60 s opnieuw initialiseren.
+void scdPoll() {
+  if (!co2_enabled || ap_mode_active) return;
+  if (!scd_ok) {
+    if (millis() - scd_last_try >= 60000UL) scdInit();
+    return;
+  }
+  if (millis() - scd_last_poll < 5000UL) return;
+  scd_last_poll = millis();
+
+  bool ready = false;
+  int16_t err = scd.getDataReadyStatus(ready);
+  if (!err && ready) {
+    uint16_t c = 0; float t = 0.0f, h = 0.0f;
+    err = scd.readMeasurement(c, t, h);
+    if (!err && c > 0) {             // c = 0: ongeldige meting (kan na de start)
+      co2 = c;
+      scd_temp = t;
+      scd_humi = (int)roundf(h);
+      scd_last_ok_ms = millis();
+      scd_err_run = 0;
+    }
+  }
+  if (err) { scd_errors++; scd_err_run++; }
+  if (scd_err_run >= 3 || millis() - scd_last_ok_ms > 60000UL) {
+    scd_ok = false;
+    scdClearValues();
+    Serial.println("SCD41: ontbreekt (3 fouten op rij of 60 s zonder meting)");
+  }
+}
+
+// Geforceerde kalibratie (FRC) op 425 ppm, gevraagd via /scd_frc. Sensor moet ≥3 min in buitenlucht
+// gemeten hebben (gecontroleerd in de webhandler). Duurt ±1 s; daarna periodieke meting opnieuw.
+void scdForcedRecalibration() {
+  uint16_t corr = 0xFFFF;
+  scd.stopPeriodicMeasurement();
+  int16_t err = scd.performForcedRecalibration(425, corr);
+  if (!err && corr != 0xFFFF) {
+    snprintf(scd_frc_result, sizeof(scd_frc_result), "OK, correctie %+d ppm (na %lu min uptime)",
+             (int)corr - 0x8000, (unsigned long)(millis() / 60000UL));
+  } else {
+    snprintf(scd_frc_result, sizeof(scd_frc_result), "mislukt (fout %d)", err);
+  }
+  Serial.printf("SCD41 kalibratie: %s\n", scd_frc_result);
+  scdInit();                         // periodieke meting opnieuw starten
 }
 
 
@@ -632,6 +742,12 @@ const char* getJSON() {
     char ds_entry[24];
     snprintf(ds_entry, sizeof(ds_entry), ",\"a%c\":%.1f", (char)('g' + i), temp_ds_arr[i]);
     strncat(json, ds_entry, sizeof(json) - strlen(json) - 1);
+  }
+  // v3.4: SCD41 — al = temperatuur (°C), am = vocht (%); 0 = geen meting. Altijd achteraan.
+  {
+    char scd_entry[32];
+    snprintf(scd_entry, sizeof(scd_entry), ",\"al\":%.1f,\"am\":%d", scd_temp, scd_humi);
+    strncat(json, scd_entry, sizeof(json) - strlen(json) - 1);
   }
   strncat(json, "}", sizeof(json) - strlen(json) - 1);
 
@@ -783,6 +899,8 @@ void setup() {
     preferences.putInt(NVS_BEAM_THRESHOLD, 50);
     
     preferences.putBool(NVS_CO2_ENABLED, false);
+    preferences.putBool(NVS_SCD_ASC, true);      // v3.4
+    preferences.putFloat(NVS_SCD_TOFF, 4.0f);    // v3.4
     preferences.putBool(NVS_DUST_ENABLED, false);
     preferences.putBool(NVS_MOV2_ENABLED, true);
     preferences.putBool(NVS_TSTAT_ENABLED, true);
@@ -820,7 +938,9 @@ void setup() {
   ldr_dark_threshold       = preferences.getInt(NVS_LDR_DARK, 50);
   beam_alert_threshold     = preferences.getInt(NVS_BEAM_THRESHOLD, 50);
   
-  co2_enabled      = preferences.getBool(NVS_CO2_ENABLED, false);   // v2.5 fix: default false — anders WDT crash bij afwezige sensor
+  co2_enabled      = preferences.getBool(NVS_CO2_ENABLED, false);   // v2.5 fix: default false. v3.4: = SCD41 aan/uit
+  scd_asc          = preferences.getBool(NVS_SCD_ASC, true);        // v3.4
+  scd_toff         = constrain(preferences.getFloat(NVS_SCD_TOFF, 4.0f), 0.0f, 20.0f);  // v3.4
   dust_enabled     = preferences.getBool(NVS_DUST_ENABLED, false);  // v2.5 fix: default false
   mov2_enabled     = preferences.getBool(NVS_MOV2_ENABLED, true);
   num_mov_pixels = 1 + (mov2_enabled ? 1 : 0);  // v2.4 FIX 4: 'int' verwijderd — was lokale shadowing van globale variabele → globale bleef altijd 2
@@ -927,7 +1047,13 @@ void setup() {
   pinMode(OPTION_LDR, INPUT);
 
   dht.begin();
-  // v3.3: TSL2561 en I2C-start verwijderd (sensor hoort niet meer op een room). I2C komt terug met de SCD41.
+  // v3.4: I2C + SCD41, alleen als de sensor aan staat in /settings
+  if (co2_enabled) {
+    Wire.begin(I2C_SDA, I2C_SCL);
+    Wire.setClock(100000);
+    scd.begin(Wire, SCD41_I2C_ADDR_62);
+    scdInit();
+  }
 
   // DS18B20: laad uit NVS of scan bij eerste boot
   if (ds_count == 0 && preferences.getInt(NVS_DS_COUNT, 0) == 0) {
@@ -1208,6 +1334,9 @@ void setup() {
       p->printf("%d ppm", co2);
       p->print(sensorWarn(co2 == 0));  // v2.8: 0 ppm = sensor leest niet
       p->print(F("</td><td class=\"control\"></td></tr>"));
+      // v3.4: SCD41 temperatuur en vocht (extra; de DHT22 blijft de bron voor vocht en dauwpunt)
+      p->printf("<tr><td class=\"label\">SCD41 temp</td><td class=\"value\">%.1f &deg;C</td><td class=\"control\"></td></tr>", scd_temp);
+      p->printf("<tr><td class=\"label\">SCD41 vocht</td><td class=\"value\">%d %%</td><td class=\"control\"></td></tr>", scd_humi);
     }
     if (dust_enabled) {
       p->print(F("<tr><td class=\"label\">Stof</td><td class=\"value\">"));
@@ -1396,6 +1525,9 @@ void setup() {
         "+sw(data.j==1,false);"
       "else if(lbl.includes('alarm')) td.innerHTML=dot(data.j,'#c00');"
       "else if(lbl.includes('CO')) td.innerHTML=data.k+' ppm'+sw(data.k==0);"
+      // v3.4: SCD41-rijen
+      "else if(lbl==='SCD41 temp') td.innerHTML=(data.al||0).toFixed(1)+' \u00b0C';"
+      "else if(lbl==='SCD41 vocht') td.innerHTML=(data.am||0)+' %';"
       "else if(lbl.includes('Stof')) td.innerHTML=data.l+sw(data.l==0);"
       "else if(lbl.includes('Heating setpoint')) td.textContent=data.c+' \u00b0C';"
       "else if(lbl.includes('Ventilatie snelheid')){"
@@ -1719,6 +1851,18 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
       (int)((ESP.getFreeHeap() * 100) / ESP.getHeapSize()),
       (unsigned)(ESP.getMaxAllocHeap() / 1024), (unsigned)(ESP.getMinFreeHeap() / 1024));
     p->printf("<tr><td class=\"lbl\">WiFi-signaal</td><td class=\"inp\">%d dBm</td></tr>", (int)WiFi.RSSI());
+    // v3.4: SCD41-toestand
+    p->print(F("<tr><td class=\"lbl\">SCD41</td><td class=\"inp\">"));
+    if (!co2_enabled) {
+      p->print(F("uit"));
+    } else if (scd_ok) {
+      p->printf("<b style=\"color:#0a0\">ok</b> &middot; serienr %llX &middot; leesfouten %u &middot; ASC %s &middot; offset %.1f &deg;C",
+        (unsigned long long)scd_serial, scd_errors, scd_asc ? "aan" : "uit", scd_toff);
+    } else {
+      p->printf("<b style=\"color:#c00\">ontbreekt</b> (geen antwoord op I2C IO13/IO11) &middot; leesfouten %u", scd_errors);
+    }
+    if (scd_frc_result[0]) p->printf("<br>Laatste kalibratie: %s", scd_frc_result);
+    p->print(F("</td></tr>"));
     const char* crashColor = crashCnt > 0 ? "#c00" : "#0a0";
     p->printf("<tr><td class=\"lbl\">Lage-heap meldingen</td><td class=\"inp\"><b style=\"color:%s\">%u</b>", crashColor, crashCnt);
     if (crashCnt > 0) {
@@ -1790,7 +1934,7 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
   p->print(F("</td></tr>"));
 
   p->printf("<tr><td class=\"lbl\">Optionele sensoren</td><td class=\"inp\">"
-    "<label><input type=\"checkbox\" name=\"co2\"%s> CO&#8322;</label> "
+    "<label><input type=\"checkbox\" name=\"co2\"%s> SCD41 (CO&#8322;)</label> "
     "<label><input type=\"checkbox\" name=\"dust\"%s> Stof</label> "
     "<label><input type=\"checkbox\" name=\"mov2\"%s> MOV2</label> "
     "<label><input type=\"checkbox\" name=\"tstat\"%s> Thermostaat</label> "
@@ -1801,6 +1945,16 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     mov2_enabled ? " checked" : "",
     tstat_enabled ? " checked" : "",
     beam_enabled ? " checked" : "");
+  // v3.4: SCD41-instellingen + kalibratie in buitenlucht
+  p->printf("<tr><td class=\"lbl\">SCD41</td><td class=\"inp\">"
+    "<label><input type=\"checkbox\" name=\"scd_asc\"%s> Automatische kalibratie (ASC)</label>"
+    "<span style=\"font-size:12px;color:#666;\"> &mdash; aan in kamers die gelucht worden, uit in afgesloten ruimtes</span><br>"
+    "Temperatuuroffset: <input type=\"number\" name=\"scd_toff\" step=\"0.1\" min=\"0\" max=\"20\" value=\"%.1f\" style=\"width:70px;\"> &deg;C"
+    "<span style=\"font-size:12px;color:#666;\"> (standaard 4,0)</span><br>"
+    "<a href=\"/scd_frc\" onclick=\"return confirm('Staat de sensor al minstens 3 minuten in buitenlucht? Hij wordt dan op 425 ppm gezet.');\" "
+    "style=\"display:inline-block;margin-top:6px;background:#369;color:#fff;padding:6px 14px;border-radius:5px;text-decoration:none;font-size:13px;\">Kalibreren in buitenlucht (425 ppm)</a>"
+    "</td></tr>",
+    scd_asc ? " checked" : "", scd_toff);
   p->printf("<tr><td class=\"lbl\">Serial logging</td><td class=\"inp\">"
     "<label><input type=\"checkbox\" name=\"serial_verbose\"%s> Aan</label>"
     "&nbsp;&nbsp;interval: <input type=\"number\" name=\"serial_interval\" min=\"5\" max=\"30\" value=\"%d\" style=\"width:50px;\"> s"
@@ -1874,6 +2028,8 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
 
   // Checkboxes
   preferences.putBool(NVS_CO2_ENABLED,    request->hasArg("co2"));
+  preferences.putBool(NVS_SCD_ASC,        request->hasArg("scd_asc"));   // v3.4
+  preferences.putFloat(NVS_SCD_TOFF,      request->hasArg("scd_toff") ? constrain(request->arg("scd_toff").toFloat(), 0.0f, 20.0f) : 4.0f);  // v3.4
   preferences.putBool(NVS_DUST_ENABLED,   request->hasArg("dust"));
   preferences.putBool(NVS_MOV2_ENABLED,   request->hasArg("mov2"));
   preferences.putBool(NVS_TSTAT_ENABLED,  request->hasArg("tstat"));
@@ -1977,6 +2133,22 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
       "<a href='/settings' style='color:#336699;'>← Terug naar Settings</a>"
       "</h2>"
       "<script>setTimeout(()=>location.href='/settings',2500);</script>");
+  });
+
+  // v3.4: SCD41 kalibreren in buitenlucht (FRC 425 ppm) — uitgevoerd in loop(), niet hier
+  server.on("/scd_frc", HTTP_GET, [](AsyncWebServerRequest *request) {
+    crumbW(CW_OTHER);
+    const char* msg;
+    if (!co2_enabled)        msg = "SCD41 staat uit in de instellingen.";
+    else if (!scd_ok)        msg = "SCD41 antwoordt niet: kalibratie niet mogelijk.";
+    else if (millis() - scd_started_ms < 180000UL) msg = "Nog geen 3 minuten aan het meten: wacht even en probeer opnieuw.";
+    else { scd_frc_requested = true; msg = "Kalibratie gestart. Resultaat over enkele seconden in Diagnose."; }
+    char page[400];
+    snprintf(page, sizeof(page),
+      "<h2 style='text-align:center;padding:30px;color:#336699;'>%s<br><br>"
+      "<a href='/settings' style='color:#336699;'>&larr; Terug naar Settings</a></h2>"
+      "<script>setTimeout(()=>location.href='/settings',4000);</script>", msg);
+    request->send(200, "text/html; charset=utf-8", page);
   });
 
 
@@ -2236,6 +2408,7 @@ void loop() {
   } else {
     heating_on = (room_temp < (effective_setpoint - 0.5f)) ? 1 : 0;  // Anti-condens altijd actief
   }
+  if (ap_mode_active) heating_on = 0;   // v3.4: in AP-mode geen metingen → ook geen verwarmingsvraag
 
   // v2.4 FIX 5: Rescan DS18B20 vanuit loop() (async-safe — delay(750) is hier WDT-safe)
   if (rescan_ds_requested) {
@@ -2244,6 +2417,16 @@ void loop() {
     scanDS18B20();
     readDS18B20temps();
     Serial.printf("[RESCAN] DS18B20: %d sensor(s) gevonden\n", ds_count);
+  }
+
+  // v3.4: SCD41 — elke 5 s kijken of er een nieuwe meting is; kalibratie op vraag
+  if (co2_enabled) {
+    crumbL(CL_CO2);
+    if (scd_frc_requested) {
+      scd_frc_requested = false;
+      scdForcedRecalibration();
+    }
+    scdPoll();
   }
 
   crumbL(CL_IDLE);
@@ -2275,6 +2458,9 @@ void loop() {
 
 
 
+  // v3.4: geen sensormetingen in AP-mode (eerste installatie: /settings moet vlot reageren)
+  if (ap_mode_active) return;
+
   // Sensoren
   crumbL(CL_DHT);
   humi = dht.readHumidity();
@@ -2287,8 +2473,7 @@ void loop() {
   light_ldr = scaleLDR(analogRead(LDR_ANALOG));
   crumbL(CL_DUST);
   if (dust_enabled) dust = readDust();  // v1.9: bewaakt — delayMicroseconds blokkeert WDT als sensor niet aanwezig
-  crumbL(CL_CO2);
-  if (co2_enabled) co2 = readCO2();  // v1.7: bewaakt — pulseIn() blokkeert WDT als sensor niet aanwezig
+  // v3.4: CO2 komt van de SCD41 (scdPoll hierboven, elke 5 s)
   dew_alert = (temp_ds < dew) ? 1 : 0;  
   night = (light_ldr > 50) ? 1 : 0;  
   // bed blijft voorlopig hardcoded 0, tot toggle in webserver  
@@ -2355,7 +2540,8 @@ void loop() {
       Serial.printf("Stof                 : %d\n", dust);
     }
     if (co2_enabled) {
-      Serial.printf("CO₂                  : %d ppm\n", co2);
+      Serial.printf("CO₂ (SCD41)          : %d ppm%s\n", co2, scd_ok ? "" : "  (sensor ontbreekt)");
+      Serial.printf("SCD41 temp / vocht   : %.1f °C / %d %%\n", scd_temp, scd_humi);
     }
     Serial.printf("Ventilatie snelheid %%         : %d %%\n", vent_percent);
     Serial.printf("LDR (donker=100)     : %d\n", light_ldr);

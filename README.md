@@ -8,7 +8,7 @@ Room controllers van het Zarlar-thuisautomatiseringssysteem (Zarlardinge): een E
 
 | | |
 |---|---|
-| **Actieve sketch** | **v3.3** (7 nov 2026), zonder Matter, met landingspagina, diagnose en "laatste stap vóór herstart" — map `ESP32_C6_ROOM/` |
+| **Actieve sketch** | **v3.4** (9 nov 2026), zonder Matter, met landingspagina, diagnose, "laatste stap vóór herstart" en **SCD41** (CO2 + temp + vocht via I2C) — map `ESP32_C6_ROOM/` |
 | **Draait op** | room80 (`192.168.0.80`): het TESTROOM-testbord met alle sensoren. Rij R-EETPL op de matrix van het Dashboard |
 | **Board** | ESP32-C6-DevKitM-1 (clone), 32-pin, 16 MB, op het Zarlar shield |
 | **Apple Home** | Via de RPi-bridge (`server.js` + plugin `matterbridge-zarlar`): toestel "Eetplaats" in de woning Zarlardinge. De ESP32 zelf doet geen Matter meer |
@@ -70,7 +70,7 @@ Het menu links (of bovenaan op een gsm) heeft op elke technische pagina een **�
 | `ESP32_C6_ROOM/ESP32_C6_ROOM.ino` | ROOM-sketch (versie in de kop en in `ROOM_VERSION`) |
 | `ESP32_C6_ROOM/landing.h` | Landingspagina `/` (sinds v3.1). Apart bestand zodat de Arduino IDE het JavaScript niet aanpast |
 | `ESP32_C6_ROOM/partitions.csv` | Partitietabel 16 MB (2 × 6 MB app, voor OTA). Wordt automatisch gebruikt omdat hij naast het `.ino`-bestand staat |
-| `bin/ESP32_C6_ROOM_v3.3.ino.bin` | **Klaar om te uploaden** via `/update` (gecompileerd door Claude, zie hieronder). Alleen de laatste versie |
+| `bin/ESP32_C6_ROOM_v3.4.ino.bin` | **Klaar om te uploaden** via `/update` (gecompileerd door Claude, zie hieronder). Alleen de laatste versie |
 | `GoogleScript/ROOM_GoogleScript.gs` | Google Apps Script voor de Sheet "R-ROOMS Log" (37 kolommen A–AK) |
 | `docs/ROOM_STANDAARD.md` | **De ROOM-standaard:** wat er in elke room zit en wat niet. Eerst lezen |
 | `docs/ROOMS_OVERDRACHT.md` | Overdracht voor een nieuw gesprek met Claude: werkwijze, stand, beslissingen, open punten |
@@ -85,7 +85,9 @@ Het menu links (of bovenaan op een gsm) heeft op elke technische pagina een **�
 **Uploaden:**
 1. De eerste keer via de USB-kabel.
 2. Daarna via OTA: *Sketch → Export Compiled Binary*. In `build/esp32.esp32.esp32c6/` staan meerdere `.bin`-bestanden: kies **enkel `ESP32_C6_ROOM.ino.bin`**, niet `.bootloader.bin`, `.partitions.bin` of `.merged.bin`. Upload dat op `http://<ip>/update`; de controller herstart vanzelf.
-3. **Of zonder compileren:** download `bin/ESP32_C6_ROOM_v3.<x>.ino.bin` uit deze repo (knop *Download raw file*) en upload die op `http://<ip>/update`. Gecompileerd met ESP32-core 3.3.12 en de nieuwste versies van de bibliotheken (o.a. ESPAsyncWebServer 3.12.1, AsyncTCP 4.0.0, OneWireNg 0.14.1, Adafruit NeoPixel 1.15.5, DHT 1.4.7).
+3. **Of zonder compileren:** download `bin/ESP32_C6_ROOM_v3.<x>.ino.bin` uit deze repo (knop *Download raw file*) en upload die op `http://<ip>/update`. Gecompileerd met ESP32-core 3.3.12 en de nieuwste versies van de bibliotheken (o.a. ESPAsyncWebServer 3.12.1, AsyncTCP 4.0.0, OneWireNg 0.14.1, Adafruit NeoPixel 1.15.5, DHT 1.4.7, Sensirion I2C SCD4x 1.1.0 + Sensirion Core 0.7.3).
+
+**Bibliotheken voor de Arduino IDE** (sinds v3.4 ook): *Sensirion I2C SCD4x* (installeert *Sensirion Core* mee).
 4. Staat Flash Size per ongeluk op 4 MB (zichtbaar als `FlashSize=4M` in de compile-uitvoer), dan kan de OTA mislukken: eerst op 16 MB zetten en opnieuw exporteren.
 
 **Na een update naar v3.0:** de oude Eetplaats-tegels in de testwoning "Matter Home" verdwijnen. De tegels in Zarlardinge (via de RPi) blijven werken. De testwoning "Matter Home" kan pas weg (Portal Plan AP26) als ook de ECO-boiler geen Matter meer heeft: dat is de laatste ESP32 met Matter.
@@ -106,7 +108,7 @@ Bijgekomen op 5 nov 2026: de **"goodies" van de Sjalay-controller** (v1.8, repo 
 | — | v3.1 | Landingspagina `/` (`landing.h`), technische pagina naar `/advanced` | | ✅ 3/11 |
 | **A. Basis** | v3.2 | Versie en diagnose zichtbaar | alle rooms | ⚠️ 48 u-test niet gehaald: 4 herstarts door de interrupt-watchdog (geheugen in orde) |
 | | v3.3 | **Stabiliteit:** TSL2561 weg + "laatste stap vóór herstart" bewaren (diagnose via OTA) | alle rooms | ✅ room80: 7/11 geflasht, 48 u-test geslaagd (50 u 47 min zonder herstart, geheugen stabiel) |
-| | v3.4 | **SCD41** (CO2 + temp + vocht via I2C) · CO2-PWM weg · geen metingen in AP-mode · **GAS v1.6** — naar voren gehaald 9/11, daarna 24 u-test | B&B, BADK, ZITPL (test op room80) | ⏳ plan |
+| | v3.4 | **SCD41** (CO2 + temp + vocht via I2C) · CO2-PWM weg · geen metingen in AP-mode — naar voren gehaald 9/11, daarna 24 u-test. **GAS v1.6** als aparte stap ná de test (beslist 9/11) | B&B, BADK, ZITPL (test op room80) | ⏳ in de repo 9/11, te flashen + 24 u-test |
 | | v3.5 | WiFi robuuster + mDNS terug | alle rooms | |
 | **B. Functies** | v3.6 | **Temperatuurbewaking** (zoals de Sjalay) + overzicht alle DS18B20's, **maximum 6** (nieuwe keys `an`, `ao`) | alle rooms | |
 | | v3.7 | **Verwarmingslogica zoals de Sjalay:** effectief setpoint, dauwpunt aan/uit, marge −10…+10, instelbare hysterese, minimum setpoint, landingspagina "IST (→ SOLL)" | alle rooms | |
@@ -151,7 +153,7 @@ Sensirion SCD41 op de I2C-bus bij de controller (SDA IO13, SCL IO11, adres 0x62)
 - **Temperatuur en vocht van de SCD41** komen **apart** van die van de DHT22, in de nieuwe keys **`al`** (SCD-temp) en **`am`** (SCD-vocht). De DHT22 blijft vocht en dauwpunt leveren (`e`, `h`); de SCD-waarden zijn extra in de UI en de Sheet.
 - **`/settings`:** SCD41 aan/uit (vervangt "CO2 aan/uit"), **ASC aan/uit** (aan in kamers die gelucht worden, uit in afgesloten ruimtes), **temperatuuroffset**, knop **"kalibreren in buitenlucht"** (FRC op ±425 ppm).
 - **Geen sensormetingen in AP-mode:** `/settings` reageert vlot bij de eerste installatie.
-- **GAS v1.6** (`ROOM_GoogleScript.gs`) samen met v3.4 in gebruik nemen: kolommen voor `aj` (DS4, ontbreekt in v1.5), `ak`, `al`, `am`, `an`, `ao` en `ap`–`as` (generieke I/O, gevuld vanaf v3.9) erbij, Stof (`l`) en Beam (`aa`, `ab`) eruit. Het script leest per key, dus oudere sketches loggen gewoon verder. Daarna `setupHeaders()` één keer uitvoeren en "Implementaties beheren → potlood → nieuwe versie" (nooit een nieuwe implementatie). Oude rijen in de Sheet hebben de oude kolomindeling: archiveren in een apart tabblad.
+- **GAS v1.6** (`ROOM_GoogleScript.gs`) als **aparte stap na de 24 u-test van v3.4** (beslist 9/11), met een eigen GO: kolommen voor `aj` (DS4, ontbreekt in v1.5), `ak`, `al`, `am`, `an`, `ao` en `ap`–`as` (generieke I/O, gevuld vanaf v3.9) erbij, Stof (`l`) en Beam (`aa`, `ab`) eruit. Het script leest per key, dus oudere sketches loggen gewoon verder. Daarna `setupHeaders()` één keer uitvoeren en "Implementaties beheren → potlood → nieuwe versie" (nooit een nieuwe implementatie). Oude rijen in de Sheet hebben de oude kolomindeling: archiveren in een apart tabblad.
 
 ### Fase B — Functies
 
@@ -275,6 +277,7 @@ De vrije pinnen van RoomSense en Option worden algemeen bruikbaar, zonder de ske
 
 | Versie | Datum | Wat |
 |---|---|---|
+| **v3.4** | 9 nov 2026 | SCD41 via I2C (IO13/IO11, Sensirion-bibliotheek, niet-blokkerend: elke 5 s), CO2 via PWM weg (IO18 vrij). Nieuwe keys `al` (SCD-temp) en `am` (SCD-vocht) achteraan; `k` = CO2 van de SCD41. `/settings`: SCD41 aan/uit, ASC, temperatuuroffset, kalibreren in buitenlucht (FRC 425 ppm); Diagnose: SCD41-toestand. Geen sensormetingen (en geen verwarmingsvraag) in AP-mode. 1,21 MB |
 | **v3.3** | 7 nov 2026 | Stabiliteit: TSL2561 volledig weg (bibliotheek, I2C-start, instelling "Zonlicht", UI; key `n` = 0). "Laatste stap" in RTC-geheugen (loop en webserver apart); na een herstart in NVS bewaard en in `/settings` → Diagnose getoond ("Laatste stap ervoor", "Vorige herstarts": laatste drie, met reden en uptime ervoor). Gecompileerd met core 3.3.12: 25 KB kleiner dan v3.2. Geen nieuwe `/json`-keys |
 | **v3.2** | 5 nov 2026 | Versie en diagnose zichtbaar: `ROOM_VERSION` op elke pagina en bij het opstarten; in `/settings` een blok Diagnose (uptime, reden laatste herstart, aantal opstarts, geheugen, WiFi). "Crashteller" heet nu "Lage-heap meldingen". Geen nieuwe `/json`-keys |
 | v3.1 | 3 nov 2026 | Landingspagina `/` (landing.h); technische statuspagina naar `/advanced`; 🏠 in het menu |

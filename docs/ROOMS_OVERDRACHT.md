@@ -50,7 +50,7 @@ Dit document start een **nieuw gesprek met Claude** over de ROOM-sketch en de ov
 
 | Controller | Adres | Sketch | Stand 7/11/2026 |
 |---|---|---|---|
-| **room80** (experimenteerbord, op tafel in de eetplaats) | 192.168.0.80 | ROOM | **v3.3**, geflasht 7/11 ±16:00; **48 u-test geslaagd** (50 u 47 min zonder herstart, heap 67–68 %, grootste blok 239–255 KB). 9/11 18:48 herstart = stroom eraf door FiDel om de **SCD41** (I2C, 3,3 V) aan te sluiten. TSL2561 weg |
+| **room80** (experimenteerbord, op tafel in de eetplaats) | 192.168.0.80 | ROOM | **v3.3**, geflasht 7/11 ±16:00; **v3.4 (SCD41) klaar in `bin/`, te flashen + 24 u-test**; v3.3: **48 u-test geslaagd** (50 u 47 min zonder herstart, heap 67–68 %, grootste blok 239–255 KB). 9/11 18:48 herstart = stroom eraf door FiDel om de **SCD41** (I2C, 3,3 V) aan te sluiten. TSL2561 weg |
 | HVAC (testbord slaapkamer) | 192.168.0.70 | ESP32C6_HVAC | v2.0 |
 | ECO-boiler (bordje slaapkamer) | 192.168.0.71 | ESP32-C6_ECO-boiler | v2.0 |
 | Smart Energy (bordje slaapkamer) | 192.168.0.73 · `smart-energy.local` | ESP32_C6_ENERGY | v1.30 (6/11), 48 u-test loopt |
@@ -68,7 +68,7 @@ Dit document start een **nieuw gesprek met Claude** over de ROOM-sketch en de ov
 
 ## 4. ROOM-sketch: stand en plan
 
-**Versies:** v3.0 Matter weg · v3.1 landingspagina · v3.2 versie + Diagnose in `/settings` · **v3.3** (7/11, geflasht ±16:00): TSL2561 weg, "laatste stap vóór herstart" in Diagnose. Eerste opstart na de OTA had nog geen stap (v3.2 noteerde er geen); "Lage-heap meldingen" gewist.
+**Versies:** v3.0 Matter weg · v3.1 landingspagina · v3.2 versie + Diagnose in `/settings` · **v3.4** (9/11): SCD41 via I2C, keys `al`/`am` · **v3.3** (7/11, geflasht ±16:00): TSL2561 weg, "laatste stap vóór herstart" in Diagnose. Eerste opstart na de OTA had nog geen stap (v3.2 noteerde er geen); "Lage-heap meldingen" gewist.
 
 **48 u-test v3.2 (5/11 21:45 → 7/11 15:05): niet gehaald.** 4 herstarts (6/11 17:10 na 19,4 u; 7/11 06:31 na 13,3 u; 07:16; 07:29), reden **"Watchdog (interrupt)"**. Geheugen in orde (grootste blok 239–247 KB, laagste 225–228 KB), RSSI −54…−62 dBm. Verdachten: **defecte TSL2561** (I2C), DHT22-uitlezing (zet interrupts uit), NeoPixel + WiFi. "Lage-heap meldingen 59" is een oude teller in NVS.
 
@@ -79,7 +79,7 @@ Dit document start een **nieuw gesprek met Claude** over de ROOM-sketch en de ov
 | Versie | Wat |
 |---|---|
 | **v3.3** | Stabiliteit: TSL2561 weg, laatste stap vóór herstart. **Geflasht 7/11, 48 u-test geslaagd (9/11)** |
-| **v3.4** | **SCD41** (keys `al`/`am`), CO2-PWM weg, GAS v1.6 (+ kolommen `aj`, `ak`, `an`, `ao`, `ap`–`as`). **Naar voren gehaald 9/11** (sensor zit al op room80); daarna **24 u-test** |
+| **v3.4** | **In de repo 9/11.** **SCD41** (keys `al`/`am`), CO2-PWM weg; GAS v1.6 als aparte stap ná de 24 u-test (beslist 9/11) (+ kolommen `aj`, `ak`, `an`, `ao`, `ap`–`as`). **Naar voren gehaald 9/11** (sensor zit al op room80); daarna **24 u-test** |
 | v3.5 | WiFi robuuster (geen modemslaap, periodiek opnieuw verbinden) + mDNS `<kamer>.local` (zoals S-ENERGY v1.30) |
 | v3.6 | Temperatuurbewaking zoals de Sjalay; max 6 DS18B20's (keys `an`, `ao`) |
 | v3.7 | Verwarmingslogica zoals de Sjalay (key `ak`; dauwpuntbeveiliging ook bij Thuis + thermostaatcontact) → B&B live |
@@ -90,7 +90,7 @@ Dit document start een **nieuw gesprek met Claude** over de ROOM-sketch en de ov
 
 **Beslist:** `ak` loggen (5/11) · dauwpuntbeveiliging ook bij Thuis + thermostaat (5/11) · max 6 DS18B20's (5/11) · keys `ap`–`as` en `/set_gp` (7/11) · TSL2561 nooit meer op een room, wel op ACCESS/OUTSIDE (7/11) · SCD41 naar voren als v3.4, met 24 u-test (9/11).
 
-**`/json`-keys ROOM** (v3.3): a uptime · b heating_on · c setpoint · d tstat · e temp DHT · f temp DS primair · g vent % · h vocht · i dauwpunt · j dauwpunt-alert · k CO2 · l stof · m LDR · n zon (altijd 0 sinds v3.3) · o nacht · p bed · q/r/s RGB · t pixels aan · u pixelmodus · v thuis · w/x MOV1/2 triggers · y/z MOV1/2 licht · aa/ab beam · ac RSSI · ad heap % · ae grootste blok · af laagste heap · ag DS-aantal · ah–aj extra DS 2–4. Gepland: al/am (v3.4), an/ao (v3.6), ak (v3.7), ap–as (v3.9). Dashboard en Portal gebruiken ag–aj niet; GAS v1.5 logt ag–ai, niet aj.
+**`/json`-keys ROOM** (v3.3): a uptime · b heating_on · c setpoint · d tstat · e temp DHT · f temp DS primair · g vent % · h vocht · i dauwpunt · j dauwpunt-alert · k CO2 · l stof · m LDR · n zon (altijd 0 sinds v3.3) · o nacht · p bed · q/r/s RGB · t pixels aan · u pixelmodus · v thuis · w/x MOV1/2 triggers · y/z MOV1/2 licht · aa/ab beam · ac RSSI · ad heap % · ae grootste blok · af laagste heap · ag DS-aantal · ah–aj extra DS 2–4 · al/am SCD41 temp/vocht (sinds v3.4, altijd achteraan). Gepland: an/ao (v3.6), ak (v3.7), ap–as (v3.9). Dashboard en Portal gebruiken ag–aj niet; GAS v1.5 logt ag–ai, niet aj.
 
 ## 5. Hardware
 
@@ -119,6 +119,6 @@ Standaard: [`ROOM_STANDAARD.md`](ROOM_STANDAARD.md). Ombouw: [`aansluitingen.md`
 
 - **Compileren (FiDel):** ESP32C6 Dev Module, **Flash 16 MB**, Partition Custom (`partitions.csv` in de sketchmap). JavaScript altijd in een `.h`-bestand.
 - **OTA:** enkel `<sketch>.ino.bin` uploaden via `http://<ip>/update`. De partitietabel kan niet via OTA veranderen.
-- **Compileren in de Claude-sessie** (werkte op 7/11): `arduino-cli` 1.3.1 van GitHub-releases; ESP32-index `package_esp32_index.json` van de GitHub-release 3.3.12 (espressif.github.io en downloads.arduino.cc zijn niet bereikbaar), ingekort tot `esp-rv32`, `esptool_py` en `esp32c6-libs` en als `file://`-index gebruikt; bibliotheken via `git clone` (ESP32Async/ESPAsyncWebServer + AsyncTCP, adafruit DHT + Adafruit_Sensor + NeoPixel, pstolarz/OneWireNg); `--build-property runtime.tools.ctags.path=` naar een lege `ctags` (de ROOM-sketch heeft geen automatische prototypes nodig). FQBN `esp32:esp32:esp32c6:FlashSize=16M,PartitionScheme=custom,CDCOnBoot=cdc`.
+- **Compileren in de Claude-sessie** (werkte op 7/11): `arduino-cli` 1.3.1 van GitHub-releases; ESP32-index `package_esp32_index.json` van de GitHub-release 3.3.12 (espressif.github.io en downloads.arduino.cc zijn niet bereikbaar), ingekort tot `esp-rv32`, `esptool_py` en `esp32c6-libs` en als `file://`-index gebruikt; bibliotheken via `git clone` (ESP32Async/ESPAsyncWebServer + AsyncTCP, adafruit DHT + Adafruit_Sensor + NeoPixel, pstolarz/OneWireNg, Sensirion/arduino-i2c-scd4x + Sensirion/arduino-core); `--build-property runtime.tools.ctags.path=` naar een lege `ctags` (de ROOM-sketch heeft geen automatische prototypes nodig). FQBN `esp32:esp32:esp32c6:FlashSize=16M,PartitionScheme=custom,CDCOnBoot=cdc`.
 - **RPi:** `ssh fidel@192.168.0.50 'bash ~/update.sh'` voor wat al in de repo staat; vanaf de Mac `bash ~/deploy.sh "omschrijving"`.
 - **Google Apps Script:** "Implementaties beheren → potlood → nieuwe versie", nooit "nieuwe implementatie". Na kolomwijzigingen `setupHeaders()` één keer uitvoeren.
