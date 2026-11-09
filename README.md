@@ -8,7 +8,7 @@ Room controllers van het Zarlar-thuisautomatiseringssysteem (Zarlardinge): een E
 
 | | |
 |---|---|
-| **Actieve sketch** | **v3.4.1** (9 nov 2026), zonder Matter, met landingspagina, diagnose, "laatste stap vóór herstart" en **SCD41** (CO2 + temp + vocht via I2C) — map `ESP32_C6_ROOM/` |
+| **Actieve sketch** | **v3.4.2** (9 nov 2026), zonder Matter, met landingspagina, diagnose, "laatste stap vóór herstart" en **SCD41** (CO2 + temp + vocht via I2C) — map `ESP32_C6_ROOM/` |
 | **Draait op** | room80 (`192.168.0.80`): het TESTROOM-testbord met alle sensoren. Rij R-EETPL op de matrix van het Dashboard |
 | **Board** | ESP32-C6-DevKitM-1 (clone), 32-pin, 16 MB, op het Zarlar shield |
 | **Apple Home** | Via de RPi-bridge (`server.js` + plugin `matterbridge-zarlar`): toestel "Eetplaats" in de woning Zarlardinge. De ESP32 zelf doet geen Matter meer |
@@ -70,7 +70,7 @@ Het menu links (of bovenaan op een gsm) heeft op elke technische pagina een **�
 | `ESP32_C6_ROOM/ESP32_C6_ROOM.ino` | ROOM-sketch (versie in de kop en in `ROOM_VERSION`) |
 | `ESP32_C6_ROOM/landing.h` | Landingspagina `/` (sinds v3.1). Apart bestand zodat de Arduino IDE het JavaScript niet aanpast |
 | `ESP32_C6_ROOM/partitions.csv` | Partitietabel 16 MB (2 × 6 MB app, voor OTA). Wordt automatisch gebruikt omdat hij naast het `.ino`-bestand staat |
-| `bin/ESP32_C6_ROOM_v3.4.1.ino.bin` | **Klaar om te uploaden** via `/update` (gecompileerd door Claude, zie hieronder). Alleen de laatste versie |
+| `bin/ESP32_C6_ROOM_v3.4.2.ino.bin` | **Klaar om te uploaden** via `/update` (gecompileerd door Claude, zie hieronder). Alleen de laatste versie |
 | `GoogleScript/ROOM_GoogleScript.gs` | Google Apps Script voor de Sheet "R-ROOMS Log" (37 kolommen A–AK) |
 | `docs/ROOM_STANDAARD.md` | **De ROOM-standaard:** wat er in elke room zit en wat niet. Eerst lezen |
 | `docs/ROOMS_OVERDRACHT.md` | Overdracht voor een nieuw gesprek met Claude: werkwijze, stand, beslissingen, open punten |
@@ -80,7 +80,9 @@ Het menu links (of bovenaan op een gsm) heeft op elke technische pagina een **�
 
 ## Compileren en uploaden
 
-**Arduino IDE:** board **ESP32C6 Dev Module** · Flash Size **16 MB** · Partition Scheme: `partitions.csv` in de schetsmap (wordt automatisch gebruikt) · USB CDC On Boot **Enabled** · Core Debug Level **None**.
+**Arduino IDE:** board **ESP32C6 Dev Module** · Flash Size **16 MB** · Partition Scheme: `partitions.csv` in de schetsmap (wordt automatisch gebruikt) · USB CDC On Boot **Disabled** (sinds v3.4.2; met Enabled geeft de sketch een foutmelding) · Core Debug Level **None**.
+
+**USB-poorten van de devkit (sinds v3.4.2):** voeding, flashen en seriële monitor (115200 baud) via de USB-C-poort **"UART"**. De poort **"USB"** niet gebruiken: die zit op IO12/IO13, en die pinnen gebruikt het shield (IO13 = I2C SDA, IO12 = stof-LED, later GP1).
 
 **Uploaden:**
 1. De eerste keer via de USB-kabel.
@@ -277,6 +279,7 @@ De vrije pinnen van RoomSense en Option worden algemeen bruikbaar, zonder de ske
 
 | Versie | Datum | Wat |
 |---|---|---|
+| **v3.4.2** | 9 nov 2026 | **I2C op IO13 werkt:** IO12/IO13 zijn op de ESP32-C6 de ingebouwde USB (D−/D+); die hield IO13 vast, waardoor de SCD41 (en vroeger de TSL2561) nooit antwoordde. Nu gecompileerd met USB CDC On Boot = Disabled en bij het opstarten de USB-functie van IO12/IO13 uitgeschakeld. Serieel en flashen via de poort "UART". Shield ongewijzigd |
 | **v3.4.1** | 9 nov 2026 | Diagnose SCD41: bij "ontbreekt" toont `/settings` → Diagnose de mislukte stap, de foutmelding van de bibliotheek en een **I2C-scan** (welke adressen antwoorden). Aanleiding: SCD41 op room80 antwoordde niet na de flash van v3.4. Verder ongewijzigd |
 | **v3.4** | 9 nov 2026 | SCD41 via I2C (IO13/IO11, Sensirion-bibliotheek, niet-blokkerend: elke 5 s), CO2 via PWM weg (IO18 vrij). Nieuwe keys `al` (SCD-temp) en `am` (SCD-vocht) achteraan; `k` = CO2 van de SCD41. `/settings`: SCD41 aan/uit, ASC, temperatuuroffset, kalibreren in buitenlucht (FRC 425 ppm); Diagnose: SCD41-toestand. Geen sensormetingen (en geen verwarmingsvraag) in AP-mode. 1,21 MB |
 | **v3.3** | 7 nov 2026 | Stabiliteit: TSL2561 volledig weg (bibliotheek, I2C-start, instelling "Zonlicht", UI; key `n` = 0). "Laatste stap" in RTC-geheugen (loop en webserver apart); na een herstart in NVS bewaard en in `/settings` → Diagnose getoond ("Laatste stap ervoor", "Vorige herstarts": laatste drie, met reden en uptime ervoor). Gecompileerd met core 3.3.12: 25 KB kleiner dan v3.2. Geen nieuwe `/json`-keys |

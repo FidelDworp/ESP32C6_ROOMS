@@ -16,7 +16,8 @@ Wat per room verschilt, is een **instelling** in `/settings` (opgeslagen in NVS)
 | Sensorbox | **RoomSense** op **3,3 V** (shield-jumper Sense pin 8 op 3V3): DS18B20, DHT22, PIR (AM312), LDR |
 | Optielijn | **Option**-kabel: levert 5 V (pin 1) én 3V3 (pin 8) |
 | Pixel-line | Pixels en Powerpixels (zie §1.3) |
-| I2C-bus | Bij de controller, SDA IO13 / SCL IO11, 3,3 V |
+| I2C-bus | Bij de controller, SDA IO13 / SCL IO11, 3,3 V. Pull-ups 3,3 kΩ op het shield |
+| USB van de devkit | **Alleen de poort "UART"** (voeding, flashen, seriële monitor). IO12/IO13 zijn de ingebouwde USB (D−/D+); de ROOM-sketch schakelt die USB uit en gebruikt ze als gewone pinnen. Compileren met **USB CDC On Boot = Disabled** (sinds v3.4.2, 9/11) |
 
 **Gouden regel: een ESP32-pin ziet nooit meer dan 3,3 V.** De voeding van een sensor mag 5 V zijn, het signaal niet. Elke ader meten vóór aansluiten ([`aansluitingen.md`](aansluitingen.md) §4.3).
 

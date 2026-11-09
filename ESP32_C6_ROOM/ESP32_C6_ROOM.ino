@@ -1,10 +1,20 @@
-// ESP32-C6 ROOM v3.4.1 — 9 nov 2026 — zonder Matter
+// ESP32-C6 ROOM v3.4.2 — 9 nov 2026 — zonder Matter
 // Zarlar thuisautomatisering — Room controller (Apple Home via de RPi-bridge, niet meer via Matter op de ESP32)
 // Filip Delannoy — Zarlardinge (BE)
+//
+// ARDUINO IDE (sinds v3.4.2): Tools → USB CDC On Boot = **Disabled**. Seriële monitor en flashen via de
+//   USB-C-poort "UART" van de devkit (115200 baud). De poort "USB" (IO12/IO13) wordt niet meer gebruikt.
 //
 // PARTITIETABEL: Compileer met "partitions.csv" in de schetsmap (Custom partition scheme):
 //   nvs (20 KB), otadata (8 KB), app0 (6 MB), app1 (6 MB), spiffs (~4 MB)
 //
+// v3.4.2 (9nov26): I2C OP IO13 WERKT. Oorzaak "SCD41 ontbreekt" (en vroeger de "defecte" TSL2561): IO12 en IO13
+//                 zijn op de ESP32-C6 de datalijnen D-/D+ van de ingebouwde USB (USB-serieel/JTAG). Die
+//                 hield IO13 vast, zodat I2C er niet op kon. Het shield blijft zoals het is (SDA IO13, SCL IO11):
+//                 (1) compileren met USB CDC On Boot = Disabled → Serial = UART0 = USB-C-poort "UART";
+//                 (2) bij het opstarten de USB-functie van IO12/IO13 uitschakelen (pad + pull-ups), zodat het
+//                 gewone pinnen zijn (IO13 = SDA, IO12 = stof-LED, later GP1). Compileren met CDC aan geeft
+//                 nu een foutmelding. Voeding, flashen en seriële monitor via de poort "UART".
 // v3.4.1 (9nov26): DIAGNOSE SCD41. Als de SCD41 niet antwoordt, toont /settings → Diagnose nu (1) bij welke
 //                 stap het misliep, met de foutmelding van de Sensirion-bibliotheek, en (2) een I2C-scan:
 //                 welke adressen op IO13/IO11 antwoorden (0x62 = SCD41). Zo is zonder seriële kabel te zien of
@@ -89,8 +99,21 @@
 #include <esp_attr.h>        // v3.3: RTC_NOINIT_ATTR voor "laatste stap"
 #include <Wire.h>             // v3.4: I2C voor de SCD41
 #include <SensirionI2cScd4x.h> // v3.4: bibliotheek "Sensirion I2C SCD4x" (+ "Sensirion Core")
+#include "hal/usb_serial_jtag_ll.h"  // v3.4.2: USB-functie van IO12/IO13 uitschakelen
 
-#define ROOM_VERSION "v3.4.1"  // v3.2: enige plaats met het versienummer
+// v3.4.2: IO12/IO13 (USB D-/D+) zijn op het shield gewone pinnen (IO13 = I2C SDA). Met USB CDC aan kan dat niet.
+#if ARDUINO_USB_CDC_ON_BOOT
+#error "ROOM v3.4.2+: zet in de Arduino IDE Tools -> USB CDC On Boot op Disabled (seriele monitor via de poort UART)"
+#endif
+
+// v3.4.2: maak IO12/IO13 los van de ingebouwde USB-PHY (pad uit, interne pull-ups uit)
+void releaseUsbPins() {
+  usb_serial_jtag_pull_override_vals_t none = {};   // dp_pu = dp_pd = dm_pu = dm_pd = false
+  usb_serial_jtag_ll_phy_enable_pull_override(&none);
+  usb_serial_jtag_ll_phy_enable_pad(false);
+}
+
+#define ROOM_VERSION "v3.4.2"  // v3.2: enige plaats met het versienummer
 
 // v3.2: reden van de laatste herstart, leesbaar
 esp_reset_reason_t boot_reason = ESP_RST_UNKNOWN;
@@ -807,6 +830,7 @@ const char* getFormattedDateTime() {
 
 void setup() {
   Serial.begin(115200);
+  releaseUsbPins();   // v3.4.2: IO12/IO13 vrij voor het shield (IO13 = I2C SDA)
   delay(1500);
   while (Serial.available()) Serial.read();  // flush
   // v3.2: versie, reden herstart en opstartteller

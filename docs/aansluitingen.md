@@ -135,6 +135,7 @@ De LED-modules buiten (24 V / 300 mA) hebben een stuuringang van 0–5 V. Met 3,
 
 | # | Taak | Status |
 |---|---|---|
+| S00 | **IO13 (SDA) is ook USB D+** van de ESP32-C6 (IO12 = D−). De ROOM-sketch schakelt de ingebouwde USB uit (v3.4.2); devkit voeden, flashen en serieel lezen via de USB-C-poort **"UART"**, nooit via "USB". | ✅ 9/11 |
 | S0 | **Pull-ups:** het Zarlar shield v2.0 heeft al **3,3 kΩ** pull-ups van SDA en SCL naar 3V3 (FiDel, 9/11). Samen met de pull-ups op het GY-SCD41-printje is dat ruim voldoende bij 100 kHz; geen extra weerstanden nodig. | ✅ |
 | S1 | **Draadkleuren doormeten** van het meegeleverde kabeltje (op de print: SDA – SCL – GND – VCC). Niet vertrouwen op rood = VCC. VCC op **3,3 V**. | |
 | S2 | **Elke sensor een kwartier in buitenlucht.** Hij hoort rond **420–430 ppm** te lezen. Zo niet: **geforceerde kalibratie (FRC)** in buitenlucht. | |
