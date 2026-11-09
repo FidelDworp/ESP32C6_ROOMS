@@ -94,7 +94,9 @@ Het menu links (of bovenaan op een gsm) heeft op elke technische pagina een **�
 
 Dit is de sketch voor **alle** rooms: ze vervangt stap voor stap de Photons. **Beslist 5 nov 2026: eerst de functies** die nodig zijn om de rooms over te zetten (de B&B eerst), daarna pas de pagina's herwerken. **Wat er in een room zit (en wat niet): [`docs/ROOM_STANDAARD.md`](docs/ROOM_STANDAARD.md)** (vastgelegd 6 nov 2026). Ombouw per room: [`docs/aansluitingen.md`](docs/aansluitingen.md).
 
-Bijgekomen op 5 nov 2026: de **"goodies" van de Sjalay-controller** (v1.8, repo `SJALAY-YSERMONDE`): temperatuurbewaking, de volledige verwarmings- en dauwpuntlogica, instelbare hysterese en een overzicht van alle DS18B20's (v3.5 en v3.6).
+Bijgekomen op 5 nov 2026: de **"goodies" van de Sjalay-controller** (v1.8, repo `SJALAY-YSERMONDE`): temperatuurbewaking, de volledige verwarmings- en dauwpuntlogica, instelbare hysterese en een overzicht van alle DS18B20's (v3.6 en v3.7).
+
+**Planning aangepast op 9 nov 2026:** de SCD41 zit al op room80, dus hij komt naar voren als **v3.4** (was v3.7). WiFi + mDNS schuift naar v3.5, temperatuurbewaking naar v3.6, verwarmingslogica naar v3.7. Na v3.4 volstaat een **24 u-test** (beslist 9/11).
 
 **Spelregels:** één versie per stap · code pas na GO · na elke flash 48 u testen (Sheet: geheugen en herstarts) · `/json`-keys en bedieningsadressen blijven gelijk, tenzij uitdrukkelijk afgesproken (Dashboard, Portal, RPi-bridge en Sheet hangen ervan af) · README en versiekop bij elke stap bijwerken.
 
@@ -104,10 +106,10 @@ Bijgekomen op 5 nov 2026: de **"goodies" van de Sjalay-controller** (v1.8, repo 
 | — | v3.1 | Landingspagina `/` (`landing.h`), technische pagina naar `/advanced` | | ✅ 3/11 |
 | **A. Basis** | v3.2 | Versie en diagnose zichtbaar | alle rooms | ⚠️ 48 u-test niet gehaald: 4 herstarts door de interrupt-watchdog (geheugen in orde) |
 | | v3.3 | **Stabiliteit:** TSL2561 weg + "laatste stap vóór herstart" bewaren (diagnose via OTA) | alle rooms | ✅ room80: 7/11 geflasht, 48 u-test geslaagd (50 u 47 min zonder herstart, geheugen stabiel) |
-| | v3.4 | WiFi robuuster + mDNS terug | alle rooms | |
-| **B. Functies** | v3.5 | **Temperatuurbewaking** (zoals de Sjalay) + overzicht alle DS18B20's, **maximum 6** (nieuwe keys `an`, `ao`) | alle rooms | |
-| | v3.6 | **Verwarmingslogica zoals de Sjalay:** effectief setpoint, dauwpunt aan/uit, marge −10…+10, instelbare hysterese, minimum setpoint, landingspagina "IST (→ SOLL)" | alle rooms | |
-| | v3.7 | **SCD41** (CO2 + temp + vocht via I2C) · CO2-PWM weg · geen metingen in AP-mode · **GAS v1.6** | B&B, BADK, ZITPL | |
+| | v3.4 | **SCD41** (CO2 + temp + vocht via I2C) · CO2-PWM weg · geen metingen in AP-mode · **GAS v1.6** — naar voren gehaald 9/11, daarna 24 u-test | B&B, BADK, ZITPL (test op room80) | ⏳ plan |
+| | v3.5 | WiFi robuuster + mDNS terug | alle rooms | |
+| **B. Functies** | v3.6 | **Temperatuurbewaking** (zoals de Sjalay) + overzicht alle DS18B20's, **maximum 6** (nieuwe keys `an`, `ao`) | alle rooms | |
+| | v3.7 | **Verwarmingslogica zoals de Sjalay:** effectief setpoint, dauwpunt aan/uit, marge −10…+10, instelbare hysterese, minimum setpoint, landingspagina "IST (→ SOLL)" | alle rooms | |
 | | → | **B&B gaat live** | B&B | |
 | | v3.8 | **Opruimen:** stofsensor en lichtstraal volledig weg, ook hun `/json`-keys | alle rooms | |
 | | v3.9 | **Generieke I/O** GP1–GP4 op de vrije pinnen van RoomSense en Option | alle rooms | |
@@ -125,11 +127,11 @@ Alle nieuwe keys komen **achteraan**; bestaande keys blijven ongewijzigd, op `l`
 
 | Key | Inhoud | Sinds | In de Sheet |
 |---|---|---|---|
-| `an` | DS18B20 nr. 5 (°C) | v3.5 | ja (vanaf GAS v1.6) |
-| `ao` | DS18B20 nr. 6 (°C) | v3.5 | ja (vanaf GAS v1.6) |
-| `ak` | Effectief setpoint (°C, 1 decimaal) = het echte doel na dauwpuntcorrectie | v3.6 | ja (vanaf GAS v1.6) |
-| `al` | SCD41-temperatuur (°C) | v3.7 | ja |
-| `am` | SCD41-vochtigheid (%) | v3.7 | ja |
+| `an` | DS18B20 nr. 5 (°C) | v3.6 | ja (vanaf GAS v1.6) |
+| `ao` | DS18B20 nr. 6 (°C) | v3.6 | ja (vanaf GAS v1.6) |
+| `ak` | Effectief setpoint (°C, 1 decimaal) = het echte doel na dauwpuntcorrectie | v3.7 | ja (vanaf GAS v1.6) |
+| `al` | SCD41-temperatuur (°C) | v3.4 | ja |
+| `am` | SCD41-vochtigheid (%) | v3.4 | ja |
 | `ap`–`as` | Generieke I/O GP1–GP4: 0/1 (digitaal), 0–100 % (analoog of PWM), leeg als de pin uit staat | v3.9 | ja (kolommen al in GAS v1.6) — beslist 7/11 |
 
 ### Fase A — Basis
@@ -138,11 +140,22 @@ Alle nieuwe keys komen **achteraan**; bestaande keys blijven ongewijzigd, op `l`
 |---|---|---|
 | v3.2 | **Versie en diagnose zichtbaar:** één `#define ROOM_VERSION`, getoond op elke pagina, in `/settings` en bij het opstarten. In `/settings` ook uptime, reden van de laatste herstart (stroom, software/OTA, crash, watchdog, spanningsdip), aantal opstarts, geheugen en WiFi | Nu is nergens te zien welke versie op een room draait en waarom hij herstartte; bij 8 rooms onmisbaar |
 | v3.3 | **Stabiliteit.** De TSL2561 en zijn code verdwijnen uit de room (de sensor hoort op een ACCESS- of OUTSIDE-controller, zie `docs/ROOM_STANDAARD.md`); key `n` blijft, waarde 0. Na een herstart door watchdog of crash toont `/settings` → Diagnose de **laatste stap** die de sketch uitvoerde (bv. "DHT22 lezen", "pixels tonen", "webpagina /settings"), bewaard in geheugen dat een herstart overleeft. Geen seriële kabel nodig | v3.2 herstartte 4× door de interrupt-watchdog (5–7/11); de defecte TSL2561 op het testbord is de eerste verdachte |
-| v3.4 | **WiFi robuuster:** geen modem-slaap (`WiFi.setSleep(false)`) en periodiek opnieuw verbinden. **mDNS terug:** `<kamer>.local`, enkel na een geldige WiFi-verbinding | Les uit de PWM-test (onbereikbaar in de kelder); rooms vinden op naam |
+| v3.4 | **SCD41** — details hieronder | De sensor zit al op room80 (9/11) |
+| v3.5 | **WiFi robuuster:** geen modem-slaap (`WiFi.setSleep(false)`) en periodiek opnieuw verbinden. **mDNS terug:** `<kamer>.local`, enkel na een geldige WiFi-verbinding | Les uit de PWM-test (onbereikbaar in de kelder); rooms vinden op naam |
+
+#### v3.4 SCD41 (naar voren gehaald 9/11)
+
+Sensirion SCD41 op de I2C-bus bij de controller (SDA IO13, SCL IO11, adres 0x62). Hardware en kalibratie: `docs/aansluitingen.md` §6.1.
+- **Niet-blokkerend:** periodieke meting in de sensor zelf; de sketch leest om de 5 s als er een nieuwe waarde klaarstaat. `pulseIn()`, `readCO2()` en `CO2_PWM` (IO18) verdwijnen. IO18 wordt vrij.
+- **CO2** blijft in `/json` key `k` en stuurt de ventilatie zoals nu (400–800 ppm → 0–100 %).
+- **Temperatuur en vocht van de SCD41** komen **apart** van die van de DHT22, in de nieuwe keys **`al`** (SCD-temp) en **`am`** (SCD-vocht). De DHT22 blijft vocht en dauwpunt leveren (`e`, `h`); de SCD-waarden zijn extra in de UI en de Sheet.
+- **`/settings`:** SCD41 aan/uit (vervangt "CO2 aan/uit"), **ASC aan/uit** (aan in kamers die gelucht worden, uit in afgesloten ruimtes), **temperatuuroffset**, knop **"kalibreren in buitenlucht"** (FRC op ±425 ppm).
+- **Geen sensormetingen in AP-mode:** `/settings` reageert vlot bij de eerste installatie.
+- **GAS v1.6** (`ROOM_GoogleScript.gs`) samen met v3.4 in gebruik nemen: kolommen voor `aj` (DS4, ontbreekt in v1.5), `ak`, `al`, `am`, `an`, `ao` en `ap`–`as` (generieke I/O, gevuld vanaf v3.9) erbij, Stof (`l`) en Beam (`aa`, `ab`) eruit. Het script leest per key, dus oudere sketches loggen gewoon verder. Daarna `setupHeaders()` één keer uitvoeren en "Implementaties beheren → potlood → nieuwe versie" (nooit een nieuwe implementatie). Oude rijen in de Sheet hebben de oude kolomindeling: archiveren in een apart tabblad.
 
 ### Fase B — Functies
 
-#### v3.5 Temperatuurbewaking (zoals de Sjalay v1.4–v1.6)
+#### v3.6 Temperatuurbewaking (zoals de Sjalay v1.4–v1.6)
 
 **Waarom.** Nu valt de ROOM bij een DS18B20-fout zonder meer terug op de DHT22, zonder foutentellers en zonder te kijken hoe oud de laatste DHT22-meting is. Valt de DHT22 weg, dan worden vocht en dauwpunt 0. De verwarmingsvraag kan zo op een verkeerde temperatuur gebaseerd zijn.
 
@@ -165,7 +178,7 @@ Alle nieuwe keys komen **achteraan**; bestaande keys blijven ongewijzigd, op `l`
 | DS18B20 ontbreekt of defect, DHT22 jonger dan 5 min | DHT22 | "DS18B20 defect – DHT22 actief (terugval)" | oranje |
 | Ook de DHT22 te oud of defect | geen | "Beide sensoren defect – verwarming geblokkeerd" | rood |
 
-- Bij "geen betrouwbare sensor" vraagt de room **geen verwarming** (`b` = 0), ook niet via de thermostaat-logica van v3.6.
+- Bij "geen betrouwbare sensor" vraagt de room **geen verwarming** (`b` = 0), ook niet via de thermostaat-logica van v3.7.
 - `/advanced` toont **bron**, **melding** (in kleur), DHT22-status (fouten op rij, totaal, herstarts, leeftijd laatste meting).
 
 **Overzicht alle DS18B20's** (zoals de Sjalay)
@@ -175,14 +188,14 @@ Alle nieuwe keys komen **achteraan**; bestaande keys blijven ongewijzigd, op `l`
 
 **`/json`:** nieuwe keys **`an`, `ao`** (DS18B20 nr. 5 en 6). `e` (DHT22-temp) en `h` (vocht) tonen voortaan de laatste geldige waarde in plaats van 0.
 
-#### v3.6 Verwarmingslogica zoals de Sjalay (v1.4, v1.5, v1.8)
+#### v3.7 Verwarmingslogica zoals de Sjalay (v1.4, v1.5, v1.8)
 
 **Waarom.** Nu: effectief setpoint = max(setpoint, dauwpunt + marge) met een marge van 0,5–5 °C, geen aan/uit, en de verwarming schakelt op een vaste −0,5 °C zonder echte band (kan pendelen rond het setpoint). De landingspagina toont alleen het ingestelde setpoint; de schuifbalk begint vast op 10 °C.
 
 **Regeling** (software-thermostaat)
 - **Effectief setpoint** = dauwpuntbeveiliging aan ? max(setpoint, dauwpunt + marge) : setpoint.
 - **Echte hysterese**: verwarming AAN onder effectief setpoint − hysterese/2, UIT boven effectief setpoint + hysterese/2; ertussen blijft de stand behouden.
-- **Veiligheid, altijd actief:** UIT zodra de kamertemperatuur het maximum (30 °C) bereikt; UIT als er geen betrouwbare kamertemperatuur is (v3.5).
+- **Veiligheid, altijd actief:** UIT zodra de kamertemperatuur het maximum (30 °C) bereikt; UIT als er geen betrouwbare kamertemperatuur is (v3.6).
 
 **ROOM-uitzondering: Thuis + thermostaatcontact.** Staat de room op Thuis en is het thermostaatcontact ingeschakeld, dan volgt `b` de thermostaat aan de muur (zoals nu), **met dauwpuntbeveiliging** (beslist 5/11): `b` = thermostaat vraagt **of** kamer onder dauwpunt + marge (met hysterese), ook als de thermostaat uit staat. Alleen als de dauwpuntbeveiliging aan staat. De veiligheden (30 °C, geen betrouwbare sensor) gaan altijd voor.
 
@@ -205,16 +218,6 @@ Wordt het minimum boven het opgeslagen setpoint gezet, dan wordt het setpoint me
 **`/advanced`:** dauwpunt, effectief setpoint, hysterese (± waarde), bron van de kamertemperatuur.
 
 **`/json`:** nieuwe key **`ak` = effectief setpoint**. `c` blijft het ingestelde setpoint (de schuifbalk), `j` (dauwpunt-alert) blijft zoals hij is (het Dashboard gebruikt hem).
-
-#### v3.7 SCD41
-
-Sensirion SCD41 op de I2C-bus bij de controller (SDA IO13, SCL IO11, adres 0x62). Hardware en kalibratie: `docs/aansluitingen.md` §6.1.
-- **Niet-blokkerend:** periodieke meting in de sensor zelf; de sketch leest om de 5 s als er een nieuwe waarde klaarstaat. `pulseIn()`, `readCO2()` en `CO2_PWM` (IO18) verdwijnen. IO18 wordt vrij.
-- **CO2** blijft in `/json` key `k` en stuurt de ventilatie zoals nu (400–800 ppm → 0–100 %).
-- **Temperatuur en vocht van de SCD41** komen **apart** van die van de DHT22, in de nieuwe keys **`al`** (SCD-temp) en **`am`** (SCD-vocht). De DHT22 blijft vocht en dauwpunt leveren (`e`, `h`); de SCD-waarden zijn extra in de UI en de Sheet.
-- **`/settings`:** SCD41 aan/uit (vervangt "CO2 aan/uit"), **ASC aan/uit** (aan in kamers die gelucht worden, uit in afgesloten ruimtes), **temperatuuroffset**, knop **"kalibreren in buitenlucht"** (FRC op ±425 ppm).
-- **Geen sensormetingen in AP-mode:** `/settings` reageert vlot bij de eerste installatie.
-- **GAS v1.6** (`ROOM_GoogleScript.gs`) samen met v3.7 in gebruik nemen: kolommen voor `aj` (DS4, ontbreekt in v1.5), `ak`, `al`, `am`, `an`, `ao` en `ap`–`as` (generieke I/O, gevuld vanaf v3.9) erbij, Stof (`l`) en Beam (`aa`, `ab`) eruit. Het script leest per key, dus oudere sketches loggen gewoon verder. Daarna `setupHeaders()` één keer uitvoeren en "Implementaties beheren → potlood → nieuwe versie" (nooit een nieuwe implementatie). Oude rijen in de Sheet hebben de oude kolomindeling: archiveren in een apart tabblad.
 
 #### v3.8 Opruimen
 
@@ -265,8 +268,8 @@ De vrije pinnen van RoomSense en Option worden algemeen bruikbaar, zonder de ske
 | # | Vraag | Beslissing |
 |---|---|---|
 | 1 | Effectief setpoint `ak` ook loggen in de Sheet? | **ja** (GAS v1.6) |
-| 2 | Dauwpuntbeveiliging ook bij Thuis + thermostaatcontact? | **ja** (v3.6) |
-| 3 | Maximum aantal DS18B20's per room: 4 of 6? | **6**, nieuwe keys `an`, `ao` (v3.5) |
+| 2 | Dauwpuntbeveiliging ook bij Thuis + thermostaatcontact? | **ja** (v3.7) |
+| 3 | Maximum aantal DS18B20's per room: 4 of 6? | **6**, nieuwe keys `an`, `ao` (v3.6) |
 
 ## Versiegeschiedenis
 
