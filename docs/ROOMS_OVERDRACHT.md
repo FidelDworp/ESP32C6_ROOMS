@@ -50,7 +50,7 @@ Dit document start een **nieuw gesprek met Claude** over de ROOM-sketch en de ov
 
 | Controller | Adres | Sketch | Stand 7/11/2026 |
 |---|---|---|---|
-| **room80** (experimenteerbord, op tafel in de eetplaats) | 192.168.0.80 | ROOM | **v3.3**, geflasht 7/11 ±16:00 (OTA met de .bin uit `bin/`); 48 u-test loopt; defecte TSL2561 losgetrokken |
+| **room80** (experimenteerbord, op tafel in de eetplaats) | 192.168.0.80 | ROOM | **v3.3**, geflasht 7/11 ±16:00; **48 u-test geslaagd** (50 u 47 min zonder herstart, heap 67–68 %, grootste blok 239–255 KB). 9/11 18:48 herstart = stroom eraf door FiDel om de **SCD41** (I2C, 3,3 V) aan te sluiten. TSL2561 weg |
 | HVAC (testbord slaapkamer) | 192.168.0.70 | ESP32C6_HVAC | v2.0 |
 | ECO-boiler (bordje slaapkamer) | 192.168.0.71 | ESP32-C6_ECO-boiler | v2.0 |
 | Smart Energy (bordje slaapkamer) | 192.168.0.73 · `smart-energy.local` | ESP32_C6_ENERGY | v1.30 (6/11), 48 u-test loopt |
@@ -78,7 +78,7 @@ Dit document start een **nieuw gesprek met Claude** over de ROOM-sketch en de ov
 
 | Versie | Wat |
 |---|---|
-| **v3.3** | Stabiliteit: TSL2561 weg, laatste stap vóór herstart. **Geflasht 7/11, 48 u-test loopt** |
+| **v3.3** | Stabiliteit: TSL2561 weg, laatste stap vóór herstart. **Geflasht 7/11, 48 u-test geslaagd (9/11)** |
 | v3.4 | WiFi robuuster (geen modemslaap, periodiek opnieuw verbinden) + mDNS `<kamer>.local` (zoals S-ENERGY v1.30) |
 | v3.5 | Temperatuurbewaking zoals de Sjalay; max 6 DS18B20's (keys `an`, `ao`) |
 | v3.6 | Verwarmingslogica zoals de Sjalay (key `ak`; dauwpuntbeveiliging ook bij Thuis + thermostaatcontact) |
