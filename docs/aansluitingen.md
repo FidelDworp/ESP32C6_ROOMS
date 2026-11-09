@@ -135,6 +135,7 @@ De LED-modules buiten (24 V / 300 mA) hebben een stuuringang van 0–5 V. Met 3,
 
 | # | Taak | Status |
 |---|---|---|
+| S0 | **Pull-ups:** het Zarlar shield v2.0 heeft al **3,3 kΩ** pull-ups van SDA en SCL naar 3V3 (FiDel, 9/11). Samen met de pull-ups op het GY-SCD41-printje is dat ruim voldoende bij 100 kHz; geen extra weerstanden nodig. | ✅ |
 | S1 | **Draadkleuren doormeten** van het meegeleverde kabeltje (op de print: SDA – SCL – GND – VCC). Niet vertrouwen op rood = VCC. VCC op **3,3 V**. | |
 | S2 | **Elke sensor een kwartier in buitenlucht.** Hij hoort rond **420–430 ppm** te lezen. Zo niet: **geforceerde kalibratie (FRC)** in buitenlucht. | |
 | S3 | **ASC per kamer:** automatische kalibratie **aan** in kamers die regelmatig gelucht worden; **uit** in afgesloten ruimtes (slaapkamer), en daar af en toe in buitenlucht kalibreren. Wordt een instelling in `/settings` (ROOM v3.4). | |
