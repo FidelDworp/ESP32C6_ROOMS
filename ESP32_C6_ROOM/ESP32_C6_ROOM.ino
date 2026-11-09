@@ -1,4 +1,4 @@
-// ESP32-C6 ROOM v3.4.2 — 9 nov 2026 — zonder Matter
+// ESP32-C6 ROOM v3.4.3 — 9 nov 2026 — zonder Matter
 // Zarlar thuisautomatisering — Room controller (Apple Home via de RPi-bridge, niet meer via Matter op de ESP32)
 // Filip Delannoy — Zarlardinge (BE)
 //
@@ -8,6 +8,11 @@
 // PARTITIETABEL: Compileer met "partitions.csv" in de schetsmap (Custom partition scheme):
 //   nvs (20 KB), otadata (8 KB), app0 (6 MB), app1 (6 MB), spiffs (~4 MB)
 //
+// v3.4.3 (9nov26): VENTILATIE OP CO2 INSTELBAAR. Was vast 400–800 ppm → 0–100 % (te hevig: 876 ppm gaf al 100 %).
+//                 /settings, rij "Ventilatie (CO2)": "CO2 voor 0 %" (NVS co2_lo, standaard 600 ppm) en "CO2 voor
+//                 100 %" (NVS co2_hi, standaard 1200 ppm), rechtlijnig daartussen. Bovenwaarde minstens 100 ppm boven
+//                 de onderwaarde (gecontroleerd in de browser en bij het opslaan). Zonder geldige CO2-meting geldt
+//                 de schuifbalk, zoals voorheen. /json ongewijzigd (g = ventilatie %).
 // v3.4.2 (9nov26): I2C OP IO13 WERKT. Oorzaak "SCD41 ontbreekt" (en vroeger de "defecte" TSL2561): IO12 en IO13
 //                 zijn op de ESP32-C6 de datalijnen D-/D+ van de ingebouwde USB (USB-serieel/JTAG). Die
 //                 hield IO13 vast, zodat I2C er niet op kon. Het shield blijft zoals het is (SDA IO13, SCL IO11):
@@ -113,7 +118,7 @@ void releaseUsbPins() {
   usb_serial_jtag_ll_phy_enable_pad(false);
 }
 
-#define ROOM_VERSION "v3.4.2"  // v3.2: enige plaats met het versienummer
+#define ROOM_VERSION "v3.4.3"  // v3.2: enige plaats met het versienummer
 
 // v3.2: reden van de laatste herstart, leesbaar
 esp_reset_reason_t boot_reason = ESP_RST_UNKNOWN;
@@ -198,6 +203,8 @@ const char* NVS_WIFI_PASS           = "wifi_password";
 const char* NVS_STATIC_IP           = "static_ip";
 const char* NVS_HEATING_SETPOINT    = "heat_setpoint";
 const char* NVS_VENT_REQUEST        = "vent_request";
+const char* NVS_CO2_LO               = "co2_lo";          // v3.4.3: ppm voor 0 % ventilatie
+const char* NVS_CO2_HI               = "co2_hi";          // v3.4.3: ppm voor 100 % ventilatie
 const char* NVS_DEW_MARGIN          = "dew_margin";
 const char* NVS_HOME_MODE           = "home_mode";
 const char* NVS_LIGHT_THRESHOLD     = "light_thresh";
@@ -257,6 +264,8 @@ char mac_address[20]       = "";              // Voor display in settings
 // Configureerbare defaults
 int heating_setpoint_default = 20;
 int vent_request_default     = 25;  // v2.21: default 0→25%
+int co2_vent_lo              = 600;   // v3.4.3: ppm → 0 % ventilatie
+int co2_vent_hi              = 1200;  // v3.4.3: ppm → 100 % ventilatie
 float dew_safety_margin      = 2.0;
 int home_mode_default        = 0;              // 0 = Weg
 int light_dark_threshold     = 50;
@@ -943,6 +952,8 @@ void setup() {
     
     preferences.putInt(NVS_HEATING_SETPOINT, 20);
     preferences.putInt(NVS_VENT_REQUEST, 25);  // v2.21: default 25%
+    preferences.putInt(NVS_CO2_LO, 600);       // v3.4.3
+    preferences.putInt(NVS_CO2_HI, 1200);      // v3.4.3
     preferences.putFloat(NVS_DEW_MARGIN, 2.0);
     preferences.putInt(NVS_HOME_MODE, 0);
     preferences.putInt(NVS_LIGHT_THRESHOLD, 50);
@@ -983,6 +994,9 @@ void setup() {
   
   heating_setpoint_default = preferences.getInt(NVS_HEATING_SETPOINT, 20);
   vent_request_default     = preferences.getInt(NVS_VENT_REQUEST, 25);  // v2.21: default 25%
+  co2_vent_lo              = constrain(preferences.getInt(NVS_CO2_LO, 600), 400, 2000);   // v3.4.3
+  co2_vent_hi              = constrain(preferences.getInt(NVS_CO2_HI, 1200), 500, 5000);  // v3.4.3
+  if (co2_vent_hi < co2_vent_lo + 100) co2_vent_hi = co2_vent_lo + 100;
   dew_safety_margin        = preferences.getFloat(NVS_DEW_MARGIN, 2.0);
   home_mode_default        = preferences.getInt(NVS_HOME_MODE, 0);
   light_dark_threshold     = preferences.getInt(NVS_LIGHT_THRESHOLD, 50);
@@ -1961,6 +1975,12 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     "<tr><td class=\"lbl\">Vent default %%</td><td class=\"inp\"><input type=\"number\" name=\"vent_req\" min=\"0\" max=\"100\" value=\"%d\"></td></tr>"
     "<tr><td class=\"lbl\">Dew margin (&deg;C)</td><td class=\"inp\"><input type=\"number\" step=\"0.1\" name=\"dew_margin\" min=\"0.5\" max=\"5.0\" value=\"%.1f\"></td></tr>",
     heating_setpoint_default, vent_request_default, dew_safety_margin);
+  // v3.4.3: ventilatie volgens CO2 (rechtlijnig tussen de twee waarden)
+  p->printf("<tr><td class=\"lbl\">Ventilatie (CO&#8322;)</td><td class=\"inp\">"
+    "0 %% bij <input type=\"number\" name=\"co2_lo\" min=\"400\" max=\"2000\" step=\"50\" value=\"%d\" style=\"width:80px;\"> ppm &nbsp; "
+    "100 %% bij <input type=\"number\" name=\"co2_hi\" min=\"500\" max=\"5000\" step=\"50\" value=\"%d\" style=\"width:80px;\"> ppm"
+    "<br><span style=\"font-size:12px;color:#666;\">Standaard 600 / 1200. Buiten &plusmn;420 &middot; goed &lt;800 &middot; aanvaardbaar &plusmn;1000 &middot; bedompt &gt;1400. Zonder CO&#8322;-meting geldt de schuifbalk.</span>"
+    "</td></tr>", co2_vent_lo, co2_vent_hi);
   p->printf("<tr><td class=\"lbl\">Home mode default</td><td class=\"inp\">"
     "<select name=\"home_mode\">"
     "<option value=\"0\" %s>Uit</option>"
@@ -2054,6 +2074,7 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     "const ip=this.static_ip.value.trim();"
     "if(ip&&!/^(\\d{1,3}\\.){3}\\d{1,3}$/.test(ip)){alert('Ongeldig IP!');e.preventDefault();return false;}"
     "if(!this.room_id.value.trim()||!this.wifi_ssid.value.trim()){alert('Room naam en SSID verplicht!');e.preventDefault();return false;}"
+    "if(+this.co2_hi.value<+this.co2_lo.value+100){alert('CO2 voor 100% moet minstens 100 ppm hoger zijn dan CO2 voor 0%.');e.preventDefault();return false;}"
     "return true;};"
     "</script>"
     "</div></div></body></html>"));
@@ -2074,6 +2095,13 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
 
   preferences.putInt(NVS_HEATING_SETPOINT, request->hasArg("heat_sp")        ? request->arg("heat_sp").toInt()        : 20);
   preferences.putInt(NVS_VENT_REQUEST,     request->hasArg("vent_req")        ? request->arg("vent_req").toInt()       : 25);  // v2.21: default 25%
+  {  // v3.4.3: CO2-grenzen voor de ventilatie, bovenwaarde minstens 100 ppm boven de onderwaarde
+    int lo = constrain(request->hasArg("co2_lo") ? request->arg("co2_lo").toInt() : 600, 400, 2000);
+    int hi = constrain(request->hasArg("co2_hi") ? request->arg("co2_hi").toInt() : 1200, 500, 5000);
+    if (hi < lo + 100) hi = lo + 100;
+    preferences.putInt(NVS_CO2_LO, lo);
+    preferences.putInt(NVS_CO2_HI, hi);
+  }
   preferences.putFloat(NVS_DEW_MARGIN,     request->hasArg("dew_margin")      ? request->arg("dew_margin").toFloat()   : 2.0);
   preferences.putInt(NVS_HOME_MODE,        request->hasArg("home_mode")       ? request->arg("home_mode").toInt()      : 0);
   preferences.putInt(NVS_LDR_DARK,        request->hasArg("ldr_dark")        ? request->arg("ldr_dark").toInt()       : 50);
@@ -2550,7 +2578,7 @@ void loop() {
 
   // Ventilation logica — v2.21: CO2-gestuurd als sensor leest, anders slider-waarde bewaren
   if (co2_enabled && co2 > 0) {
-    vent_percent = map(constrain(co2, 400, 800), 400, 800, 0, 100);
+    vent_percent = map(constrain(co2, co2_vent_lo, co2_vent_hi), co2_vent_lo, co2_vent_hi, 0, 100);  // v3.4.3: instelbaar
   }
   // co2 = 0 of uitgeschakeld → vent_percent blijft op slider-waarde
 

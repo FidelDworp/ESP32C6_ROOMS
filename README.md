@@ -8,7 +8,7 @@ Room controllers van het Zarlar-thuisautomatiseringssysteem (Zarlardinge): een E
 
 | | |
 |---|---|
-| **Actieve sketch** | **v3.4.2** (9 nov 2026), zonder Matter, met landingspagina, diagnose, "laatste stap vóór herstart" en **SCD41** (CO2 + temp + vocht via I2C) — map `ESP32_C6_ROOM/` |
+| **Actieve sketch** | **v3.4.3** (9 nov 2026), zonder Matter, met landingspagina, diagnose, "laatste stap vóór herstart" en **SCD41** (CO2 + temp + vocht via I2C) — map `ESP32_C6_ROOM/` |
 | **Draait op** | room80 (`192.168.0.80`): het TESTROOM-testbord met alle sensoren. Rij R-EETPL op de matrix van het Dashboard |
 | **Board** | ESP32-C6-DevKitM-1 (clone), 32-pin, 16 MB, op het Zarlar shield |
 | **Apple Home** | Via de RPi-bridge (`server.js` + plugin `matterbridge-zarlar`): toestel "Eetplaats" in de woning Zarlardinge. De ESP32 zelf doet geen Matter meer |
@@ -70,7 +70,7 @@ Het menu links (of bovenaan op een gsm) heeft op elke technische pagina een **�
 | `ESP32_C6_ROOM/ESP32_C6_ROOM.ino` | ROOM-sketch (versie in de kop en in `ROOM_VERSION`) |
 | `ESP32_C6_ROOM/landing.h` | Landingspagina `/` (sinds v3.1). Apart bestand zodat de Arduino IDE het JavaScript niet aanpast |
 | `ESP32_C6_ROOM/partitions.csv` | Partitietabel 16 MB (2 × 6 MB app, voor OTA). Wordt automatisch gebruikt omdat hij naast het `.ino`-bestand staat |
-| `bin/ESP32_C6_ROOM_v3.4.2.ino.bin` | **Klaar om te uploaden** via `/update` (gecompileerd door Claude, zie hieronder). Alleen de laatste versie |
+| `bin/ESP32_C6_ROOM_v3.4.3.ino.bin` | **Klaar om te uploaden** via `/update` (gecompileerd door Claude, zie hieronder). Alleen de laatste versie |
 | `GoogleScript/ROOM_GoogleScript.gs` | Google Apps Script voor de Sheet "R-ROOMS Log" (37 kolommen A–AK) |
 | `docs/ROOM_STANDAARD.md` | **De ROOM-standaard:** wat er in elke room zit en wat niet. Eerst lezen |
 | `docs/ROOMS_OVERDRACHT.md` | Overdracht voor een nieuw gesprek met Claude: werkwijze, stand, beslissingen, open punten |
@@ -110,7 +110,7 @@ Bijgekomen op 5 nov 2026: de **"goodies" van de Sjalay-controller** (v1.8, repo 
 | — | v3.1 | Landingspagina `/` (`landing.h`), technische pagina naar `/advanced` | | ✅ 3/11 |
 | **A. Basis** | v3.2 | Versie en diagnose zichtbaar | alle rooms | ⚠️ 48 u-test niet gehaald: 4 herstarts door de interrupt-watchdog (geheugen in orde) |
 | | v3.3 | **Stabiliteit:** TSL2561 weg + "laatste stap vóór herstart" bewaren (diagnose via OTA) | alle rooms | ✅ room80: 7/11 geflasht, 48 u-test geslaagd (50 u 47 min zonder herstart, geheugen stabiel) |
-| | v3.4 | **SCD41** (CO2 + temp + vocht via I2C) · CO2-PWM weg · geen metingen in AP-mode — naar voren gehaald 9/11, daarna 24 u-test. **GAS v1.6** als aparte stap ná de test (beslist 9/11) | B&B, BADK, ZITPL (test op room80) | ⏳ v3.4.2 op room80 sinds 9/11 ±20:50, SCD41 ok; 24 u-test loopt |
+| | v3.4 | **SCD41** (CO2 + temp + vocht via I2C) · CO2-PWM weg · geen metingen in AP-mode — naar voren gehaald 9/11, daarna 24 u-test. **GAS v1.6** als aparte stap ná de test (beslist 9/11) | B&B, BADK, ZITPL (test op room80) | ⏳ v3.4.3 in de repo 9/11 (SCD41 ok sinds v3.4.2); te flashen, dan 24 u-test |
 | | v3.5 | WiFi robuuster + mDNS terug | alle rooms | |
 | **B. Functies** | v3.6 | **Temperatuurbewaking** (zoals de Sjalay) + overzicht alle DS18B20's, **maximum 6** (nieuwe keys `an`, `ao`) | alle rooms | |
 | | v3.7 | **Verwarmingslogica zoals de Sjalay:** effectief setpoint, dauwpunt aan/uit, marge −10…+10, instelbare hysterese, minimum setpoint, landingspagina "IST (→ SOLL)" | alle rooms | |
@@ -279,6 +279,7 @@ De vrije pinnen van RoomSense en Option worden algemeen bruikbaar, zonder de ske
 
 | Versie | Datum | Wat |
 |---|---|---|
+| **v3.4.3** | 9 nov 2026 | **Ventilatie op CO2 instelbaar** in `/settings`: "0 % bij" (standaard 600 ppm) en "100 % bij" (standaard 1200 ppm), rechtlijnig daartussen (was vast 400–800 ppm: te hevig). NVS `co2_lo`, `co2_hi`. `/json` ongewijzigd |
 | **v3.4.2** | 9 nov 2026 | **I2C op IO13 werkt:** IO12/IO13 zijn op de ESP32-C6 de ingebouwde USB (D−/D+); die hield IO13 vast, waardoor de SCD41 (en vroeger de TSL2561) nooit antwoordde. Nu gecompileerd met USB CDC On Boot = Disabled en bij het opstarten de USB-functie van IO12/IO13 uitgeschakeld. Serieel en flashen via de poort "UART". Shield ongewijzigd |
 | **v3.4.1** | 9 nov 2026 | Diagnose SCD41: bij "ontbreekt" toont `/settings` → Diagnose de mislukte stap, de foutmelding van de bibliotheek en een **I2C-scan** (welke adressen antwoorden). Aanleiding: SCD41 op room80 antwoordde niet na de flash van v3.4. Verder ongewijzigd |
 | **v3.4** | 9 nov 2026 | SCD41 via I2C (IO13/IO11, Sensirion-bibliotheek, niet-blokkerend: elke 5 s), CO2 via PWM weg (IO18 vrij). Nieuwe keys `al` (SCD-temp) en `am` (SCD-vocht) achteraan; `k` = CO2 van de SCD41. `/settings`: SCD41 aan/uit, ASC, temperatuuroffset, kalibreren in buitenlucht (FRC 425 ppm); Diagnose: SCD41-toestand. Geen sensormetingen (en geen verwarmingsvraag) in AP-mode. 1,21 MB |
