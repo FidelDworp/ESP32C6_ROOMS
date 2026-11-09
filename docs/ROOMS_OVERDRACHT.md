@@ -80,17 +80,17 @@ Dit document start een **nieuw gesprek met Claude** over de ROOM-sketch en de ov
 |---|---|
 | **v3.3** | Stabiliteit: TSL2561 weg, laatste stap vóór herstart. **Geflasht 7/11, 48 u-test geslaagd (9/11)** |
 | **v3.4** | **In de repo 9/11.** **SCD41** (keys `al`/`am`), CO2-PWM weg; GAS v1.6 als aparte stap ná de 24 u-test (beslist 9/11) (+ kolommen `aj`, `ak`, `an`, `ao`, `ap`–`as`). **Naar voren gehaald 9/11** (sensor zit al op room80); daarna **24 u-test** |
-| v3.5 | WiFi robuuster (geen modemslaap, periodiek opnieuw verbinden) + mDNS `<kamer>.local` (zoals S-ENERGY v1.30) |
-| v3.6 | Temperatuurbewaking zoals de Sjalay; max 6 DS18B20's (keys `an`, `ao`) |
-| v3.7 | Verwarmingslogica zoals de Sjalay (key `ak`; dauwpuntbeveiliging ook bij Thuis + thermostaatcontact) → B&B live |
-| v3.8 | Stofsensor en lichtstraal weg (keys `l`, `aa`, `ab`) |
+| v3.5 | **Opruimen:** stofsensor en lichtstraal weg (keys `l`, `aa`, `ab`) **+ GAS v1.6**, direct na de 24 u-test van v3.4.3 (beslist 9/11) |
+| v3.6 | WiFi robuuster (geen modemslaap, periodiek opnieuw verbinden) + mDNS `<kamer>.local` (zoals S-ENERGY v1.30) |
+| v3.7 | Temperatuurbewaking zoals de Sjalay; max 6 DS18B20's (keys `an`, `ao`) |
+| v3.8 | Verwarmingslogica zoals de Sjalay (key `ak`; dauwpuntbeveiliging ook bij Thuis + thermostaatcontact) → B&B live |
 | v3.9 | Generieke I/O GP1–GP4 (IO12, IO7, IO2 = enige ADC, IO18), keys `ap`–`as`, bediening `/set_gp?n=1..4&v=0..100` |
 | v3.10–v3.12 | Pagina's naar `ota.h`, `advanced.h`, `settings.h` |
 | v3.13 | LDR-schaal 0 = donker, samen met Dashboard en Sheet |
 
-**Beslist:** `ak` loggen (5/11) · dauwpuntbeveiliging ook bij Thuis + thermostaat (5/11) · max 6 DS18B20's (5/11) · keys `ap`–`as` en `/set_gp` (7/11) · TSL2561 nooit meer op een room, wel op ACCESS/OUTSIDE (7/11) · SCD41 naar voren als v3.4, met 24 u-test (9/11).
+**Beslist:** `ak` loggen (5/11) · dauwpuntbeveiliging ook bij Thuis + thermostaat (5/11) · max 6 DS18B20's (5/11) · keys `ap`–`as` en `/set_gp` (7/11) · TSL2561 nooit meer op een room, wel op ACCESS/OUTSIDE (7/11) · SCD41 naar voren als v3.4, met 24 u-test (9/11) · opruimen als v3.5 samen met GAS v1.6 (9/11).
 
-**`/json`-keys ROOM** (v3.3): a uptime · b heating_on · c setpoint · d tstat · e temp DHT · f temp DS primair · g vent % · h vocht · i dauwpunt · j dauwpunt-alert · k CO2 · l stof · m LDR · n zon (altijd 0 sinds v3.3) · o nacht · p bed · q/r/s RGB · t pixels aan · u pixelmodus · v thuis · w/x MOV1/2 triggers · y/z MOV1/2 licht · aa/ab beam · ac RSSI · ad heap % · ae grootste blok · af laagste heap · ag DS-aantal · ah–aj extra DS 2–4 · al/am SCD41 temp/vocht (sinds v3.4, altijd achteraan). Gepland: an/ao (v3.6), ak (v3.7), ap–as (v3.9). Dashboard en Portal gebruiken ag–aj niet; GAS v1.5 logt ag–ai, niet aj.
+**`/json`-keys ROOM** (v3.3): a uptime · b heating_on · c setpoint · d tstat · e temp DHT · f temp DS primair · g vent % · h vocht · i dauwpunt · j dauwpunt-alert · k CO2 · l stof · m LDR · n zon (altijd 0 sinds v3.3) · o nacht · p bed · q/r/s RGB · t pixels aan · u pixelmodus · v thuis · w/x MOV1/2 triggers · y/z MOV1/2 licht · aa/ab beam · ac RSSI · ad heap % · ae grootste blok · af laagste heap · ag DS-aantal · ah–aj extra DS 2–4 · al/am SCD41 temp/vocht (sinds v3.4, altijd achteraan). Gepland: an/ao (v3.7), ak (v3.8), ap–as (v3.9). Dashboard en Portal gebruiken ag–aj niet; GAS v1.5 logt ag–ai, niet aj.
 
 ## 5. Hardware
 
