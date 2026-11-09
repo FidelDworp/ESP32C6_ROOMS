@@ -1,10 +1,14 @@
-// ESP32-C6 ROOM v3.4 — 9 nov 2026 — zonder Matter
+// ESP32-C6 ROOM v3.4.1 — 9 nov 2026 — zonder Matter
 // Zarlar thuisautomatisering — Room controller (Apple Home via de RPi-bridge, niet meer via Matter op de ESP32)
 // Filip Delannoy — Zarlardinge (BE)
 //
 // PARTITIETABEL: Compileer met "partitions.csv" in de schetsmap (Custom partition scheme):
 //   nvs (20 KB), otadata (8 KB), app0 (6 MB), app1 (6 MB), spiffs (~4 MB)
 //
+// v3.4.1 (9nov26): DIAGNOSE SCD41. Als de SCD41 niet antwoordt, toont /settings → Diagnose nu (1) bij welke
+//                 stap het misliep, met de foutmelding van de Sensirion-bibliotheek, en (2) een I2C-scan:
+//                 welke adressen op IO13/IO11 antwoorden (0x62 = SCD41). Zo is zonder seriële kabel te zien of
+//                 het aan de sensor, de draden of de code ligt. Verder niets gewijzigd, /json ongewijzigd.
 // v3.4 (9nov26): SCD41 (CO2 + temperatuur + vocht via I2C), naar voren gehaald in het verbeterplan.
 //                 (1) Bibliotheek "Sensirion I2C SCD4x" (v1.1.0, + "Sensirion Core"). I2C op IO13 (SDA) /
 //                 IO11 (SCL), 100 kHz, adres 0x62 — alleen gestart als de SCD41 aan staat in /settings.
@@ -86,7 +90,7 @@
 #include <Wire.h>             // v3.4: I2C voor de SCD41
 #include <SensirionI2cScd4x.h> // v3.4: bibliotheek "Sensirion I2C SCD4x" (+ "Sensirion Core")
 
-#define ROOM_VERSION "v3.4"  // v3.2: enige plaats met het versienummer
+#define ROOM_VERSION "v3.4.1"  // v3.2: enige plaats met het versienummer
 
 // v3.2: reden van de laatste herstart, leesbaar
 esp_reset_reason_t boot_reason = ESP_RST_UNKNOWN;
@@ -255,6 +259,7 @@ unsigned long scd_last_poll  = 0;
 unsigned long scd_last_try   = 0;  // laatste init-poging
 volatile bool scd_frc_requested = false;  // kalibratie gevraagd via /scd_frc, uitgevoerd in loop()
 char  scd_frc_result[64] = "";
+char  scd_diag[160] = "";        // v3.4.1: stap + foutmelding + I2C-scan bij "ontbreekt"
 float scd_temp = 0.0f;          // al
 int   scd_humi = 0;             // am
 bool dust_enabled  = false;  // v1.9: default false — delayMicroseconds(9680) kan WDT triggeren als sensor niet aanwezig
@@ -547,16 +552,39 @@ void scdClearValues() {
 
 // Start of herstart de sensor: periodieke meting stoppen, ASC en offset (alleen RAM, geen EEPROM-slijtage),
 // serienummer lezen, periodieke meting starten. Duurt ±0,6 s (stopPeriodicMeasurement wacht 500 ms).
+// v3.4.1: I2C-scan (0x08–0x77) → tekst, bv. "0x62" of "geen enkel apparaat"
+void i2cScan(char* out, size_t n) {
+  out[0] = '\0';
+  int found = 0;
+  for (uint8_t a = 0x08; a <= 0x77; a++) {
+    Wire.beginTransmission(a);
+    if (Wire.endTransmission() == 0) {
+      char t[8]; snprintf(t, sizeof(t), "%s0x%02X", found ? " " : "", a);
+      strlcat(out, t, n);
+      found++;
+    }
+  }
+  if (!found) strlcpy(out, "geen enkel apparaat", n);
+}
+
 bool scdInit() {
   scd_last_try = millis();
+  const char* step = "stop";
   scd.wakeUp();                      // geen fout als de sensor al wakker is
-  scd.stopPeriodicMeasurement();     // nodig voor configuratie
-  int16_t err = scd.reinit();
-  if (!err) err = scd.getSerialNumber(scd_serial);
-  if (!err) err = scd.setAutomaticSelfCalibrationEnabled(scd_asc ? 1 : 0);
-  if (!err) err = scd.setTemperatureOffset(scd_toff);
-  if (!err) err = scd.startPeriodicMeasurement();
+  int16_t err = scd.stopPeriodicMeasurement();     // nodig voor configuratie
+  if (!err) { step = "reinit";       err = scd.reinit(); }
+  if (!err) { step = "serienummer";  err = scd.getSerialNumber(scd_serial); }
+  if (!err) { step = "ASC";          err = scd.setAutomaticSelfCalibrationEnabled(scd_asc ? 1 : 0); }
+  if (!err) { step = "offset";       err = scd.setTemperatureOffset(scd_toff); }
+  if (!err) { step = "start meting"; err = scd.startPeriodicMeasurement(); }
   scd_ok = (err == 0);
+  if (scd_ok) {
+    scd_diag[0] = '\0';
+  } else {                           // v3.4.1: waarom niet?
+    char msg[64]; errorToString(err, msg, sizeof(msg));
+    char scan[80]; i2cScan(scan, sizeof(scan));
+    snprintf(scd_diag, sizeof(scd_diag), "stap \"%s\": %s · I2C-scan: %s", step, msg, scan);
+  }
   scd_err_run = 0;
   if (scd_ok) {
     scd_started_ms = millis();
@@ -1860,6 +1888,7 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
         (unsigned long long)scd_serial, scd_errors, scd_asc ? "aan" : "uit", scd_toff);
     } else {
       p->printf("<b style=\"color:#c00\">ontbreekt</b> (geen antwoord op I2C IO13/IO11) &middot; leesfouten %u", scd_errors);
+      if (scd_diag[0]) p->printf("<br><span style=\"font-size:12px;\">%s</span>", scd_diag);  // v3.4.1
     }
     if (scd_frc_result[0]) p->printf("<br>Laatste kalibratie: %s", scd_frc_result);
     p->print(F("</td></tr>"));
