@@ -1,4 +1,4 @@
-// ESP32-C6 ROOM v3.4.4 — 11 nov 2026 — zonder Matter
+// ESP32-C6 ROOM v3.4.5 — 11 nov 2026 — zonder Matter
 // Zarlar thuisautomatisering — Room controller (Apple Home via de RPi-bridge, niet meer via Matter op de ESP32)
 // Filip Delannoy — Zarlardinge (BE)
 //
@@ -8,6 +8,12 @@
 // PARTITIETABEL: Compileer met "partitions.csv" in de schetsmap (Custom partition scheme):
 //   nvs (20 KB), otadata (8 KB), app0 (6 MB), app1 (6 MB), spiffs (~4 MB)
 //
+// v3.4.5 (11nov26): NVS OPRUIMEN. NVS (20 KB) zat praktisch vol (496/630 vakjes; NVS houdt altijd één pagina
+//                 van 126 vrij) → de herstartgeschiedenis (en mogelijk instellingen) konden niet meer bewaard
+//                 worden. Vermoedelijke oorzaak: oude Matter-gegevens van vóór v3.0. Diagnose toont nu per
+//                 naamruimte hoeveel vakjes ze inneemt en welke "niet van deze sketch" zijn. Knop "Ongebruikte
+//                 NVS-gegevens wissen" (met bevestiging) wist alles behalve room-config (instellingen), crash-log
+//                 (diagnose), nvs.* (WiFi), phy en misc; uitgevoerd in loop(), daarna herstart.
 // v3.4.4 (11nov26): HERSTARTS DOOR DE DHT22 OPGELOST + NVS IN DIAGNOSE.
 //                 (1) Herstart 10/11 = "Watchdog (interrupt)" tijdens "DHT22 lezen" (ook v3.2 en de Sjalay).
 //                 Oorzaak: de Adafruit-bibliotheek zet de interrupts uit en wacht dan op 80 flanken met elk een
@@ -103,6 +109,7 @@
 #include "esp_cpu.h"          // v3.4.4: klokteller voor de DHT22-uitlezing
 #include "driver/gpio.h"     // v3.4.4: gpio_get_level
 #include "nvs.h"             // v3.4.4: NVS-bezetting in Diagnose
+struct NvsNs { char name[16]; size_t used; };   // v3.4.5: hier bovenaan (vóór de automatische prototypes)
 #include <OneWireNg_CurrentPlatform.h>  // C6 compatibel (vervangt OneWire + DallasTemperature)
 
 #include <Adafruit_NeoPixel.h>
@@ -131,7 +138,7 @@ void releaseUsbPins() {
   usb_serial_jtag_ll_phy_enable_pad(false);
 }
 
-#define ROOM_VERSION "v3.4.4"  // v3.2: enige plaats met het versienummer
+#define ROOM_VERSION "v3.4.5"  // v3.2: enige plaats met het versienummer
 
 // v3.2: reden van de laatste herstart, leesbaar
 esp_reset_reason_t boot_reason = ESP_RST_UNKNOWN;
@@ -257,6 +264,48 @@ const char* NVS_DS_PRIMARY          = "ds_primary";      // Index van primaire s
 // v3.4.4: eigen DHT22-uitlezing (zie changelog)
 uint32_t dht_reads = 0, dht_fails = 0;   // sinds de opstart
 bool hist_write_failed = false;          // v3.4.4: bewaren herstartgeschiedenis mislukt
+volatile bool nvs_cleanup_requested = false;  // v3.4.5: via /nvs_cleanup, uitgevoerd in loop()
+
+// v3.4.5: naamruimtes die deze sketch (of het systeem) gebruikt — die blijven altijd staan
+bool nvsKeepNamespace(const char* ns) {
+  return !strcmp(ns, "room-config") || !strcmp(ns, "crash-log") ||
+         !strncmp(ns, "nvs.", 4) || !strcmp(ns, "phy") || !strcmp(ns, "misc");
+}
+
+// v3.4.5: overzicht van de naamruimtes in NVS (naam + gebruikte vakjes). Geeft het aantal terug.
+int nvsListNamespaces(NvsNs* out, int max) {
+  int n = 0;
+  nvs_iterator_t it = NULL;
+  esp_err_t res = nvs_entry_find(NVS_DEFAULT_PART_NAME, NULL, NVS_TYPE_ANY, &it);
+  while (res == ESP_OK) {
+    nvs_entry_info_t info;
+    nvs_entry_info(it, &info);
+    bool seen = false;
+    for (int i = 0; i < n; i++) if (!strcmp(out[i].name, info.namespace_name)) { seen = true; break; }
+    if (!seen && n < max) { strlcpy(out[n].name, info.namespace_name, sizeof(out[n].name)); out[n].used = 0; n++; }
+    res = nvs_entry_next(&it);
+  }
+  nvs_release_iterator(it);
+  for (int i = 0; i < n; i++) {
+    nvs_handle_t h;
+    if (nvs_open(out[i].name, NVS_READONLY, &h) == ESP_OK) { nvs_get_used_entry_count(h, &out[i].used); nvs_close(h); }
+  }
+  return n;
+}
+
+// v3.4.5: wis alle naamruimtes die niet van deze sketch zijn (zie nvsKeepNamespace)
+void nvsCleanup() {
+  NvsNs ns[24];
+  int n = nvsListNamespaces(ns, 24);
+  for (int i = 0; i < n; i++) {
+    if (nvsKeepNamespace(ns[i].name)) continue;
+    nvs_handle_t h;
+    if (nvs_open(ns[i].name, NVS_READWRITE, &h) == ESP_OK) {
+      nvs_erase_all(h); nvs_commit(h); nvs_close(h);
+      Serial.printf("[NVS] gewist: %s (%u vakjes)\n", ns[i].name, (unsigned)ns[i].used);
+    }
+  }
+}
 
 // Wacht zolang de lijn op 'level' staat, max. max_us. Geeft de duur in µs terug, of -1 bij time-out.
 static inline int32_t dhtWait(int level, uint32_t max_us, uint32_t cyc_per_us) {
@@ -1998,6 +2047,22 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
         p->print(F("niet leesbaar"));
       }
       if (hist_write_failed) p->print(F("<br><b style=\"color:#c00\">Bewaren van de herstartgeschiedenis mislukt</b> (NVS vol?)"));
+      // v3.4.5: per naamruimte; "vreemd" = niet van deze sketch → kan gewist worden
+      NvsNs ns[24];
+      int n = nvsListNamespaces(ns, 24);
+      size_t foreign = 0;
+      p->print(F("<br><span style=\"font-size:12px;\">"));
+      for (int i = 0; i < n; i++) {
+        bool keep = nvsKeepNamespace(ns[i].name);
+        if (!keep) foreign += ns[i].used;
+        p->printf("%s%s %u%s", i ? " &middot; " : "", ns[i].name, (unsigned)ns[i].used, keep ? "" : " <b style=\"color:#c60\">(ongebruikt)</b>");
+      }
+      p->print(F("</span>"));
+      if (foreign > 0) {
+        p->printf("<br><a href=\"/nvs_cleanup\" onclick=\"return confirm('Ongebruikte NVS-gegevens wissen (%u vakjes)? Instellingen, diagnose en WiFi blijven staan. Daarna herstart de controller.');\" "
+          "style=\"display:inline-block;margin-top:6px;background:#c60;color:#fff;padding:6px 14px;border-radius:5px;text-decoration:none;font-size:13px;\">Ongebruikte NVS-gegevens wissen (%u vakjes)</a>",
+          (unsigned)foreign, (unsigned)foreign);
+      }
       p->print(F("</td></tr>"));
     }
     const char* crashColor = crashCnt > 0 ? "#c00" : "#0a0";
@@ -2286,6 +2351,16 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
       "<script>setTimeout(()=>location.href='/settings',2500);</script>");
   });
 
+  // v3.4.5: ongebruikte NVS-naamruimtes wissen — uitgevoerd in loop(), daarna herstart
+  server.on("/nvs_cleanup", HTTP_GET, [](AsyncWebServerRequest *request) {
+    crumbW(CW_OTHER);
+    nvs_cleanup_requested = true;
+    request->send(200, "text/html; charset=utf-8",
+      "<h2 style='text-align:center;padding:30px;color:#336699;'>NVS wordt opgeruimd, daarna herstart de controller.<br><br>"
+      "<a href='/settings' style='color:#336699;'>&larr; Terug naar Settings</a></h2>"
+      "<script>setTimeout(()=>location.href='/settings',12000);</script>");
+  });
+
   // v3.4: SCD41 kalibreren in buitenlucht (FRC 425 ppm) — uitgevoerd in loop(), niet hier
   server.on("/scd_frc", HTTP_GET, [](AsyncWebServerRequest *request) {
     crumbW(CW_OTHER);
@@ -2568,6 +2643,15 @@ void loop() {
     scanDS18B20();
     readDS18B20temps();
     Serial.printf("[RESCAN] DS18B20: %d sensor(s) gevonden\n", ds_count);
+  }
+
+  // v3.4.5: NVS opruimen op vraag, daarna herstart
+  if (nvs_cleanup_requested) {
+    nvs_cleanup_requested = false;
+    crumbL(CL_NVS);
+    nvsCleanup();
+    delay(500);
+    ESP.restart();
   }
 
   // v3.4: SCD41 — elke 5 s kijken of er een nieuwe meting is; kalibratie op vraag
