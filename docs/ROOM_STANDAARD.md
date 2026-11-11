@@ -1,6 +1,6 @@
 # ROOM-standaard (Zarlar)
 
-*v1.1 — 7 nov 2026 — Filip Delannoy (FiDel). Status: **vastgelegd**.*
+*v1.2 — 11 nov 2026 — Filip Delannoy (FiDel). Status: **vastgelegd**.*
 
 Elke room in Zarlardinge gebruikt **dezelfde hardware en dezelfde sketch**. Dit document legt vast wat er in een room zit en wat er bewust níet in zit. Het is het antwoord op jaren "feature creep": telkens een nieuwe sensor op de Photon-rooms deed hard- en software steeds verder uit elkaar lopen.
 
