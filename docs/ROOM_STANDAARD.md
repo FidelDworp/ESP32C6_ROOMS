@@ -83,6 +83,8 @@ De pinnen van RoomSense en Option die niet voor de kern of de opties gebruikt wo
 
 - **Eén sketch** `ESP32_C6_ROOM` voor alle rooms. Kamernaam, pixels, sensoren en opties stel je per controller in via `/settings`.
 - **Vast IP** per room, Apple Home via de RPi-bridge (geen Matter op de ESP32), logging via het Dashboard naar de Sheet (de room post zelf niets).
+- **DHT22 met de eigen uitlezing** van de sketch (sinds v3.4.4), nooit met de Adafruit-DHT-bibliotheek (interrupt-watchdog-herstarts).
+- **Overstap van een oude sketch (met Matter):** na de eerste flash in `/settings` → Diagnose eenmaal "Ongebruikte NVS-gegevens wissen" (sinds v3.4.5).
 - **`/json` is een contract.** Keys en bedieningsadressen wijzigen alleen met uitdrukkelijk akkoord (Dashboard, Portal, RPi-bridge en Sheet hangen ervan af). Nieuwe keys komen achteraan.
 - **Een uitgeschakelde optie** voert geen code uit, maar haar `/json`-keys blijven bestaan (waarde 0 of leeg). Zo blijven Dashboard en Sheet voor elke room gelijk.
 
@@ -97,5 +99,6 @@ De pinnen van RoomSense en Option die niet voor de kern of de opties gebruikt wo
 
 | Versie | Datum | Wat |
 |---|---|---|
+| v1.2 | 11 nov 2026 | USB-poort "UART" i.p.v. "USB" (IO12/IO13 = USB D−/D+), I2C-pull-ups 3,3 kΩ op het shield, DHT22 alleen met de eigen uitlezing, NVS opruimen na overstap van Matter |
 | v1.1 | 7 nov 2026 | TSL2561 nooit meer op een room, wel op ACCESS of OUTSIDE |
 | v1.0 | 6 nov 2026 | Eerste vastgelegde standaard: kern, opties, Powerpixels, generieke I/O (GP1–GP4), buitenlicht en klok naar eigen controllers, TSL2561 uit de room |
