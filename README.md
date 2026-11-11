@@ -8,7 +8,7 @@ Room controllers van het Zarlar-thuisautomatiseringssysteem (Zarlardinge): een E
 
 | | |
 |---|---|
-| **Actieve sketch** | **v3.4.3** (9 nov 2026), zonder Matter, met landingspagina, diagnose, "laatste stap vóór herstart" en **SCD41** (CO2 + temp + vocht via I2C) — map `ESP32_C6_ROOM/` |
+| **Actieve sketch** | **v3.4.4** (11 nov 2026), zonder Matter, met landingspagina, diagnose, "laatste stap vóór herstart" en **SCD41** (CO2 + temp + vocht via I2C) — map `ESP32_C6_ROOM/` |
 | **Draait op** | room80 (`192.168.0.80`): het TESTROOM-testbord met alle sensoren. Rij R-EETPL op de matrix van het Dashboard |
 | **Board** | ESP32-C6-DevKitM-1 (clone), 32-pin, 16 MB, op het Zarlar shield |
 | **Apple Home** | Via de RPi-bridge (`server.js` + plugin `matterbridge-zarlar`): toestel "Eetplaats" in de woning Zarlardinge. De ESP32 zelf doet geen Matter meer |
@@ -70,7 +70,7 @@ Het menu links (of bovenaan op een gsm) heeft op elke technische pagina een **�
 | `ESP32_C6_ROOM/ESP32_C6_ROOM.ino` | ROOM-sketch (versie in de kop en in `ROOM_VERSION`) |
 | `ESP32_C6_ROOM/landing.h` | Landingspagina `/` (sinds v3.1). Apart bestand zodat de Arduino IDE het JavaScript niet aanpast |
 | `ESP32_C6_ROOM/partitions.csv` | Partitietabel 16 MB (2 × 6 MB app, voor OTA). Wordt automatisch gebruikt omdat hij naast het `.ino`-bestand staat |
-| `bin/ESP32_C6_ROOM_v3.4.3.ino.bin` | **Klaar om te uploaden** via `/update` (gecompileerd door Claude, zie hieronder). Alleen de laatste versie |
+| `bin/ESP32_C6_ROOM_v3.4.4.ino.bin` | **Klaar om te uploaden** via `/update` (gecompileerd door Claude, zie hieronder). Alleen de laatste versie |
 | `GoogleScript/ROOM_GoogleScript.gs` | Google Apps Script voor de Sheet "R-ROOMS Log" (37 kolommen A–AK) |
 | `docs/ROOM_STANDAARD.md` | **De ROOM-standaard:** wat er in elke room zit en wat niet. Eerst lezen |
 | `docs/ROOMS_OVERDRACHT.md` | Overdracht voor een nieuw gesprek met Claude: werkwijze, stand, beslissingen, open punten |
@@ -87,7 +87,7 @@ Het menu links (of bovenaan op een gsm) heeft op elke technische pagina een **�
 **Uploaden:**
 1. De eerste keer via de USB-kabel.
 2. Daarna via OTA: *Sketch → Export Compiled Binary*. In `build/esp32.esp32.esp32c6/` staan meerdere `.bin`-bestanden: kies **enkel `ESP32_C6_ROOM.ino.bin`**, niet `.bootloader.bin`, `.partitions.bin` of `.merged.bin`. Upload dat op `http://<ip>/update`; de controller herstart vanzelf.
-3. **Of zonder compileren:** download `bin/ESP32_C6_ROOM_v3.<x>.ino.bin` uit deze repo (knop *Download raw file*) en upload die op `http://<ip>/update`. Gecompileerd met ESP32-core 3.3.12 en de nieuwste versies van de bibliotheken (o.a. ESPAsyncWebServer 3.12.1, AsyncTCP 4.0.0, OneWireNg 0.14.1, Adafruit NeoPixel 1.15.5, DHT 1.4.7, Sensirion I2C SCD4x 1.1.0 + Sensirion Core 0.7.3).
+3. **Of zonder compileren:** download `bin/ESP32_C6_ROOM_v3.<x>.ino.bin` uit deze repo (knop *Download raw file*) en upload die op `http://<ip>/update`. Gecompileerd met ESP32-core 3.3.12 en de nieuwste versies van de bibliotheken (o.a. ESPAsyncWebServer 3.12.1, AsyncTCP 4.0.0, OneWireNg 0.14.1, Adafruit NeoPixel 1.15.5, Sensirion I2C SCD4x 1.1.0 + Sensirion Core 0.7.3).
 
 **Bibliotheken voor de Arduino IDE** (sinds v3.4 ook): *Sensirion I2C SCD4x* (installeert *Sensirion Core* mee).
 4. Staat Flash Size per ongeluk op 4 MB (zichtbaar als `FlashSize=4M` in de compile-uitvoer), dan kan de OTA mislukken: eerst op 16 MB zetten en opnieuw exporteren.
@@ -110,7 +110,7 @@ Bijgekomen op 5 nov 2026: de **"goodies" van de Sjalay-controller** (v1.8, repo 
 | — | v3.1 | Landingspagina `/` (`landing.h`), technische pagina naar `/advanced` | | ✅ 3/11 |
 | **A. Basis** | v3.2 | Versie en diagnose zichtbaar | alle rooms | ⚠️ 48 u-test niet gehaald: 4 herstarts door de interrupt-watchdog (geheugen in orde) |
 | | v3.3 | **Stabiliteit:** TSL2561 weg + "laatste stap vóór herstart" bewaren (diagnose via OTA) | alle rooms | ✅ room80: 7/11 geflasht, 48 u-test geslaagd (50 u 47 min zonder herstart, geheugen stabiel) |
-| | v3.4 | **SCD41** (CO2 + temp + vocht via I2C) · CO2-PWM weg · geen metingen in AP-mode — naar voren gehaald 9/11, daarna 24 u-test. **GAS v1.6** als aparte stap ná de test (beslist 9/11) | B&B, BADK, ZITPL (test op room80) | ⏳ v3.4.3 in de repo 9/11 (SCD41 ok sinds v3.4.2); te flashen, dan 24 u-test |
+| | v3.4 | **SCD41** (CO2 + temp + vocht via I2C) · CO2-PWM weg · geen metingen in AP-mode — naar voren gehaald 9/11, daarna 24 u-test. **GAS v1.6** als aparte stap ná de test (beslist 9/11) | B&B, BADK, ZITPL (test op room80) | ⚠️ v3.4.3: 24 u-test niet gehaald (3 herstarts 10/11, laatste = interrupt-watchdog tijdens "DHT22 lezen") → ⏳ **v3.4.4** (eigen DHT22-uitlezing) te flashen, dan 24 u-test |
 | | v3.5 | **Opruimen:** stofsensor en lichtstraal volledig weg, ook hun `/json`-keys | alle rooms | samen met **GAS v1.6**, na de 24 u-test van v3.4.3 |
 | | v3.6 | WiFi robuuster + mDNS terug | alle rooms | |
 | **B. Functies** | v3.7 | **Temperatuurbewaking** (zoals de Sjalay) + overzicht alle DS18B20's, **maximum 6** (nieuwe keys `an`, `ao`) | alle rooms | |
@@ -280,6 +280,7 @@ De vrije pinnen van RoomSense en Option worden algemeen bruikbaar, zonder de ske
 
 | Versie | Datum | Wat |
 |---|---|---|
+| **v3.4.4** | 11 nov 2026 | **Herstarts opgelost:** eigen DHT22-uitlezing in plaats van de Adafruit-bibliotheek (die zette de interrupts seconden uit als de sensor haperde → interrupt-watchdog; bewezen door "laatste stap: DHT22 lezen" op 10/11). Max. 100 µs per flank, stoppen bij de eerste fout, interrupts hooguit ±5 ms uit. Diagnose: DHT22-fouten en NVS-bezetting, melding als het bewaren van de herstartgeschiedenis mislukt. Bibliotheek DHT niet meer nodig |
 | **v3.4.3** | 9 nov 2026 | **Ventilatie op CO2 instelbaar** in `/settings`: "0 % bij" (standaard 600 ppm) en "100 % bij" (standaard 1200 ppm), rechtlijnig daartussen (was vast 400–800 ppm: te hevig). NVS `co2_lo`, `co2_hi`. `/json` ongewijzigd |
 | **v3.4.2** | 9 nov 2026 | **I2C op IO13 werkt:** IO12/IO13 zijn op de ESP32-C6 de ingebouwde USB (D−/D+); die hield IO13 vast, waardoor de SCD41 (en vroeger de TSL2561) nooit antwoordde. Nu gecompileerd met USB CDC On Boot = Disabled en bij het opstarten de USB-functie van IO12/IO13 uitgeschakeld. Serieel en flashen via de poort "UART". Shield ongewijzigd |
 | **v3.4.1** | 9 nov 2026 | Diagnose SCD41: bij "ontbreekt" toont `/settings` → Diagnose de mislukte stap, de foutmelding van de bibliotheek en een **I2C-scan** (welke adressen antwoorden). Aanleiding: SCD41 op room80 antwoordde niet na de flash van v3.4. Verder ongewijzigd |

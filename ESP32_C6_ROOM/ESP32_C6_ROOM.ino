@@ -1,4 +1,4 @@
-// ESP32-C6 ROOM v3.4.3 — 9 nov 2026 — zonder Matter
+// ESP32-C6 ROOM v3.4.4 — 11 nov 2026 — zonder Matter
 // Zarlar thuisautomatisering — Room controller (Apple Home via de RPi-bridge, niet meer via Matter op de ESP32)
 // Filip Delannoy — Zarlardinge (BE)
 //
@@ -8,6 +8,17 @@
 // PARTITIETABEL: Compileer met "partitions.csv" in de schetsmap (Custom partition scheme):
 //   nvs (20 KB), otadata (8 KB), app0 (6 MB), app1 (6 MB), spiffs (~4 MB)
 //
+// v3.4.4 (11nov26): HERSTARTS DOOR DE DHT22 OPGELOST + NVS IN DIAGNOSE.
+//                 (1) Herstart 10/11 = "Watchdog (interrupt)" tijdens "DHT22 lezen" (ook v3.2 en de Sjalay).
+//                 Oorzaak: de Adafruit-bibliotheek zet de interrupts uit en wacht dan op 80 flanken met elk een
+//                 time-out van 160 000 lussen, zonder te stoppen bij een fout. Hapert de sensor, dan staan de
+//                 interrupts seconden uit; de C6 heeft maar één kern → interrupt-watchdog (300 ms) → herstart.
+//                 Nu een eigen uitlezing (dhtRead22): tijd via de klokteller van de processor, max. 100 µs per
+//                 flank, stoppen bij de eerste fout → interrupts hooguit ±5 ms uit. Bibliotheek DHT niet meer
+//                 nodig. Mislukte meting = NaN, zoals voorheen; /json en Sheet ongewijzigd.
+//                 Diagnose: "DHT22" met aantal mislukte metingen sinds de opstart.
+//                 (2) "Vorige herstarts" bleef op #19 staan: het bewaren in NVS mislukte. Diagnose toont nu de
+//                 NVS-bezetting (vakjes gebruikt/vrij) en een melding als het bewaren van de geschiedenis mislukt.
 // v3.4.3 (9nov26): VENTILATIE OP CO2 INSTELBAAR. Was vast 400–800 ppm → 0–100 % (te hevig: 876 ppm gaf al 100 %).
 //                 /settings, rij "Ventilatie (CO2)": "CO2 voor 0 %" (NVS co2_lo, standaard 600 ppm) en "CO2 voor
 //                 100 %" (NVS co2_hi, standaard 1200 ppm), rechtlijnig daartussen. Bovenwaarde minstens 100 ppm boven
@@ -89,7 +100,9 @@
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <Update.h>           // Voor OTA update
-#include <DHT.h>
+#include "esp_cpu.h"          // v3.4.4: klokteller voor de DHT22-uitlezing
+#include "driver/gpio.h"     // v3.4.4: gpio_get_level
+#include "nvs.h"             // v3.4.4: NVS-bezetting in Diagnose
 #include <OneWireNg_CurrentPlatform.h>  // C6 compatibel (vervangt OneWire + DallasTemperature)
 
 #include <Adafruit_NeoPixel.h>
@@ -118,7 +131,7 @@ void releaseUsbPins() {
   usb_serial_jtag_ll_phy_enable_pad(false);
 }
 
-#define ROOM_VERSION "v3.4.3"  // v3.2: enige plaats met het versienummer
+#define ROOM_VERSION "v3.4.4"  // v3.2: enige plaats met het versienummer
 
 // v3.2: reden van de laatste herstart, leesbaar
 esp_reset_reason_t boot_reason = ESP_RST_UNKNOWN;
@@ -241,7 +254,50 @@ const char* NVS_DS_PRIMARY          = "ds_primary";      // Index van primaire s
 
 
 // Initialize libraries
-DHT dht(DHT_PIN, DHT22);
+// v3.4.4: eigen DHT22-uitlezing (zie changelog)
+uint32_t dht_reads = 0, dht_fails = 0;   // sinds de opstart
+bool hist_write_failed = false;          // v3.4.4: bewaren herstartgeschiedenis mislukt
+
+// Wacht zolang de lijn op 'level' staat, max. max_us. Geeft de duur in µs terug, of -1 bij time-out.
+static inline int32_t dhtWait(int level, uint32_t max_us, uint32_t cyc_per_us) {
+  uint32_t start = esp_cpu_get_cycle_count();
+  uint32_t limit = max_us * cyc_per_us;
+  while (gpio_get_level((gpio_num_t)DHT_PIN) == level) {
+    if (esp_cpu_get_cycle_count() - start > limit) return -1;
+  }
+  return (int32_t)((esp_cpu_get_cycle_count() - start) / cyc_per_us);
+}
+
+// Lees de DHT22: true + t (°C) en h (%) bij een geldige meting, anders false en NaN.
+bool dhtRead22(float &t, float &h) {
+  t = NAN; h = NAN;
+  dht_reads++;
+  uint8_t d[5] = {0, 0, 0, 0, 0};
+  uint32_t cpu = getCpuFrequencyMhz();
+  // Startsignaal: 1,1 ms laag (DHT22 vraagt ≥ 1 ms), dan loslaten (pull-up)
+  pinMode(DHT_PIN, OUTPUT);
+  digitalWrite(DHT_PIN, LOW);
+  delayMicroseconds(1100);
+  pinMode(DHT_PIN, INPUT_PULLUP);
+  bool ok = true;
+  noInterrupts();                                    // tijdkritisch: hooguit ±5 ms
+  if (dhtWait(1, 200, cpu) < 0) ok = false;          // sensor trekt laag na 20–40 µs
+  if (ok && dhtWait(0, 100, cpu) < 0) ok = false;    // antwoord laag ±80 µs
+  if (ok && dhtWait(1, 100, cpu) < 0) ok = false;    // antwoord hoog ±80 µs
+  for (int i = 0; ok && i < 40; i++) {
+    if (dhtWait(0, 100, cpu) < 0) { ok = false; break; }       // ±50 µs laag
+    int32_t hi = dhtWait(1, 100, cpu);                          // 26–28 µs = 0, ±70 µs = 1
+    if (hi < 0) { ok = false; break; }
+    d[i / 8] <<= 1;
+    if (hi > 40) d[i / 8] |= 1;
+  }
+  interrupts();
+  if (!ok || (uint8_t)(d[0] + d[1] + d[2] + d[3]) != d[4]) { dht_fails++; return false; }
+  h = ((d[0] << 8) | d[1]) * 0.1f;
+  float tt = (((d[2] & 0x7F) << 8) | d[3]) * 0.1f;
+  t = (d[2] & 0x80) ? -tt : tt;
+  return true;
+}
 OneWireNg_CurrentPlatform ow(ONE_WIRE_PIN, false);  // C6 compatibel 1-Wire
 Adafruit_NeoPixel pixels(1, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);  // Tijdelijk 1, lengte wordt in setup() gezet
 AsyncWebServer server(80);
@@ -878,7 +934,7 @@ void setup() {
     String h1 = histPrefs.getString("h1", ""), h2 = histPrefs.getString("h2", "");
     histPrefs.putString("h3", h2);
     histPrefs.putString("h2", h1);
-    histPrefs.putString("h1", entry);
+    if (histPrefs.putString("h1", entry) == 0) hist_write_failed = true;   // v3.4.4: bewaren mislukt?
     histPrefs.end();
     Serial.printf("[BOOT] Laatste stap vóór de herstart: %s\n", crumbs_ok ? prev_step : "(niet gekend: stroom aan of eerste start)");
     crumb_magic = CRUMB_MAGIC;
@@ -1112,7 +1168,7 @@ void setup() {
   pinMode(TSTAT_PIN, INPUT_PULLUP);
   pinMode(OPTION_LDR, INPUT);
 
-  dht.begin();
+  pinMode(DHT_PIN, INPUT_PULLUP);   // v3.4.4: eigen DHT22-uitlezing (geen dht.begin() meer)
   // v3.4: I2C + SCD41, alleen als de sensor aan staat in /settings
   if (co2_enabled) {
     Wire.begin(I2C_SDA, I2C_SCL);
@@ -1930,6 +1986,20 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     }
     if (scd_frc_result[0]) p->printf("<br>Laatste kalibratie: %s", scd_frc_result);
     p->print(F("</td></tr>"));
+    // v3.4.4: DHT22-uitlezing en NVS-bezetting
+    p->printf("<tr><td class=\"lbl\">DHT22</td><td class=\"inp\">%u mislukte metingen van %u sinds de opstart</td></tr>",
+              dht_fails, dht_reads);
+    {
+      nvs_stats_t st;
+      p->print(F("<tr><td class=\"lbl\">NVS-geheugen</td><td class=\"inp\">"));
+      if (nvs_get_stats(NULL, &st) == ESP_OK) {
+        p->printf("%u van %u vakjes gebruikt &middot; %u vrij", (unsigned)st.used_entries, (unsigned)st.total_entries, (unsigned)st.free_entries);
+      } else {
+        p->print(F("niet leesbaar"));
+      }
+      if (hist_write_failed) p->print(F("<br><b style=\"color:#c00\">Bewaren van de herstartgeschiedenis mislukt</b> (NVS vol?)"));
+      p->print(F("</td></tr>"));
+    }
     const char* crashColor = crashCnt > 0 ? "#c00" : "#0a0";
     p->printf("<tr><td class=\"lbl\">Lage-heap meldingen</td><td class=\"inp\"><b style=\"color:%s\">%u</b>", crashColor, crashCnt);
     if (crashCnt > 0) {
@@ -2544,8 +2614,7 @@ void loop() {
 
   // Sensoren
   crumbL(CL_DHT);
-  humi = dht.readHumidity();
-  temp_dht = dht.readTemperature();
+  dhtRead22(temp_dht, humi);   // v3.4.4: eigen uitlezing, interrupts hooguit ±5 ms uit; fout → NaN
   dew = calculateDewPoint(temp_dht, humi);
   crumbL(CL_DS);
   readDS18B20temps();  // Lees alle DS18B20 sensoren → temp_ds = primaire sensor
