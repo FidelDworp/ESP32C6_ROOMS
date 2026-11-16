@@ -117,9 +117,30 @@ Regels: [`ROOM_STANDAARD.md`](ROOM_STANDAARD.md) §1.3. Bron: tekening "ACCESS1-
 | 4–15 | gewone pixels | 12 pixels | — |
 
 - Volgorde op de pixel-line: ESP32 (IO4) → Powerpixel 0 → 1 → 2 → 3 → 12 pixels. Volgorde nakijken bij het bedraden.
-- **Fix-draadjes** van de vier Powerpixels naar **+12V**, niet naar +5V (de tekening van 16/11 toont nog +5V: aanpassen).
+- **Fix-draadjes** van de vier Powerpixels naar **+12V**, via een eigen zekering van 2 A in het 12V-blok (tekening "ACCESS3-BB bedrading", 16/11).
 - De drie schakelaars zijn van Maarten (twee aan de ingangsdeur, één in de badkamer). Ze blijven, parallel over OUT–GND: bewust compromis, faalveilig zonder domotica. De controller ziet niet dat een lamp via de schakelaar brandt.
 - Bewust **niet** gedaan: de R/G/B-kanalen van één Powerpixel over drie kringen verdelen (zou 2 printjes besparen, maar maakt de sketch complexer).
+- Hetzelfde bord draagt ook **ACCESS3** (buitenlicht N2, E1, E2 via twee 24V-drivers van 350 mA). Open: zone "LEDs-?" bij de bovenste driver nog op te zoeken.
+
+**Veilig monteren en opstarten (B&B + ACCESS3)**
+
+*Montage (alles spanningsloos)*
+1. Voedingen uit, 230V los.
+2. Alles monteren en bedraden, elke draad aan beide uiteinden labelen. **Zekeringen nog niet** plaatsen, **ESP32's nog niet** insteken.
+3. Weerstand meten: +5V, +12V en +24V elk tegen GND én tegen elkaar: nergens kortsluiting.
+4. Polariteit nakijken van lampen, LED-drivers en LED-paren buiten.
+
+*Opstarten, stap voor stap*
+
+5. Voedingen aan, nog zonder zekeringen: 5V, 12V en 24V meten op de rails.
+6. **5V-zekering** plaatsen: 5V meten op de aansluitingen van beide ESP32's en op de pixel-line.
+7. Met de ESP32 nog los **elke signaalader** op Sense en Option meten (PIR's, reeds, PWM-ingang van de drivers): nergens boven **3,3 V**.
+8. **Zekering van het fix-draadje** plaatsen: 12V meten op het fix-draadje van elke Powerpixel. Er mag geen lamp branden.
+9. **Lampzekeringen één voor één** plaatsen: geen lamp mag vanzelf aangaan. Per kring Maartens schakelaar testen (aan/uit).
+10. **24V-zekering** plaatsen: kijken hoe de drivers reageren zonder PWM-signaal (uit, of volledig aan?).
+11. **Eerst de B&B-ESP32** insteken, `/json` nakijken. In `/settings` het aantal pixels op 16, elke Powerpixel apart testen in wit: 0 Badkamer, 1 Bedlampjes, 2 Tafelspot, 3 Spanlampen.
+12. Dan de **ACCESS3-ESP32** insteken: PWM E, PWM N2, PIR E, PIR N2 en de reeds testen.
+13. Na **een uur** branden: Powerpixels, drivers en zekeringhouders voelen, schroefklemmen natrekken.
 
 ## 5. ACCESS: buffer 3,3 → 5 V voor de LED-modules
 
