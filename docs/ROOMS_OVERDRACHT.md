@@ -1,6 +1,6 @@
 # Overdracht — project "Rooms" (Zarlar ROOM-controllers)
 
-*Stand 7 november 2026, 16:30 — Filip Delannoy (FiDel), Zarlardinge (BE)*
+*Stand 16 november 2026 — Filip Delannoy (FiDel), Zarlardinge (BE)*
 
 Dit document start een **nieuw gesprek met Claude** over de ROOM-sketch en de overstap van de Photon-rooms naar ESP32-C6. Het vat samen hoe we werken, wat er beslist en gebouwd is, en wat nog openstaat. Overkoepelend (alle repo's, systeem, compileren in de sessie): [`ZARLAR_OVERDRACHT.md`](https://github.com/FidelDworp/Zarlardinge-Home-Automation/blob/main/docs/ZARLAR_OVERDRACHT.md). Wie het systeem wil begrijpen, begint beter bij de [README](../README.md) en de [ROOM-standaard](ROOM_STANDAARD.md).
 
@@ -99,6 +99,7 @@ Standaard: [`ROOM_STANDAARD.md`](ROOM_STANDAARD.md). Ombouw: [`aansluitingen.md`
 - RoomSense-kant op **3,3 V**; Option-kant mag 5 V voeden, maar **geen signaal boven 3,3 V** (elke ader meten).
 - **CO2:** Sensirion **SCD41** (I2C, IO13/IO11), 4 stuks besteld (5/11) voor B&B, BADK, ZITPL.
 - **Vervalt:** stofsensor, alert-LDR, CO2-PWM, de relais van R7 (worden Powerpixels), TSL2561 (naar ACCESS/OUTSIDE).
+- **Powerpixels (16/11):** één PowerPiXel-TRIO per lichtkring, kanalen parallel, sketch stuurt R = G = B; fix-draadje naar +12V; externe schakelaars als override toegelaten. Regels in [`ROOM_STANDAARD.md`](ROOM_STANDAARD.md) §1.3, B&B-invulling in [`aansluitingen.md`](aansluitingen.md) §4.4.
 - **Eerste room: B&B** (Photon defect), op basis van room80. Daarna Badkamer, Inkom, Keuken, Wasplaats, Zitplaats.
 
 ## 6. ACCESS (buitenverlichting) — repo `ESP32C6_ACCESS`

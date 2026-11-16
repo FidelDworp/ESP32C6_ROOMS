@@ -1,11 +1,12 @@
 # Zarlar ROOM en ACCESS: aansluitingen bij de overstap van Photon naar ESP32-C6
 
-*v0.3 — 5 nov 2026 — Filip Delannoy (FiDel). Status: plan, nog niets omgebouwd.*
+*v0.4 — 16 nov 2026 — Filip Delannoy (FiDel). Status: plan, nog niets omgebouwd.*
 > **De standaard staat in [`ROOM_STANDAARD.md`](ROOM_STANDAARD.md)** (6 nov 2026). Waar dit document afwijkt (buitenlicht oost in de B&B, pixelklok, TSL2561), geldt de standaard: die gaan naar eigen controllers of vervallen.
 
 *Bron: inventaris `Zarlar_Photon_inventaris_v3.xlsx` (Photon-sketches R1–R8, tekening "ACCESS-WASPL bedrading").*
 
 **Historiek**
+- v0.4 (16 nov 2026): B&B-verlichting via 4 Powerpixels (§4.4).
 - v0.3 (5 nov 2026): **geen eigen printje meer** voor de rooms. Per room een actielijst (§4); alleen ACCESS en de B&B (PWM-E) krijgen een kleine schakeling met de hand (§5).
 - v0.2 (5 nov 2026): CO2 via de Sensirion SCD41 op I2C in plaats van PWM.
 - v0.1 (4 nov 2026): eerste voorstel met een universeel I/O-bordje (vervallen).
@@ -24,7 +25,7 @@ Photon-pinnen nagekeken in de productiesketches; ESP32-IO volgens de shield-mapp
 | DHT22 | D6 | RoomSense | IO6 | 3,3 V | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | PIR MOV1 | D5 | RoomSense | IO5 | AM312, 3,3 V | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | LDR kamerlicht | A3 | RoomSense | IO1 | 3,3 V (analoog) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Pixels / Powerpixels | D4 | Pixel-line | IO4 | 5 V-strip, data 3,3 V | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ 2 Powerpixels + 12 klokpixels |
+| Pixels / Powerpixels | D4 | Pixel-line | IO4 | 5 V-strip, data 3,3 V | ✅ 4 Powerpixels + 12 pixels | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ 2 Powerpixels + 12 klokpixels |
 | **SCD41** CO2 + temp + vocht | — | I2C bij de controller | IO13 SDA / IO11 SCL | 3,3 V | ✅ | ✅ | — | — | — | — | ✅ tv-wand |
 | ~~TSL2561 zonlicht~~ | — | — | — | — | **vervalt in de rooms** (7/11): komt op een ACCESS- of OUTSIDE-controller |||||||
 | Thermostaatcontact | A6 | Option pin 2 | IO10 | contact naar GND | ✅ | ✅ | ✅ | via HVAC | ✅ | via HVAC | via HVAC |
@@ -84,7 +85,7 @@ Verhuisd naar [`ESP32C6_ACCESS/docs/ACCESS_STANDAARD.md`](https://github.com/Fid
 
 | Room | RoomSense-kant | Option-kant | Nieuw |
 |---|---|---|---|
-| **R1 B&B** | ✅ al op 3V3 | TSTAT: blijft. MOV2 (HC-SR501, trap): blijft op 5 V, signaal meten. CM1106: **verwijderd**. | SCD41 bij de controller. (Buitenlicht oost: niet meer via de room, maar via ACCESS3.) |
+| **R1 B&B** | ✅ al op 3V3 | TSTAT: blijft. MOV2 (HC-SR501, trap): blijft op 5 V, signaal meten. CM1106: **verwijderd**. | SCD41 bij de controller. 4 Powerpixels (TRIO) + 12 pixels, zie §4.4. (Buitenlicht oost: niet meer via de room, maar via ACCESS3.) |
 | **R2 BADK** | ombouwen naar 3V3 | TSTAT: blijft. | SCD41 bij de controller. |
 | **R3 INKOM** | ombouwen naar 3V3; **stofsensor (Sharp) loskoppelen** | TSTAT: blijft. MOV2 (toilet + vestiaire, 2 PIR's): blijft op 5 V, signaal meten. **Alert-LDR loskoppelen.** | — |
 | **R4 KEUK** | ombouwen naar 3V3 | niets (TSTAT via HVAC); Option-kabel niet nodig | — (CO2 verhuist naar ZITPL) |
@@ -102,6 +103,23 @@ Per room, met de kabels aangesloten op de sensoren maar **nog niet op het shield
 4. Hoger? Niet aansluiten: eerst de oorzaak zoeken (sensor op 5 V, pull-up naar 5 V).
 
 Tip: een **1 kΩ in serie** op de MOV2-ader (bv. in het klemmenbordje) beschermt de ESP32 als er toch eens iets misloopt, en hindert de werking niet.
+
+### 4.4 B&B: verlichting via Powerpixels (16 nov 2026)
+
+Regels: [`ROOM_STANDAARD.md`](ROOM_STANDAARD.md) §1.3. Bron: tekening "ACCESS1-BB bedrading" (16/11).
+
+| Pixel | Powerpixel | Lichtkring (12 V, zekering 2 A) | Externe schakelaar (override) |
+|---|---|---|---|
+| 0 | TRIO, 3 kanalen parallel | Badkamer | ✅ badkamer |
+| 1 | TRIO, 3 kanalen parallel | Bedlampjes | — |
+| 2 | TRIO, 3 kanalen parallel | Tafelspot | ✅ ingangsdeur |
+| 3 | TRIO, 3 kanalen parallel | Spanlampen | ✅ ingangsdeur |
+| 4–15 | gewone pixels | 12 pixels | — |
+
+- Volgorde op de pixel-line: ESP32 (IO4) → Powerpixel 0 → 1 → 2 → 3 → 12 pixels. Volgorde nakijken bij het bedraden.
+- **Fix-draadjes** van de vier Powerpixels naar **+12V**, niet naar +5V (de tekening van 16/11 toont nog +5V: aanpassen).
+- De drie schakelaars zijn van Maarten (twee aan de ingangsdeur, één in de badkamer). Ze blijven, parallel over OUT–GND: bewust compromis, faalveilig zonder domotica. De controller ziet niet dat een lamp via de schakelaar brandt.
+- Bewust **niet** gedaan: de R/G/B-kanalen van één Powerpixel over drie kringen verdelen (zou 2 printjes besparen, maar maakt de sketch complexer).
 
 ## 5. ACCESS: buffer 3,3 → 5 V voor de LED-modules
 

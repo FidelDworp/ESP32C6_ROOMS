@@ -1,6 +1,6 @@
 # ROOM-standaard (Zarlar)
 
-*v1.2 — 11 nov 2026 — Filip Delannoy (FiDel). Status: **vastgelegd**.*
+*v1.3 — 16 nov 2026 — Filip Delannoy (FiDel). Status: **vastgelegd**.*
 
 Elke room in Zarlardinge gebruikt **dezelfde hardware en dezelfde sketch**. Dit document legt vast wat er in een room zit en wat er bewust níet in zit. Het is het antwoord op jaren "feature creep": telkens een nieuwe sensor op de Photon-rooms deed hard- en software steeds verder uit elkaar lopen.
 
@@ -46,6 +46,21 @@ Op de pixel-line kunnen gewone adresseerbare RGB-pixels én **Powerpixels** hang
 **Powerpixel** = eigen ontwerp van FiDel: hij wordt aangestuurd **zoals een gewone pixel** (zelfde dataprotocol, zelfde plaats in de reeks), maar de chip stuurt **MOSFET's** in plaats van ledjes. Zo bedient één "pixel" zware LED-verlichting of een RGB-strip (muurspots, tv-achtergrond, plafondlicht).
 
 Voor de sketch is een Powerpixel dus een pixel in de reeks met een eigen bijnaam en lichtgroep; voor de hardware is het een vermogensuitgang.
+
+**Regels voor Powerpixels (16 nov 2026):**
+
+| Regel | Waarom |
+|---|---|
+| **Eén Powerpixel per lichtkring**, de drie kanalen (R, G, B) **parallel** op de klem van die kring | De R/G/B-kanalen niet verdelen over verschillende kringen: dat zou de ROOM-sketch complexer maken (lamp = pixel + kanaal). Powerpixels zijn er genoeg, en onderhoud blijft eenvoudig |
+| De sketch stuurt een Powerpixel **met R = G = B** (wit, of een grijswaarde om te dimmen) | Bij parallelle kanalen bepaalt de hoogste waarde de helderheid; gelijke waarden geven een voorspelbaar resultaat |
+| Type: **PowerPiXel-TRIO** (EasyEDA rev 5.0, print v4.0): WS2811 → PC817-opto's → NCE30H12K (30 V / 120 A, DPAK), 470R-indicatie-LED per kanaal | Opto-gescheiden: de GND van de pixel-line en de power-GND (PGND) zijn **apart**; geen stripstroom door de pixelkabel |
+| **Fix-draadje "+5-12V" naar +12V** (de lampvoeding), **niet** naar 5 V | De net "+5-12V" (collector van de opto's, gate-sturing en indicatie-LEDs) heeft op de print geen aansluiting; vandaar het draadje op pin 4 van een PC817. Op 12 V krijgt de gate ±11,8 V; op 5 V maar ±4,8 V én gaat de scheiding verloren |
+| Lamp tussen **+12V en OUT**, GND-klem naar de min van de 12V-voeding; per kring een zekering van 2 A | Laag-zijdig schakelen. Bij 2 A verbruikt één NCE30H12K ±0,02 W: koeling is niet nodig |
+| **Externe schakelaar** parallel over OUT–GND mag (override) | Faalveilig: werkt ook als controller of wifi uitvalt. Gevolg: staat de schakelaar aan, dan brandt de lamp altijd volledig en weet de controller het niet (de indicatie-LED op de print brandt wel). Terugmelding later eventueel via een PC817 op een vrije ingang |
+| Data 3,3 V van de ESP32 rechtstreeks op de pixel-line | Werkt al jaren met de Photons (ook 3,3 V). De eerste WS2811 regenereert het signaal op 5 V. Pas bij flikkeren van de eerste pixel een 74AHCT125 |
+| Dimmen: de laagste niveaus (±0–5 %) doen weinig | De WS2811 dimt met PWM van enkele honderden Hz; de PC817 met 10K pulldown kan de kortste pulsen niet volgen |
+
+De oudere PowerpiXel v4.0 (Eagle, 2018, SI2300-inversie, zonder opto) mag blijven waar hij werkt, maar nieuwe kringen krijgen een TRIO.
 
 ### 1.4 Generieke I/O: de vrije pinnen
 
@@ -99,6 +114,7 @@ De pinnen van RoomSense en Option die niet voor de kern of de opties gebruikt wo
 
 | Versie | Datum | Wat |
 |---|---|---|
+| v1.3 | 16 nov 2026 | Regels voor Powerpixels (§1.3): één TRIO per lichtkring met de kanalen parallel (geen R/G/B-verdeling), R = G = B in de sketch, fix-draadje naar +12V, externe schakelaar als override toegelaten |
 | v1.2 | 11 nov 2026 | USB-poort "UART" i.p.v. "USB" (IO12/IO13 = USB D−/D+), I2C-pull-ups 3,3 kΩ op het shield, DHT22 alleen met de eigen uitlezing, NVS opruimen na overstap van Matter |
 | v1.1 | 7 nov 2026 | TSL2561 nooit meer op een room, wel op ACCESS of OUTSIDE |
 | v1.0 | 6 nov 2026 | Eerste vastgelegde standaard: kern, opties, Powerpixels, generieke I/O (GP1–GP4), buitenlicht en klok naar eigen controllers, TSL2561 uit de room |
