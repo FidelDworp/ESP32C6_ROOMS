@@ -99,7 +99,7 @@ Standaard: [`ROOM_STANDAARD.md`](ROOM_STANDAARD.md). Ombouw: [`aansluitingen.md`
 - RoomSense-kant op **3,3 V**; Option-kant mag 5 V voeden, maar **geen signaal boven 3,3 V** (elke ader meten).
 - **CO2:** Sensirion **SCD41** (I2C, IO13/IO11), 4 stuks besteld (5/11) voor B&B, BADK, ZITPL.
 - **Vervalt:** stofsensor, alert-LDR, CO2-PWM, de relais van R7 (worden Powerpixels), TSL2561 (naar ACCESS/OUTSIDE).
-- **Powerpixels (16/11):** één PowerPiXel-TRIO per lichtkring, kanalen parallel, sketch stuurt R = G = B; fix-draadje naar +12V; externe schakelaars als override toegelaten. Regels in [`ROOM_STANDAARD.md`](ROOM_STANDAARD.md) §1.3, B&B-invulling in [`aansluitingen.md`](aansluitingen.md) §4.4.
+- **Powerpixels (16/11):** één PowerPiXel-TRIO per lichtkring, kanalen parallel (kleur in `/settings` op wit; de sketch verandert niet, RGB-strips op een Powerpixel houden hun kleuren); fix-draadje naar +12V; externe schakelaars als override toegelaten. Regels in [`ROOM_STANDAARD.md`](ROOM_STANDAARD.md) §1.3, B&B-invulling in [`aansluitingen.md`](aansluitingen.md) §4.4.
 - **Eerste room: B&B** (Photon defect), op basis van room80. Daarna Badkamer, Inkom, Keuken, Wasplaats, Zitplaats.
 
 ## 6. ACCESS (buitenverlichting) — repo `ESP32C6_ACCESS`
