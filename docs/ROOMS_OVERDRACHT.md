@@ -110,6 +110,8 @@ Standaard: [`ROOM_STANDAARD.md`](ROOM_STANDAARD.md). Ombouw: [`aansluitingen.md`
 
 ## 7. Andere open punten
 
+- **Volgende ROOM-stap (18/11, "binnenkort, stap voor stap"):** GAS v1.6 en daarna ROOM v3.5 volgens de README (met de aanvullingen van 18/11: `n` weg, GP3 analoog in volt als `ar`, ASC-streefwaarde 420 ppm). Pixel-effecten als v3.8b (idee, detailplan later).
+- **B&B (.75) in de Sheet:** komt er niet vanzelf in. Op het Dashboard (.60) → `/settings` het vinkje "actief" bij **R-BandB** aanzetten; dan pollt het Dashboard de room en post het naar het room-script (zelfde Sheet, kolom "Kamer").
 - S-ENERGY v1.30 en Dashboard v6.4: 48 u-test bekijken.
 - ECO v2.1: dode `publishHVAC()` weg, mDNS. HVAC v2.1: eigen Sheets-push weg.
 - Dashboard: HOME/UIT-tegel via de RPi, nieuwe matrixlegende, Master bijwerken voor v6.1–v6.4.
