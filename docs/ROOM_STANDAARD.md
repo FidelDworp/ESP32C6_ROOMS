@@ -1,6 +1,6 @@
 # ROOM-standaard (Zarlar)
 
-*v1.3 — 16 nov 2026 — Filip Delannoy (FiDel). Status: **vastgelegd**.*
+*v1.4 — 18 nov 2026 — Filip Delannoy (FiDel). Status: **vastgelegd**.*
 
 Elke room in Zarlardinge gebruikt **dezelfde hardware en dezelfde sketch**. Dit document legt vast wat er in een room zit en wat er bewust níet in zit. Het is het antwoord op jaren "feature creep": telkens een nieuwe sensor op de Photon-rooms deed hard- en software steeds verder uit elkaar lopen.
 
@@ -55,7 +55,7 @@ Voor de sketch is een Powerpixel dus een pixel in de reeks met een eigen bijnaam
 | **De sketch verandert niet:** elke pixel houdt zijn vrije RGB-kleur | Een Powerpixel met een RGB-strip moet zijn kleuren blijven gebruiken. Voor een Powerpixel met parallelle kanalen kies je in `/settings` gewoon wit (of een grijswaarde om te dimmen): de hoogste van de drie waarden bepaalt de helderheid |
 | Type: **PowerPiXel-TRIO** (EasyEDA rev 5.0, print v4.0): WS2811 → PC817-opto's → NCE30H12K (30 V / 120 A, DPAK), 470R-indicatie-LED per kanaal | Opto-gescheiden: de GND van de pixel-line en de power-GND (PGND) zijn **apart**; geen stripstroom door de pixelkabel |
 | **Fix-draadje "+5-12V" naar +12V** (de lampvoeding), **niet** naar 5 V | De net "+5-12V" (collector van de opto's, gate-sturing en indicatie-LEDs) heeft geen klem: op de PowerPiXel v4.0 (EasyEDA) komt het draadje in het soldeerpunt **"+5-12V !!!"** onder de WS2811 (dun draadje, 0,25–0,5 mm², vastzetten); op de PowerQuad v1.0 op pin 4 van een PC817. Op 12 V krijgt de gate ±11,8 V; op 5 V maar ±4,8 V én gaat de scheiding verloren |
-| Lamp tussen **+12V en OUT**, GND-klem naar de min van de 12V-voeding; per kring een zekering van 2 A | Laag-zijdig schakelen. Bij 2 A verbruikt één NCE30H12K ±0,02 W: koeling is niet nodig |
+| Lamp tussen **+12V en OUT**, GND-klem naar de min van de 12V-voeding; per kring een **zekering op maat** (±1,25–1,5× de stroom van de kring, minstens 2 A; bv. 4 A → 5 A) | Laag-zijdig schakelen. Met de 3 kanalen parallel verbruikt de TRIO bij 4 A samen ±0,1 W: koeling is niet nodig |
 | **Externe schakelaar** via de **SMD poke-in connector van TE** (2-polig, met ontgrendeling) op het OUT/GND-padpaar van één kanaal ("Conn" op de tekening). Draad: **18–22 AWG** (0,35–0,75 mm²), massief of licht vertind soepel. De lampdraden (OUT's parallel) en GND worden op de andere pads gesoldeerd, met een kort stuk soepele draad naar de klem van de lichtkring | Tool-vrij aan- en afkoppelen van Maartens schakelaars. Gesoldeerde draden op vlakke SMD-pads kunnen bij trekken de pad van de print scheuren: kabels vastzetten (kabelbinder door het montagegat) |
 | **Externe schakelaar** parallel over OUT–GND mag (override) | Faalveilig: werkt ook als controller of wifi uitvalt. Gevolg: staat de schakelaar aan, dan brandt de lamp altijd volledig en weet de controller het niet (de indicatie-LED op de print brandt wel). Terugmelding later eventueel via een PC817 op een vrije ingang |
 | Data 3,3 V van de ESP32 rechtstreeks op de pixel-line | Werkt al jaren met de Photons (ook 3,3 V). De eerste WS2811 regenereert het signaal op 5 V. Pas bij flikkeren van de eerste pixel een 74AHCT125 |
@@ -115,6 +115,7 @@ De pinnen van RoomSense en Option die niet voor de kern of de opties gebruikt wo
 
 | Versie | Datum | Wat |
 |---|---|---|
+| v1.4 | 18 nov 2026 | Zekering per lichtkring op maat in plaats van vast 2 A (B&B: badkamer 4 A, spanlampen 3 A) |
 | v1.3 | 16 nov 2026 | Regels voor Powerpixels (§1.3): één TRIO per lichtkring met de kanalen parallel (geen R/G/B-verdeling), sketch ongewijzigd (vrije RGB per pixel blijft voor RGB-strips), fix-draadje naar +12V, externe schakelaar als override toegelaten |
 | v1.2 | 11 nov 2026 | USB-poort "UART" i.p.v. "USB" (IO12/IO13 = USB D−/D+), I2C-pull-ups 3,3 kΩ op het shield, DHT22 alleen met de eigen uitlezing, NVS opruimen na overstap van Matter |
 | v1.1 | 7 nov 2026 | TSL2561 nooit meer op een room, wel op ACCESS of OUTSIDE |
