@@ -108,13 +108,16 @@ Tip: een **1 kΩ in serie** op de MOV2-ader (bv. in het klemmenbordje) beschermt
 
 Regels: [`ROOM_STANDAARD.md`](ROOM_STANDAARD.md) §1.3. Bron: tekening "ACCESS1-BB bedrading" (16/11).
 
-| Pixel | Powerpixel | Lichtkring (12 V) | Stroom (FiDel 18/11) | Zekering (voorstel) | Externe schakelaar (override) |
+| Pixel | Powerpixel | Lichtkring (12 V) | Stroom (tekening 18/11) | Zekering | Externe schakelaar (override) |
 |---|---|---|---|---|---|
-| 0 | TRIO, 3 kanalen parallel | Badkamer: glasdallen-strips + WC-strip | 3 A + 1 A = **4 A** (gemeten) | **5 A** | ✅ badkamer |
-| 1 | TRIO, 3 kanalen parallel | Bedlampjes (slinger in papieren bolletjes) + **ledstrip vloermat ingang** (nog te plaatsen) | 0,06 A + ±0,3 A | **1 A** | — |
-| 2 | TRIO, 3 kanalen parallel | Tafelspot | ±2 A (geschat) | **3 A** | ✅ ingangsdeur |
-| 3 | TRIO, 3 kanalen parallel | Spanlampen | ±3 A (geschat) | **4 A** | ✅ ingangsdeur |
-| 4–15 | gewone pixels | 12 pixels (treden: 3 naar de badkamer, 9 aan de voet van het bed) | — | — | — |
+| 0 | TRIO, 3 kanalen parallel | **Spanlampen** — **MOV1-lichtgroep** (AUTO: beweging + donker) | ±3 A | 4 A | ✅ ingangsdeur |
+| 1 | TRIO, 3 kanalen parallel | Bedlampjes (bolletjes 0,1 A) + **ledstrip vloermat ingang** (0,5 A) | ±0,6 A | 2 A (1 A volstaat) | — |
+| 2 | TRIO, 3 kanalen parallel | Tafelspot | ±3 A | **4 A** (na te kijken op de tekening) | ✅ ingangsdeur |
+| 3 | TRIO, 3 kanalen parallel | Badkamer: glasdallen 3 A + WC 1 A | 4 A | 5 A | ✅ badkamer |
+| 4 | TRIO (met "PWM") | **Leeslampjes** (12 V, drivers 300 mA, telkens 2 LED's in serie) | "4 A" op de tekening: **na te kijken** | — | — |
+| 5–16 | gewone pixels | 12 pixels (treden: 3 naar de badkamer, 9 aan de voet van het bed) | — | — | — |
+
+Volgorde op de pixel-line volgens de tekening "ACCESS3-BB bedrading" van 18/11: ESP32 (IO4) → Powerpixel 0 → 1 → 2 → 3 → 4 → 12 pixels = **17 pixels** in `/settings`.
 
 **Metingen 18/11 (FiDel):**
 - **Zekeringen:** de ROOM-standaard zegt "2 A per kring", maar badkamer (4 A), spanlampen (±3 A) en tafelspot (±2 A) trekken meer → zekering per kring op **±1,25–1,5× de stroom** (voorstel hierboven). De NCE30H12K kan dat ruim aan (bij 4 A ±0,1 W, verdeeld over 3 kanalen). Totaal 12 V: ±9,4 A → **12V-voeding van minstens ±12 A (150 W)** nakijken.
@@ -144,7 +147,7 @@ Regels: [`ROOM_STANDAARD.md`](ROOM_STANDAARD.md) §1.3. Bron: tekening "ACCESS1-
 8. **Zekering van het fix-draadje** plaatsen: 12V meten op het fix-draadje van elke Powerpixel. Er mag geen lamp branden.
 9. **Lampzekeringen één voor één** plaatsen: geen lamp mag vanzelf aangaan. Per kring Maartens schakelaar testen (aan/uit).
 10. **24V-zekering** plaatsen: kijken hoe de drivers reageren zonder PWM-signaal (uit, of volledig aan?).
-11. **Eerst de B&B-ESP32** insteken, `/json` nakijken. In `/settings` het aantal pixels op 16, elke Powerpixel apart testen in wit: 0 Badkamer, 1 Bedlampjes, 2 Tafelspot, 3 Spanlampen.
+11. **Eerst de B&B-ESP32** insteken, `/json` nakijken. In `/settings` het aantal pixels op **17**, elke Powerpixel apart testen in wit: 0 Spanlampen, 1 Bedlampjes + vloermat, 2 Tafelspot, 3 Badkamer, 4 Leeslampjes.
 12. Dan de **ACCESS3-ESP32** insteken: PWM E, PWM N2, PIR E, PIR N2 en de reeds testen.
 13. Na **een uur** branden: Powerpixels, drivers en zekeringhouders voelen, schroefklemmen natrekken.
 
