@@ -111,10 +111,11 @@ Bijgekomen op 5 nov 2026: de **"goodies" van de Sjalay-controller** (v1.8, repo 
 | **A. Basis** | v3.2 | Versie en diagnose zichtbaar | alle rooms | ⚠️ 48 u-test niet gehaald: 4 herstarts door de interrupt-watchdog (geheugen in orde) |
 | | v3.3 | **Stabiliteit:** TSL2561 weg + "laatste stap vóór herstart" bewaren (diagnose via OTA) | alle rooms | ✅ room80: 7/11 geflasht, 48 u-test geslaagd (50 u 47 min zonder herstart, geheugen stabiel) |
 | | v3.4 | **SCD41** (CO2 + temp + vocht via I2C) · CO2-PWM weg · geen metingen in AP-mode — naar voren gehaald 9/11, daarna 24 u-test. **GAS v1.6** als aparte stap ná de test (beslist 9/11) | B&B, BADK, ZITPL (test op room80) | ⚠️ v3.4.3: 24 u-test niet gehaald (3 herstarts 10/11, laatste = interrupt-watchdog tijdens "DHT22 lezen") → v3.4.4 (eigen DHT22-uitlezing) + **v3.4.5** (NVS opgeruimd: 181 vakjes Matter-resten weg) op room80 sinds 11/11 ±10:25; ✅ **test geslaagd: 86 u zonder herstart** (15/11) |
-| | v3.5 | **Opruimen:** stofsensor en lichtstraal volledig weg, ook hun `/json`-keys | alle rooms | samen met **GAS v1.6**, na de 24 u-test van v3.4.3 |
+| | v3.5 | **Opruimen:** stofsensor, lichtstraal en zonlicht (`n`) volledig weg, ook hun `/json`-keys · **GP3 analoog in volt** (key `ar`) · **ASC-streefwaarde** SCD41 instelbaar (standaard 420 ppm) — plan goedgekeurd in principe 18/11, uitvoering stap voor stap | alle rooms | samen met **GAS v1.6**, na de 24 u-test van v3.4.3 |
 | | v3.6 | WiFi robuuster + mDNS terug | alle rooms | |
 | **B. Functies** | v3.7 | **Temperatuurbewaking** (zoals de Sjalay) + overzicht alle DS18B20's, **maximum 6** (nieuwe keys `an`, `ao`) | alle rooms | |
 | | v3.8 | **Verwarmingslogica zoals de Sjalay:** effectief setpoint, dauwpunt aan/uit, marge −10…+10, instelbare hysterese, minimum setpoint, landingspagina "IST (→ SOLL)" | alle rooms | |
+| | v3.8b | **Pixel-effecten** achter de Powerpixels: effectstrook "pixel X tot Y" (volg kamerkleur, kleurgolf, ademen, regenboog, nachtlampje bij beweging 's nachts); één update-lus voor de hele reeks (±40 beelden/s); max. ±500 pixels per controller; optioneel een eigen datalijn op GP4 (IO18). Detailplan later (striptype en aantallen per room) | B&B (treden 3 + 9), BADK, SLPK | idee 18/11 |
 | | → | **B&B gaat live** | B&B | |
 | | v3.9 | **Generieke I/O** GP1–GP4 op de vrije pinnen van RoomSense en Option | alle rooms | |
 | **C. Pagina's** | v3.10 | `/update` → `ota.h`, met voortgangsbalk | alle rooms | |
@@ -160,6 +161,13 @@ Sensirion SCD41 op de I2C-bus bij de controller (SDA IO13, SCL IO11, adres 0x62)
 #### v3.5 Opruimen
 
 De stofsensor (Sharp, IO12/IO7) en de lichtstraal (LDR2 op IO2) volledig weg: code, instellingen (`dust_en`, `beam_en`, `beam_thresh`), UI en de `/json`-keys `l`, `aa` en `ab`. Het Dashboard en de RPi gebruiken die keys niet (nagekeken 5/11). (De TSL2561-code is al weg sinds v3.3.) IO2, IO7 en IO12 komen vrij voor de generieke I/O (v3.9).
+
+**Aanvullingen 18/11 (FiDel):**
+- **Key `n` (zonlicht) weg**, met de kolom "Zon (lux)" in de Sheet en de tegel "Zonlicht" op de RPi-roompagina (`room.html`): de TSL2561 is weg sinds v3.3, `n` is altijd 0.
+- **GP3 (IO2, Option pin 3) als analoge ingang in volt** (0–3,1 V, met de fabriekskalibratie; `analogReadMilliVolts`), aan/uit en bijnaam in `/settings`, zichtbaar op `/advanced`, in `/json` als **`ar`** (2 decimalen) = de key die al voor GP3 gereserveerd was. De andere GP-modi volgen in v3.9.
+- **ASC-streefwaarde van de SCD41** instelbaar (standaard **420 ppm** i.p.v. 400): de eerste ASC-correctie op room80 (12/11 ±06:45, −210 ppm) bracht de nachtwaarden op 395–410 ppm, een tikje onder buitenlucht.
+- **IO12 en IO7** als veilige ingang zonder pull-up (IO12 stuurde de stof-LED).
+- **GAS v1.6:** naast de eerder geplande kolommen ook `ar` (GP3 V) en "Zon" eruit; schrijven naar tabblad **"Data"** (niet het actieve tabblad: er is nu ook een tabblad "CO2"); MAX_ROWS afstemmen (met meer rooms groeit de Sheet sneller); functie om de oude rijen te archiveren.
 
 
 ### Fase B — Functies
