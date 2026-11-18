@@ -108,19 +108,25 @@ Tip: een **1 kΩ in serie** op de MOV2-ader (bv. in het klemmenbordje) beschermt
 
 Regels: [`ROOM_STANDAARD.md`](ROOM_STANDAARD.md) §1.3. Bron: tekening "ACCESS1-BB bedrading" (16/11).
 
-| Pixel | Powerpixel | Lichtkring (12 V, zekering 2 A) | Externe schakelaar (override) |
-|---|---|---|---|
-| 0 | TRIO, 3 kanalen parallel | Badkamer | ✅ badkamer |
-| 1 | TRIO, 3 kanalen parallel | Bedlampjes | — |
-| 2 | TRIO, 3 kanalen parallel | Tafelspot | ✅ ingangsdeur |
-| 3 | TRIO, 3 kanalen parallel | Spanlampen | ✅ ingangsdeur |
-| 4–15 | gewone pixels | 12 pixels | — |
+| Pixel | Powerpixel | Lichtkring (12 V) | Stroom (FiDel 18/11) | Zekering (voorstel) | Externe schakelaar (override) |
+|---|---|---|---|---|---|
+| 0 | TRIO, 3 kanalen parallel | Badkamer: glasdallen-strips + WC-strip | 3 A + 1 A = **4 A** (gemeten) | **5 A** | ✅ badkamer |
+| 1 | TRIO, 3 kanalen parallel | Bedlampjes (slinger in papieren bolletjes) + **ledstrip vloermat ingang** (nog te plaatsen) | 0,06 A + ±0,3 A | **1 A** | — |
+| 2 | TRIO, 3 kanalen parallel | Tafelspot | ±2 A (geschat) | **3 A** | ✅ ingangsdeur |
+| 3 | TRIO, 3 kanalen parallel | Spanlampen | ±3 A (geschat) | **4 A** | ✅ ingangsdeur |
+| 4–15 | gewone pixels | 12 pixels (treden: 3 naar de badkamer, 9 aan de voet van het bed) | — | — | — |
+
+**Metingen 18/11 (FiDel):**
+- **Zekeringen:** de ROOM-standaard zegt "2 A per kring", maar badkamer (4 A), spanlampen (±3 A) en tafelspot (±2 A) trekken meer → zekering per kring op **±1,25–1,5× de stroom** (voorstel hierboven). De NCE30H12K kan dat ruim aan (bij 4 A ±0,1 W, verdeeld over 3 kanalen). Totaal 12 V: ±9,4 A → **12V-voeding van minstens ±12 A (150 W)** nakijken.
+- **Ongebruikte lijnen** vanaf de Powerpixels (nog te beslissen met Mireille, Maarten en Céline): **Douche rechts**, **Douche links** (strips of niet) en **Leeslampje mansarde** (kleinste bed op de halve verdieping). Elk zou een eigen Powerpixel krijgen (één per lichtkring).
+- **Ledstrip vloermat ingang:** ±1 m strip op het trapje aan de ingangsdeur, op Powerpixel 1 samen met de bedlampjes; moet **automatisch branden als het donker is** (LDR) en in **BED-modus uit** gaan → voorstel "nachtlicht per pixel" in de ROOM-sketch (zie README, gepland).
+- **Constante-stroom-drivers:** overal **300 mA**, telkens **2 LED's in serie**: buitenlampen op 24 V (ACCESS), leeslampjes in de slaapkamer op 12 V.
 
 - Volgorde op de pixel-line: ESP32 (IO4) → Powerpixel 0 → 1 → 2 → 3 → 12 pixels. Volgorde nakijken bij het bedraden.
 - **Fix-draadjes** van de vier Powerpixels naar **+12V**, via een eigen zekering van 2 A in het 12V-blok (tekening "ACCESS3-BB bedrading", 16/11).
 - De drie schakelaars zijn van Maarten (twee aan de ingangsdeur, één in de badkamer). Ze blijven, parallel over OUT–GND: bewust compromis, faalveilig zonder domotica. De controller ziet niet dat een lamp via de schakelaar brandt.
 - Bewust **niet** gedaan: de R/G/B-kanalen van één Powerpixel over drie kringen verdelen (zou 2 printjes besparen, maar maakt de sketch complexer).
-- Hetzelfde bord draagt ook **ACCESS3** (buitenlicht N2, E1, E2 via twee 24V-drivers van 350 mA). Open: zone "LEDs-?" bij de bovenste driver nog op te zoeken.
+- Hetzelfde bord draagt ook **ACCESS3**: buitenlicht N2, E1, E2 via **drie 24V-drivers van 300 mA** (één per LED-paar; tekening aan te passen, 18/11). Getest 18/11: **N2 geeft niets** en **E1 is defect** (meestal ±20 mA, af en toe 300 mA); E2 werkt. Herstel met Maarten (ladder). Zie `ACCESS_STANDAARD.md` in `ESP32C6_ACCESS`.
 
 **Veilig monteren en opstarten (B&B + ACCESS3)**
 
