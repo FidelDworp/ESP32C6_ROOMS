@@ -168,6 +168,7 @@ De stofsensor (Sharp, IO12/IO7) en de lichtstraal (LDR2 op IO2) volledig weg: co
 - **ASC-streefwaarde van de SCD41** instelbaar (standaard **420 ppm** i.p.v. 400): de eerste ASC-correctie op room80 (12/11 ±06:45, −210 ppm) bracht de nachtwaarden op 395–410 ppm, een tikje onder buitenlucht.
 - **IO12 en IO7** als veilige ingang zonder pull-up (IO12 stuurde de stof-LED).
 - **GAS v1.6:** naast de eerder geplande kolommen ook `ar` (GP3 V) en "Zon" eruit; schrijven naar tabblad **"Data"** (niet het actieve tabblad: er is nu ook een tabblad "CO2"); MAX_ROWS afstemmen (met meer rooms groeit de Sheet sneller); functie om de oude rijen te archiveren.
+- **Kamerfilter in de Sheet (FiDel 18/11):** in cel **C1** (boven de kolom "Kamer") een **keuzelijst** met **ALL** en alle rooms die ooit gelogd hebben. Een `onEdit`-trigger zet bij een keuze een filter op kolom C (alleen die room zichtbaar) of haalt hem weg bij ALL. `doPost()` vult de keuzelijst automatisch aan als er een nieuwe kamernaam binnenkomt (bv. de B&B), en past een actieve filter toe op nieuwe rijen. De titel van rij 1 schuift naar D1. Het filter verbergt alleen rijen: er wordt niets gewist.
 
 
 ### Fase B — Functies
