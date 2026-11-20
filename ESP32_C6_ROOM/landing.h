@@ -76,7 +76,7 @@ function tegels(){var h='';for(var i=0;i<CFG.px.length;i++){
 function aan(d,i){var s=(d.t||'').replace('P=','');
  if(i==0)return d.y==1; if(i==1&&CFG.mov2)return d.z==1; return s.charAt(i)=='1';}
 function toon(d){laatst=d;
- var t=(d.f>0?d.f:d.e);$('temp').textContent=(t>0?t.toFixed(1):'–')+'°';
+ var ok=function(v){return v!==null&&v!==undefined&&v>=-10&&v<=40;};var t=ok(d.f)?d.f:ok(d.e)?d.e:null;$('temp').textContent=(t!==null?t.toFixed(1):'–')+'°';  /* v3.5: e/f kunnen null zijn */
  $('sp').textContent='(→ '+d.c+'°)';$('vocht').textContent=d.h>0?'Vocht '+Math.round(d.h)+' %':'';
  $('heat').classList.toggle('actief',d.b==1);
  if(document.activeElement!==$('sl')){$('sl').value=d.c;$('slv').textContent=d.c+' °C';}

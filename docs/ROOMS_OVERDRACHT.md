@@ -110,6 +110,8 @@ Standaard: [`ROOM_STANDAARD.md`](ROOM_STANDAARD.md). Ombouw: [`aansluitingen.md`
 
 ## 7. Andere open punten
 
+- **ROOM v3.5 (temperatuurveiligheid) in de repo (20/11, GO):** te flashen op room80, testen door DS18B20 en daarna DHT22 even los te trekken, dan 24 u-test. Daarna v3.5.1 (opruimen) en v3.5.2 (GP3 analoog + ASC-streefwaarde).
+- **GAS v1.6 in gebruik sinds 20/11 ±19:40** (werkt, gecontroleerd in de Sheet).
 - **GAS v1.6 klaar in de repo (20/11, GO van FiDel):** 43 kolommen, null → lege cel, tabblad "Data", MAX_ROWS 20 000, kamerfilter in C1, `archiveerEnNieuweKoppen()`. In gebruik nemen volgens README "GAS v1.6 in gebruik nemen".
 - **Volgende ROOM-stap (18/11, "binnenkort, stap voor stap"):** GAS v1.6 en daarna ROOM v3.5 volgens de README (met de aanvullingen van 18/11: `n` weg, GP3 analoog in volt als `ar`, ASC-streefwaarde 420 ppm). Pixel-effecten als v3.8b (idee, detailplan later).
 - **B&B (.75) in de Sheet:** komt er niet vanzelf in. Op het Dashboard (.60) → `/settings` het vinkje "actief" bij **R-BandB** aanzetten; dan pollt het Dashboard de room en post het naar het room-script (zelfde Sheet, kolom "Kamer").
