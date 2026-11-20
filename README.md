@@ -197,6 +197,7 @@ De stofsensor (Sharp, IO12/IO7) en de lichtstraal (LDR2 op IO2) volledig weg: co
 | Ook de DHT22 te oud of defect | geen | "Beide sensoren defect – verwarming geblokkeerd" | rood |
 
 - Bij "geen betrouwbare sensor" vraagt de room **geen verwarming** (`b` = 0), ook niet via de thermostaat-logica van v3.8.
+- **Melding uit het Sjalay-gesprek (20/11), nagekeken in v3.4.5:** de sketch keurt een DS18B20 en een DHT22 af onder **5 °C** (`SENSOR_TEMP_MIN`, regel ±2722 en weergave ±1486). Onder 5 °C wordt `room_temp` = 0,0 met de valse melding "Beide temp sensoren defect!", en de verwarming gaat **aan** (0 < setpoint). Bij twee echt defecte sensoren blijft de verwarming dus eindeloos aan. In de Sjalay blokkeerde dezelfde grens de verwarming (vorstrisico); opgelost in Sjalay v1.11 met grens **−10 °C**. **Voor de ROOM (te beslissen door FiDel):** grens naar −10 °C; SCD41-temperatuur (`al`) als derde terugval; wat de verwarming doet als álle bronnen defect zijn; geen 0,0 meer loggen in dat geval.
 - `/advanced` toont **bron**, **melding** (in kleur), DHT22-status (fouten op rij, totaal, herstarts, leeftijd laatste meting).
 
 **Overzicht alle DS18B20's** (zoals de Sjalay)
