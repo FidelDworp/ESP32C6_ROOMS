@@ -71,7 +71,7 @@ Het menu links (of bovenaan op een gsm) heeft op elke technische pagina een **�
 | `ESP32_C6_ROOM/landing.h` | Landingspagina `/` (sinds v3.1). Apart bestand zodat de Arduino IDE het JavaScript niet aanpast |
 | `ESP32_C6_ROOM/partitions.csv` | Partitietabel 16 MB (2 × 6 MB app, voor OTA). Wordt automatisch gebruikt omdat hij naast het `.ino`-bestand staat |
 | `bin/ESP32_C6_ROOM_v3.4.5.ino.bin` | **Klaar om te uploaden** via `/update` (gecompileerd door Claude, zie hieronder). Alleen de laatste versie |
-| `GoogleScript/ROOM_GoogleScript.gs` | Google Apps Script voor de Sheet "R-ROOMS Log" (37 kolommen A–AK) |
+| `GoogleScript/ROOM_GoogleScript.gs` | Google Apps Script **v1.6** voor de Sheet "R-ROOMS Log", tabblad "Data" (43 kolommen A–AQ, kamerfilter in C1). Implementeren: zie "GAS v1.6 in gebruik nemen" |
 | `docs/ROOM_STANDAARD.md` | **De ROOM-standaard:** wat er in elke room zit en wat niet. Eerst lezen |
 | `docs/ROOMS_OVERDRACHT.md` | Overdracht voor een nieuw gesprek met Claude: werkwijze, stand, beslissingen, open punten |
 | `docs/aansluitingen.md` | Ombouw per room van Photon naar ESP32: aansluitingen, meten, buffer voor ACCESS |
@@ -170,6 +170,23 @@ De stofsensor (Sharp, IO12/IO7) en de lichtstraal (LDR2 op IO2) volledig weg: co
 - **GAS v1.6:** naast de eerder geplande kolommen ook `ar` (GP3 V) en "Zon" eruit; schrijven naar tabblad **"Data"** (niet het actieve tabblad: er is nu ook een tabblad "CO2"); MAX_ROWS afstemmen (met meer rooms groeit de Sheet sneller); functie om de oude rijen te archiveren.
 - **Kamerfilter in de Sheet (FiDel 18/11):** in cel **C1** (boven de kolom "Kamer") een **keuzelijst** met **ALL** en alle rooms die ooit gelogd hebben. Een `onEdit`-trigger zet bij een keuze een filter op kolom C (alleen die room zichtbaar) of haalt hem weg bij ALL. `doPost()` vult de keuzelijst automatisch aan als er een nieuwe kamernaam binnenkomt (bv. de B&B), en past een actieve filter toe op nieuwe rijen. De titel van rij 1 schuift naar D1. Het filter verbergt alleen rijen: er wordt niets gewist.
 
+
+### GAS v1.6 in gebruik nemen (20/11)
+
+Code: `GoogleScript/ROOM_GoogleScript.gs`. Kolommen A–M blijven gelijk (de grafiek in het tabblad "CO2" blijft werken). Stof, Zon en Beam eruit; Tds4–6, Eff. set, SCD temp/vocht en GP1–GP4 erbij; ontbrekende metingen = lege cel (niet 0); MAX_ROWS 20 000; kamerfilter in C1.
+
+1. Open de Sheet "R-ROOMS Log" → **Extensies → Apps Script**.
+2. **Reservekopie:** kopieer de huidige code naar een tekstbestand (en noteer welke MAX_ROWS erin stond).
+3. Selecteer alles (Cmd+A), plak de nieuwe code uit GitHub (`ROOM_GoogleScript.gs` → *Raw* → alles kopiëren) en klik **Opslaan** (schijfje).
+4. **Implementeren → Implementaties beheren → potlood (Bewerken) → Versie: "Nieuwe versie"** → beschrijving "v1.6" → **Implementeren**. Nooit "Nieuwe implementatie": dan verandert de URL en stopt de logging.
+5. **Meteen daarna:** kies bovenaan in de functielijst **`archiveerEnNieuweKoppen`** → **Uitvoeren**. De eerste keer vraagt Google toestemming: *Toestemming controleren* → je account → *Geavanceerd* → *Ga naar … (onveilig)* → *Toestaan*. Wacht op "Uitvoering voltooid".
+6. **Nakijken in de Sheet:**
+   - nieuw tabblad **"Archief v1.5"** (achteraan) met alle oude rijen in de oude indeling;
+   - tabblad **"Data"** leeg, met de nieuwe koppen (43 kolommen) en in **C1** de keuzelijst met **ALL**.
+7. **Na ±5 minuten:** er staat een nieuwe rij in "Data" met de kolommen op de juiste plaats (CO2 in M, SCD temp in AL), en in C1 staat **R-EETPL** in de keuzelijst.
+8. **Filter testen:** kies in C1 een room → alleen die rijen zichtbaar; kies **ALL** → alles terug.
+
+Gaat er iets mis: in Apps Script de reservekopie terugplakken en opnieuw stap 4. Het archief blijft staan.
 
 ### Fase B — Functies
 
