@@ -1,4 +1,4 @@
-// ESP32-C6 ROOM v3.5.3 — 22 nov 2026 — zonder Matter
+// ESP32-C6 ROOM v3.6 — 22 nov 2026 — zonder Matter
 // Zarlar thuisautomatisering — Room controller (Apple Home via de RPi-bridge, niet meer via Matter op de ESP32)
 // Filip Delannoy — Zarlardinge (BE)
 //
@@ -8,6 +8,20 @@
 // PARTITIETABEL: Compileer met "partitions.csv" in de schetsmap (Custom partition scheme):
 //   nvs (20 KB), otadata (8 KB), app0 (6 MB), app1 (6 MB), spiffs (~4 MB)
 //
+// v3.6 (22nov26): WIFI ROBUUSTER + mDNS TERUG.
+//                 (1) Geen modem-slaap (WiFi.setSleep(false)); WiFi-hostnaam = mDNS-naam (herkenbaar in de router).
+//                 (2) Zelf blijven herverbinden: zolang de verbinding weg is, elke 30 s WiFi.reconnect() (was één
+//                 poging bij het wegvallen). Na 15 min zonder WiFi (en niemand op het nood-AP) → herstart; reden
+//                 "WiFi weg > 15 min" in de herstartgeschiedenis.
+//                 (3) AP-setupmodus (geen metingen, geen verwarming) enkel nog als er geen WiFi ingesteld is (SSID
+//                 "netwerknaam" of leeg). Is er wel een SSID maar geen router (bv. na een stroompanne start de
+//                 ESP32 sneller dan de router): NOOD-AP "ROOM-<naam>" op 192.168.4.1, maar de controller blijft de
+//                 router proberen en sluit het nood-AP zodra de verbinding er is. Sensoren, verwarming en
+//                 vorstbeveiliging blijven werken. Voorheen bleef hij dan voor altijd in AP-mode zonder verwarming.
+//                 (4) mDNS terug: <kamernaam>.local (kleine letters, a-z/0-9/-, bv. R-EETPL → r-eetpl.local), na
+//                 elke (her)verbinding opnieuw gestart.
+//                 (5) Diagnose: WiFi verbonden sinds, aantal keer weggevallen + laatste reden, mDNS-naam.
+//                 Geen /json-wijzigingen.
 // v3.5.3 (22nov26): LDR OMGEKEERD (beslist door FiDel 22/11, zoals de Sjalay).
 //                 (1) /json m = licht: 100 = licht, 0 = donker (was 100 = donker). Ook op /advanced en serieel.
 //                 (2) "LDR dark threshold": donker = ONDER deze waarde (was boven). De bewaarde drempel wordt
@@ -150,6 +164,7 @@
 
 #include <WiFi.h>
 #include <DNSServer.h>        // Toegevoegd om captive portal toe te voegen
+#include <ESPmDNS.h>          // v3.6: mDNS terug (<kamer>.local)
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <Update.h>           // Voor OTA update
@@ -185,7 +200,7 @@ void releaseUsbPins() {
   usb_serial_jtag_ll_phy_enable_pad(false);
 }
 
-#define ROOM_VERSION "v3.5.3"  // v3.2: enige plaats met het versienummer
+#define ROOM_VERSION "v3.6"  // v3.2: enige plaats met het versienummer
 
 // v3.2: reden van de laatste herstart, leesbaar
 esp_reset_reason_t boot_reason = ESP_RST_UNKNOWN;
@@ -210,13 +225,13 @@ const char* resetReasonText(esp_reset_reason_t r) {
 // Twee sporen: de loop-taak en de webserver-taak (AsyncTCP) lopen apart.
 enum CrumbLoop : uint8_t {
   CL_NONE = 0, CL_SETUP, CL_WIFI, CL_SERIAL, CL_FADE, CL_PIR, CL_PIXLOGIC, CL_HEAT,
-  CL_DSSCAN, CL_IDLE, CL_NVS, CL_DHT, CL_DS, CL_LDR, CL_ADC, CL_CO2, CL_REST, CL_COUNT
+  CL_DSSCAN, CL_IDLE, CL_NVS, CL_DHT, CL_DS, CL_LDR, CL_ADC, CL_CO2, CL_REST, CL_WIFILOST, CL_COUNT
 };
 const char* const CRUMB_LOOP_TXT[CL_COUNT] = {
   "onbekend", "opstarten (setup)", "WiFi-controle", "seriële commando's", "pixels dimmen/tonen",
   "PIR lezen", "pixel-logica", "verwarmingslogica", "DS18B20 opnieuw zoeken", "wachten (rust)",
   "NVS schrijven (heap-log)", "DHT22 lezen", "DS18B20 lezen", "LDR lezen", "Generic ADC lezen (GP3)",
-  "SCD41 lezen (I2C)", "berekeningen"
+  "SCD41 lezen (I2C)", "berekeningen", "WiFi weg > 15 min (herstart)"
 };
 enum CrumbWeb : uint8_t {
   CW_NONE = 0, CW_LANDING, CW_ADVANCED, CW_JSON, CW_CAPS, CW_SETTINGS, CW_SAVE, CW_OTA,
@@ -470,7 +485,70 @@ bool ap_mode_active = false;  // Track of we in AP fallback zitten
 DNSServer dnsServer;
 const byte DNS_PORT = 53;
 
-wl_status_t last_wifi_status = WL_IDLE_STATUS;
+// v3.6: WiFi-bewaking en mDNS
+bool wifi_configured = false;               // er is een echte SSID ingesteld
+bool ap_rescue = false;                     // nood-AP actief (SSID ingesteld, router onbereikbaar)
+volatile uint32_t wifi_drops = 0;           // verbinding weggevallen sinds de opstart
+volatile uint8_t  wifi_last_reason = 0;     // laatste reden (wifi_err_reason_t)
+volatile bool     wifi_got_ip = false;      // vlag: (opnieuw) een IP gekregen → mDNS herstarten in loop()
+unsigned long wifi_connected_since = 0;     // millis() van de huidige verbinding (0 = niet verbonden)
+unsigned long wifi_lost_since = 0;          // millis() sinds de verbinding weg is (0 = verbonden)
+unsigned long wifi_last_try = 0;            // laatste herverbindingspoging
+#define WIFI_RETRY_MS    30000UL            // elke 30 s opnieuw proberen
+#define WIFI_RESTART_MS  (15UL * 60000UL)   // na 15 min zonder WiFi → herstart
+char mdns_host[32] = "room";
+bool mdns_ok = false;
+
+// v3.6: mDNS-naam uit de kamernaam: kleine letters, a-z/0-9/streepje
+void makeMdnsHost() {
+  int n = 0;
+  for (const char* c = room_id; *c && n < (int)sizeof(mdns_host) - 1; c++) {
+    char ch = tolower((unsigned char)*c);
+    if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')) mdns_host[n++] = ch;
+    else if (n > 0 && mdns_host[n - 1] != '-') mdns_host[n++] = '-';
+  }
+  while (n > 0 && mdns_host[n - 1] == '-') n--;
+  mdns_host[n] = 0;
+  if (n == 0) strcpy(mdns_host, "room");
+}
+
+const char* wifiReasonText(uint8_t r) {
+  switch (r) {
+    case 0:   return "geen";
+    case WIFI_REASON_BEACON_TIMEOUT:        return "signaal weg (router uit of te ver)";
+    case WIFI_REASON_NO_AP_FOUND:           return "netwerk niet gevonden (router uit?)";
+    case WIFI_REASON_AUTH_FAIL:             return "aanmelden mislukt (wachtwoord?)";
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+    case WIFI_REASON_HANDSHAKE_TIMEOUT:     return "wachtwoord fout of zwak signaal";
+    case WIFI_REASON_ASSOC_LEAVE:           return "zelf afgemeld";
+    case WIFI_REASON_AUTH_EXPIRE:
+    case WIFI_REASON_ASSOC_EXPIRE:          return "router reageerde niet meer";
+    case WIFI_REASON_CONNECTION_FAIL:       return "verbinden mislukt";
+    default: return WiFi.disconnectReasonName((wifi_err_reason_t)r);
+  }
+}
+
+// v3.6: WiFi-gebeurtenissen (lopen in de WiFi-taak: enkel tellers en vlaggen zetten)
+void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
+  if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+    wifi_last_reason = info.wifi_sta_disconnected.reason;
+    if (wifi_connected_since) { wifi_drops++; wifi_connected_since = 0; }
+  } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+    wifi_connected_since = millis();
+    wifi_got_ip = true;
+  }
+}
+
+void startMdns() {
+  MDNS.end();
+  mdns_ok = MDNS.begin(mdns_host);
+  if (mdns_ok) {
+    MDNS.addService("http", "tcp", 80);
+    Serial.printf("[mDNS] actief: http://%s.local/\n", mdns_host);
+  } else {
+    Serial.println("[mDNS] starten mislukt");
+  }
+}
 bool rescan_ds_requested = false;  // v2.4 FIX 5: vlag voor async-safe rescan vanuit loop()
 
 
@@ -1388,7 +1466,14 @@ void setup() {
 
 
 
+  // v3.6: hostnaam (vóór WiFi.mode), geen modem-slaap, gebeurtenissen volgen
+  makeMdnsHost();
+  wifi_configured = wifi_ssid[0] && strcmp(wifi_ssid, "netwerknaam") != 0;
+  WiFi.onEvent(onWiFiEvent);
+  WiFi.setHostname(mdns_host);
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  WiFi.setAutoReconnect(true);
 
   // === DYNAMISCHE WIFI + STATIC IP UIT NVS ===
   IPAddress local_ip;
@@ -1430,7 +1515,10 @@ void setup() {
     ap_mode_active = false;  // Normale mode
   } else {
 
-    Serial.println("\nWiFi verbinding mislukt! Starten Access Point voor configuratie...");
+    // v3.6: SSID ingesteld maar geen router → nood-AP, sensoren en verwarming blijven werken,
+    //       de router wordt verder geprobeerd (loop). Geen SSID → AP-setupmodus zoals vroeger.
+    if (wifi_configured) Serial.println("\nRouter niet bereikbaar → nood-AP; blijft de router proberen...");
+    else Serial.println("\nGeen WiFi ingesteld → Access Point voor configuratie...");
     
     WiFi.mode(WIFI_AP_STA);
     
@@ -1451,10 +1539,15 @@ void setup() {
     
     // Belangrijk: geef de iPhone tijd om het netwerk te zien
     delay(1000);
-    ap_mode_active = true;
+    if (wifi_configured) {
+      ap_rescue = true;           // v3.6: nood-AP, normale werking blijft
+      wifi_lost_since = millis();
+      WiFi.begin(wifi_ssid, wifi_pass);   // blijven proberen op de achtergrond
+    } else {
+      ap_mode_active = true;      // setupmodus: geen metingen, geen verwarming
+    }
 
-    Serial.println("AP-mode actief → webserver en DNS blijven actief");
-    ap_mode_active = true;
+    Serial.println("AP actief → webserver en DNS blijven actief");
     
     dnsServer.start(DNS_PORT, "*", ap_ip);
     Serial.println("DNS captive portal actief (alle domeinen → 192.168.4.1)");
@@ -1477,7 +1570,8 @@ void setup() {
 
   Serial.println("\nIP: " + WiFi.localIP().toString());
 
-  // Geen mDNS (verwijderd in v2.9 wegens Matter; terug in v3.3). Toegang via static IP (bv. http://192.168.0.80)
+  // v3.6: mDNS terug (enkel met een echte WiFi-verbinding)
+  if (WiFi.status() == WL_CONNECTED) { startMdns(); wifi_got_ip = false; }
 
 
 
@@ -2070,7 +2164,7 @@ server.on("/toggle_pixel", HTTP_GET, [](AsyncWebServerRequest *request) {
   });
 
 // === CAPTIVE PORTAL HANDLERS — alleen registreren in AP mode (v2.10: heap besparing) ===
-if (ap_mode_active) {
+if (ap_mode_active || ap_rescue) {   // v3.6: ook bij het nood-AP
   server.on("/hotspot-detect.html", HTTP_GET, [](AsyncWebServerRequest *request) {
     request->redirect("/settings");
   });
@@ -2154,6 +2248,25 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
       (int)((ESP.getFreeHeap() * 100) / ESP.getHeapSize()),
       (unsigned)(ESP.getMaxAllocHeap() / 1024), (unsigned)(ESP.getMinFreeHeap() / 1024));
     p->printf("<tr><td class=\"lbl\">WiFi-signaal</td><td class=\"inp\">%d dBm</td></tr>", (int)WiFi.RSSI());
+    // v3.6: WiFi-verbinding en mDNS
+    {
+      p->print(F("<tr><td class=\"lbl\">WiFi</td><td class=\"inp\">"));
+      if (WiFi.status() == WL_CONNECTED && wifi_connected_since) {
+        unsigned long c = (millis() - wifi_connected_since) / 1000;
+        p->printf("verbonden sinds %lu d %lu u %lu min", c / 86400, (c % 86400) / 3600, (c % 3600) / 60);
+      } else if (ap_mode_active) {
+        p->print(F("<b>setupmodus</b> (geen WiFi ingesteld)"));
+      } else {
+        p->printf("<b style=\"color:#c00\">niet verbonden</b> (%lu s)", wifi_lost_since ? (millis() - wifi_lost_since) / 1000 : 0UL);
+      }
+      if (ap_rescue) p->print(F(" &middot; <b style=\"color:#c60\">nood-AP actief</b>"));
+      if (wifi_drops == 0) p->print(F(" &middot; niet weggevallen sinds de opstart"));
+      else p->printf(" &middot; <b style=\"color:#c60\">%u keer weggevallen</b>", (unsigned)wifi_drops);
+      if (wifi_last_reason) p->printf(" &middot; laatste reden: %s", wifiReasonText(wifi_last_reason));
+      p->print(F("</td></tr>"));
+      p->printf("<tr><td class=\"lbl\">mDNS</td><td class=\"inp\">%s%s.local%s</td></tr>",
+        mdns_ok ? "http://" : "", mdns_host, mdns_ok ? "/" : " (niet actief)");
+    }
     // v3.4: SCD41-toestand
     p->print(F("<tr><td class=\"lbl\">SCD41</td><td class=\"inp\">"));
     if (!co2_enabled) {
@@ -2642,19 +2755,44 @@ void loop() {
 
   // WiFi status bewaken — herverbinden bij verlies
   crumbL(CL_WIFI);
-  wl_status_t current_status = WiFi.status();
-  if (current_status != last_wifi_status) {
-    if (current_status != WL_CONNECTED && !ap_mode_active) {
-      Serial.println("[WiFi] Verbinding verloren — herverbinden...");
-      WiFi.reconnect();
+  // v3.6: zelf blijven herverbinden, nood-AP sluiten, mDNS herstarten, laatste redmiddel herstart
+  if (wifi_configured) {
+    if (WiFi.status() == WL_CONNECTED) {
+      if (wifi_lost_since) {
+        Serial.printf("[WiFi] Terug verbonden na %lu s\n", (millis() - wifi_lost_since) / 1000);
+        wifi_lost_since = 0;
+      }
+      if (ap_rescue) {
+        Serial.println("[WiFi] Router terug → nood-AP gesloten");
+        dnsServer.stop();
+        WiFi.softAPdisconnect(true);
+        WiFi.mode(WIFI_STA);
+        WiFi.setSleep(false);
+        ap_rescue = false;
+      }
+      if (wifi_got_ip) { wifi_got_ip = false; startMdns(); }
+    } else {
+      if (!wifi_lost_since) {
+        wifi_lost_since = millis();
+        wifi_last_try = millis();
+        Serial.println("[WiFi] Verbinding verloren — blijft proberen");
+      }
+      if (millis() - wifi_last_try >= WIFI_RETRY_MS) {
+        wifi_last_try = millis();
+        Serial.printf("[WiFi] Opnieuw verbinden (al %lu s weg)\n", (millis() - wifi_lost_since) / 1000);
+        WiFi.reconnect();
+      }
+      if (millis() - wifi_lost_since >= WIFI_RESTART_MS && WiFi.softAPgetStationNum() == 0) {
+        Serial.println("[WiFi] 15 min zonder verbinding → herstart");
+        crumbL(CL_WIFILOST);
+        crumbW(CW_NONE);
+        Serial.flush();
+        ESP.restart();
+      }
     }
-    last_wifi_status = current_status;
   }
 
-
-
-
-  if (ap_mode_active) {
+  if (ap_mode_active || ap_rescue) {
     dnsServer.processNextRequest();
   }
 
