@@ -1,4 +1,4 @@
-// ESP32-C6 ROOM v3.5 — 20 nov 2026 — zonder Matter
+// ESP32-C6 ROOM v3.5.1 — 22 nov 2026 — zonder Matter
 // Zarlar thuisautomatisering — Room controller (Apple Home via de RPi-bridge, niet meer via Matter op de ESP32)
 // Filip Delannoy — Zarlardinge (BE)
 //
@@ -8,6 +8,18 @@
 // PARTITIETABEL: Compileer met "partitions.csv" in de schetsmap (Custom partition scheme):
 //   nvs (20 KB), otadata (8 KB), app0 (6 MB), app1 (6 MB), spiffs (~4 MB)
 //
+// v3.5.1 (22nov26): VEILIGE OTA (les uit Sjalay v1.10, en onze eigen Diagnose #29 van 20/11).
+//                 (1) Bij de start van een upload eerst een vorige, afgebroken upload opruimen (Update.abort()).
+//                 Voorheen bleef Update dan "bezig" en faalde elke volgende upload tot een /reboot.
+//                 (2) Update.begin() wordt gecontroleerd; lukt dat niet, dan wordt er niets geschreven.
+//                 (3) "Update succesvol" alleen als Update.end(true) echt gelukt is (vlag ota_done). Voorheen
+//                 meldde een afgebroken upload "succes" (geen fout gezien) en herstartte in de oude firmware.
+//                 (4) "Update mislukt!" toont de reden (eerste fout: start/schrijven/afronden/onvolledig).
+//                 (5) Herstart 3 s na het antwoord vanuit loop() i.p.v. delay() in de webserver-taak, zodat het
+//                 antwoord ook via een trage verbinding (4G/Tailscale) aankomt. Idem voor /reboot,
+//                 'Instellingen opslaan' en /factory_reset.
+//                 (6) Diagnose: aantal mislukte uploads sinds de opstart + laatste reden.
+//                 Geen /json-wijzigingen.
 // v3.5 (20nov26): TEMPERATUURVEILIGHEID (beslist door FiDel 20/11, melding uit het Sjalay-gesprek).
 //                 (1) Grens geldige temperatuur −10…40 °C (was 5…40, vaste waarden in de code): onder 5 °C
 //                 werden beide sensoren "defect", room_temp werd 0,0 en de verwarming ging eindeloos aan.
@@ -152,7 +164,7 @@ void releaseUsbPins() {
   usb_serial_jtag_ll_phy_enable_pad(false);
 }
 
-#define ROOM_VERSION "v3.5"  // v3.2: enige plaats met het versienummer
+#define ROOM_VERSION "v3.5.1"  // v3.2: enige plaats met het versienummer
 
 // v3.2: reden van de laatste herstart, leesbaar
 esp_reset_reason_t boot_reason = ESP_RST_UNKNOWN;
@@ -279,6 +291,12 @@ const char* NVS_DS_PRIMARY          = "ds_primary";      // Index van primaire s
 uint32_t dht_reads = 0, dht_fails = 0;   // sinds de opstart
 bool hist_write_failed = false;          // v3.4.4: bewaren herstartgeschiedenis mislukt
 volatile bool nvs_cleanup_requested = false;  // v3.4.5: via /nvs_cleanup, uitgevoerd in loop()
+// v3.5.1: veilige OTA
+char ota_err[64] = "";                        // eerste fout van de lopende/laatste upload ("" = geen)
+char ota_last_fail[64] = "";                  // reden van de laatste mislukte upload (voor Diagnose)
+bool ota_done = false;                        // laatste upload correct afgerond (Update.end(true) OK)
+uint32_t ota_fail_count = 0;                  // mislukte uploads sinds de opstart
+volatile unsigned long restart_at = 0;        // millis() waarop loop() herstart (0 = geen)
 
 // v3.4.5: naamruimtes die deze sketch (of het systeem) gebruikt — die blijven altijd staan
 bool nvsKeepNamespace(const char* ns) {
@@ -1904,30 +1922,50 @@ void setup() {
 
   server.on("/update", HTTP_POST, [](AsyncWebServerRequest *request) {
     crumbW(CW_OTA);  // v3.3
-    bool success = !Update.hasError();
-    request->send(200, "text/html", success 
-      ? "<h2 style='color:#0f0'>Update succesvol!</h2><p>Rebooting...</p>" 
-      : "<h2 style='color:#f00'>Update mislukt!</h2><p>Probeer opnieuw.</p><a href='/update'>Terug</a>");
-    if (success) { delay(1000); ESP.restart(); }
+    bool ok = ota_done && ota_err[0] == 0;   // v3.5.1: alleen OK als Update.end(true) gelukt is
+    if (ok) {
+      request->send(200, "text/html", "<h2 style='color:#0f0'>Update succesvol!</h2><p>Herstart binnen enkele seconden...</p>");
+      restart_at = millis() + 3000UL;        // v3.5.1: herstart vanuit loop(), antwoord komt eerst aan
+    } else {
+      if (ota_err[0] == 0) strlcpy(ota_err, Update.hasError() ? Update.errorString() : "upload onvolledig", sizeof(ota_err));
+      if (Update.isRunning()) Update.abort(); // v3.5.1: niet "bezig" laten hangen
+      strlcpy(ota_last_fail, ota_err, sizeof(ota_last_fail));
+      ota_fail_count++;
+      Serial.printf("[OTA] Mislukt: %s\n", ota_err);
+      request->send(200, "text/html", String("<h2 style='color:#f00'>Update mislukt!</h2><p>Reden: ") + ota_err +
+        "</p><p>De huidige firmware blijft draaien. Probeer opnieuw.</p><a href='/update'>Terug</a>");
+    }
   }, [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
     if (!index) {
       Serial.println("\n=== OTA UPDATE GESTART ===");
       Serial.printf("Bestand: %s (%u bytes)\n", filename.c_str(), request->contentLength());
-      Update.begin(UPDATE_SIZE_UNKNOWN);
+      ota_err[0] = 0;
+      ota_done = false;
+      if (Update.isRunning()) {              // v3.5.1: vorige (afgebroken) upload opruimen
+        Serial.println("[OTA] Vorige onvolledige upload afgebroken");
+        Update.abort();
+      }
+      if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+        Update.printError(Serial);
+        snprintf(ota_err, sizeof(ota_err), "start mislukt: %s", Update.errorString());
+      }
     }
-    size_t written = Update.write(data, len);
-    if (written != len) Serial.printf("Fout bij schrijven: %u/%u\n", written, len);
+    if (ota_err[0] == 0 && Update.write(data, len) != len) {
+      Update.printError(Serial);
+      snprintf(ota_err, sizeof(ota_err), "schrijven mislukt: %s", Update.errorString());
+    }
     static unsigned long lastPrint = 0;
     if (millis() - lastPrint > 1000) {
       lastPrint = millis();
       Serial.printf("Geüpload: %u/%u bytes\n", index + len, request->contentLength());
     }
-    if (final) {
+    if (final && ota_err[0] == 0) {
       if (Update.end(true)) {
-        Serial.printf("OTA succesvol: %u bytes\n", index + len);
-        Serial.println("Rebooting...\n");
+        ota_done = true;
+        Serial.printf("[OTA] Klaar: %u bytes\n", (unsigned)(index + len));
       } else {
-        Serial.println("OTA fout: " + String(Update.errorString()));
+        Update.printError(Serial);
+        snprintf(ota_err, sizeof(ota_err), "afronden mislukt: %s", Update.errorString());
       }
     }
   });
@@ -1936,8 +1974,7 @@ void setup() {
   server.on("/reboot", HTTP_GET, [](AsyncWebServerRequest *request) {
     crumbW(CW_OTHER);  // v3.3
     request->send(200, "text/html", "<h2>Rebooting ESP32...</h2>");
-    delay(500);
-    ESP.restart();
+    restart_at = millis() + 1000UL;  // v3.5.1: herstart vanuit loop(), niet met delay() in de webserver
   });
 
 
@@ -2087,6 +2124,12 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     // v3.4.4: DHT22-uitlezing en NVS-bezetting
     p->printf("<tr><td class=\"lbl\">DHT22</td><td class=\"inp\">%u mislukte metingen van %u sinds de opstart</td></tr>",
               dht_fails, dht_reads);
+    // v3.5.1: OTA
+    p->print(F("<tr><td class=\"lbl\">OTA</td><td class=\"inp\">"));
+    if (ota_fail_count == 0) p->print(F("geen mislukte uploads sinds de opstart"));
+    else p->printf("<b style=\"color:#c00\">%u mislukte upload(s)</b> sinds de opstart &middot; laatste reden: %s",
+                   (unsigned)ota_fail_count, ota_last_fail);
+    p->print(F("</td></tr>"));
     {
       nvs_stats_t st;
       p->print(F("<tr><td class=\"lbl\">NVS-geheugen</td><td class=\"inp\">"));
@@ -2357,8 +2400,7 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
 
   request->send(200, "text/html",
     "<h2 style='text-align:center;padding:50px;color:#336699;'>Instellingen opgeslagen!<br>Rebooting...</h2>");
-  delay(800);
-  ESP.restart();
+  restart_at = millis() + 1500UL;  // v3.5.1: herstart vanuit loop()
 });  // einde save_settings
 
 
@@ -2370,8 +2412,7 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     crumbW(CW_OTHER);  // v3.3
     request->send(200, "text/html", "<h2 style='color:#f00'>Factory reset uitgevoerd!<br>Rebooting...</h2>");
     preferences.clear();
-    delay(1000);
-    ESP.restart();
+    restart_at = millis() + 1500UL;  // v3.5.1: herstart vanuit loop()
   });
 
   // v2.4 FIX 7: Crash-log wissen via webUI
@@ -2699,6 +2740,13 @@ void loop() {
     scanDS18B20();
     readDS18B20temps();
     Serial.printf("[RESCAN] DS18B20: %d sensor(s) gevonden\n", ds_count);
+  }
+
+  // v3.5.1: geplande herstart (na geslaagde OTA of /reboot)
+  if (restart_at && (long)(millis() - restart_at) >= 0) {
+    Serial.println("[RESTART] Geplande herstart");
+    Serial.flush();
+    ESP.restart();
   }
 
   // v3.4.5: NVS opruimen op vraag, daarna herstart
