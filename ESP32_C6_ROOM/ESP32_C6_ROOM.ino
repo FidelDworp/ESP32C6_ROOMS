@@ -18,7 +18,7 @@
 //                 ESP32 sneller dan de router): NOOD-AP "ROOM-<naam>" op 192.168.4.1, maar de controller blijft de
 //                 router proberen en sluit het nood-AP zodra de verbinding er is. Sensoren, verwarming en
 //                 vorstbeveiliging blijven werken. Voorheen bleef hij dan voor altijd in AP-mode zonder verwarming.
-//                 (4) mDNS terug: <kamernaam>.local (kleine letters, a-z/0-9/-, bv. R-EETPL → r-eetpl.local), na
+//                 (4) mDNS terug: <kamernaam>.local (kleine letters, a-z/0-9/-, bv. "Eetplaats" → eetplaats.local), na
 //                 elke (her)verbinding opnieuw gestart.
 //                 (5) Diagnose: WiFi verbonden sinds, aantal keer weggevallen + laatste reden, mDNS-naam.
 //                 Geen /json-wijzigingen.
