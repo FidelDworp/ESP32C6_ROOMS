@@ -1,4 +1,4 @@
-// ESP32-C6 ROOM v3.5.1 — 22 nov 2026 — zonder Matter
+// ESP32-C6 ROOM v3.5.2 — 22 nov 2026 — zonder Matter
 // Zarlar thuisautomatisering — Room controller (Apple Home via de RPi-bridge, niet meer via Matter op de ESP32)
 // Filip Delannoy — Zarlardinge (BE)
 //
@@ -8,6 +8,19 @@
 // PARTITIETABEL: Compileer met "partitions.csv" in de schetsmap (Custom partition scheme):
 //   nvs (20 KB), otadata (8 KB), app0 (6 MB), app1 (6 MB), spiffs (~4 MB)
 //
+// v3.5.2 (22nov26): OPRUIMEN + GENERIC ADC (beslist door FiDel 22/11).
+//                 (1) Stofsensor (Sharp) volledig weg: code, instelling, /json-key l. IO12 en IO7 zijn nu
+//                 gewone ingangen zonder pull-up (IO12 werd vroeger als uitgang gestuurd).
+//                 (2) Zonlicht weg: /json-key n (was altijd 0 — de zon komt van S-OUTSIDE).
+//                 (3) Lichtstraal ("beam") vervangen door GENERIC ADC op GP3 (IO2): spanning in volt,
+//                 /json-key ar (2 decimalen) of null als hij uit staat. Instellingen: aan/uit, bijnaam
+//                 (getoond op /advanced en de landingspagina) en factor voor een spanningsdeler
+//                 (standaard 1,00). Meetbereik op de pin zelf 0…±3,1 V. Keys aa/ab en "Beam threshold" weg.
+//                 GAS v1.6 logt l, n, aa, ab al niet meer; ar komt in kolom AP "GP3 (V)".
+//                 (4) Oude NVS-keys dust_en, beam_en, beam_thresh worden bij de opstart eenmalig gewist.
+//                 (5) Herstartgeschiedenis: bij een geplande herstart (OTA, /reboot, instellingen opslaan,
+//                 factory reset) staat weer de echte oorzaak, niet de /json-opvraging van het Dashboard
+//                 die in de 3 s wachttijd binnenkwam.
 // v3.5.1 (22nov26): VEILIGE OTA (les uit Sjalay v1.10, en onze eigen Diagnose #29 van 20/11).
 //                 (1) Bij de start van een upload eerst een vorige, afgebroken upload opruimen (Update.abort()).
 //                 Voorheen bleef Update dan "bezig" en faalde elke volgende upload tot een /reboot.
@@ -164,7 +177,7 @@ void releaseUsbPins() {
   usb_serial_jtag_ll_phy_enable_pad(false);
 }
 
-#define ROOM_VERSION "v3.5.1"  // v3.2: enige plaats met het versienummer
+#define ROOM_VERSION "v3.5.2"  // v3.2: enige plaats met het versienummer
 
 // v3.2: reden van de laatste herstart, leesbaar
 esp_reset_reason_t boot_reason = ESP_RST_UNKNOWN;
@@ -189,12 +202,12 @@ const char* resetReasonText(esp_reset_reason_t r) {
 // Twee sporen: de loop-taak en de webserver-taak (AsyncTCP) lopen apart.
 enum CrumbLoop : uint8_t {
   CL_NONE = 0, CL_SETUP, CL_WIFI, CL_SERIAL, CL_FADE, CL_PIR, CL_PIXLOGIC, CL_HEAT,
-  CL_DSSCAN, CL_IDLE, CL_NVS, CL_DHT, CL_DS, CL_LDR, CL_DUST, CL_CO2, CL_REST, CL_COUNT
+  CL_DSSCAN, CL_IDLE, CL_NVS, CL_DHT, CL_DS, CL_LDR, CL_ADC, CL_CO2, CL_REST, CL_COUNT
 };
 const char* const CRUMB_LOOP_TXT[CL_COUNT] = {
   "onbekend", "opstarten (setup)", "WiFi-controle", "seriële commando's", "pixels dimmen/tonen",
   "PIR lezen", "pixel-logica", "verwarmingslogica", "DS18B20 opnieuw zoeken", "wachten (rust)",
-  "NVS schrijven (heap-log)", "DHT22 lezen", "DS18B20 lezen", "LDR lezen", "stofsensor lezen",
+  "NVS schrijven (heap-log)", "DHT22 lezen", "DS18B20 lezen", "LDR lezen", "Generic ADC lezen (GP3)",
   "SCD41 lezen (I2C)", "berekeningen"
 };
 enum CrumbWeb : uint8_t {
@@ -222,14 +235,14 @@ Preferences preferences;     // Globale Preferences instantie
 #define ONE_WIRE_PIN   3   // IO3  - DS18B20 OneWire     (was GPIO4)
 #define PIR_MOV1       5   // IO5  - MOV1 PIR            (was GPIO17)
 #define PIR_MOV2      19   // IO19 - MOV2 PIR            (was GPIO26)
-#define SHARP_LED     12   // IO12 - Sharp dust LED out  (was GPIO19)
-#define SHARP_ANALOG   7   // IO7  - Sharp dust analog   (was GPIO32)
+#define FREE_IO12     12   // v3.5.2: vrij (was Sharp stof-LED) — gewone ingang
+#define FREE_IO7       7   // v3.5.2: vrij (was Sharp stof analoog) — gewone ingang
 #define LDR_ANALOG     1   // IO1  - LDR1 analog         (was GPIO33, 10k pull-up naar 3V3!)
 // IO18 vrij sinds v3.4 (was CO2 PWM) — gepland voor GP4 (v3.9)
 #define I2C_SDA       13   // v3.4: IO13 - I2C SDA (SCD41)
 #define I2C_SCL       11   // v3.4: IO11 - I2C SCL (SCD41)
 #define TSTAT_PIN     10   // IO10 - TSTAT switch        (was GPIO27)
-#define OPTION_LDR     2   // IO2  - LDR2 analog         (was GPIO14)
+#define GP3_ADC_PIN    2   // IO2  - GP3: Generic ADC (v3.5.2; was beam/LDR2, GPIO14)
 #define NEOPIXEL_PIN   4   // IO4  - Pixels data         (was GPIO16)
 
 // ============== SENSOR HEALTH THRESHOLDS (v2.8) ==============
@@ -256,14 +269,14 @@ const char* NVS_HOME_MODE           = "home_mode";
 const char* NVS_LIGHT_THRESHOLD     = "light_thresh";
 const char* NVS_MOV_WINDOW          = "mov_window";
 const char* NVS_LDR_DARK            = "ldr_dark";
-const char* NVS_BEAM_THRESHOLD      = "beam_thresh";
 const char* NVS_CO2_ENABLED         = "co2_en";          // v3.4: = SCD41 aan/uit
 const char* NVS_SCD_ASC             = "scd_asc";         // v3.4: bool, automatische kalibratie (standaard aan)
 const char* NVS_SCD_TOFF            = "scd_toff";        // v3.4: float, temperatuuroffset °C (standaard 4,0)
-const char* NVS_DUST_ENABLED        = "dust_en";
 const char* NVS_MOV2_ENABLED        = "mov2_en";
 const char* NVS_TSTAT_ENABLED       = "tstat_en";
-const char* NVS_BEAM_ENABLED        = "beam_en";
+const char* NVS_ADC_ENABLED         = "adc_en";          // v3.5.2: Generic ADC (GP3) aan/uit
+const char* NVS_ADC_NAME            = "adc_name";        // v3.5.2: bijnaam
+const char* NVS_ADC_FACTOR          = "adc_fac";         // v3.5.2: factor spanningsdeler
 const char* NVS_NEO_R               = "neo_r";
 const char* NVS_NEO_G               = "neo_g";
 const char* NVS_NEO_B               = "neo_b";
@@ -297,6 +310,7 @@ char ota_last_fail[64] = "";                  // reden van de laatste mislukte u
 bool ota_done = false;                        // laatste upload correct afgerond (Update.end(true) OK)
 uint32_t ota_fail_count = 0;                  // mislukte uploads sinds de opstart
 volatile unsigned long restart_at = 0;        // millis() waarop loop() herstart (0 = geen)
+volatile uint8_t restart_cause = 0;           // v3.5.2: CrumbWeb-code van wie de herstart vroeg
 
 // v3.4.5: naamruimtes die deze sketch (of het systeem) gebruikt — die blijven altijd staan
 bool nvsKeepNamespace(const char* ns) {
@@ -408,7 +422,6 @@ int home_mode_default        = 0;              // 0 = Weg
 int light_dark_threshold     = 50;
 unsigned long mov_window_ms  = 60000;
 int ldr_dark_threshold       = 50;
-int beam_alert_threshold     = 50;
 
 
 
@@ -431,10 +444,12 @@ char  scd_frc_result[64] = "";
 char  scd_diag[160] = "";        // v3.4.1: stap + foutmelding + I2C-scan bij "ontbreekt"
 float scd_temp = 0.0f;          // al
 int   scd_humi = 0;             // am
-bool dust_enabled  = false;  // v1.9: default false — delayMicroseconds(9680) kan WDT triggeren als sensor niet aanwezig
 bool mov2_enabled  = true;
 bool tstat_enabled = true;
-bool beam_enabled  = true;
+bool  adc_enabled  = false;     // v3.5.2: Generic ADC op GP3 (IO2)
+char  adc_name[21] = "";        // v3.5.2: bijnaam ("" = "Generic ADC")
+float adc_factor   = 1.0f;      // v3.5.2: spanningsdeler (gemeten V × factor)
+float adc_volt     = NAN;       // v3.5.2: laatste waarde in V (NAN = uit)
 bool serial_verbose = true;   // Statusrapport elke 15s via serial
 int  serial_interval = 15;   // v1.8: interval serial rapport in seconden (instelbaar in /settings, 5-30s)
 int pixels_num     = 8;     // Default. Configureerbaar via NVS (1-30)
@@ -466,15 +481,13 @@ int home_mode = 1;          // 1 = Thuis (hardware thermostaat prioriteit), 0 = 
 
 // Sensor variabelen
 float temp_dht = NAN, temp_ds = NAN, humi = 0, dew = 0;  // v3.5: NAN tot de eerste geldige meting
-int light_ldr = 0, sun_light = 0, dust = 0, co2 = 0;
+int light_ldr = 0, co2 = 0;  // v3.5.2: sun_light en dust weg
 int tstat_on = 0, mov1_triggers = 0, mov2_triggers = 0;
 int mov1_light = 0, mov2_light = 0;
 unsigned long uptime_sec = 0;
 int dew_alert = 0;       // Voor k: DewAlert (temp_ds < dew ? 1 : 0)  
 int night = 0;           // Voor q: Night (light_ldr > 50 ? 1 : 0, aangezien light_ldr donker=100, helder=0)  
 int bed = 0;             // Voor r: Bed switch (0/1, hardcoded initieel 0, later togglebaar)  
-int beam_value = 0;      // Voor o: BEAMvalue (geschaald 0-100 van analogRead(OPTION_LDR))  
-int beam_alert_new = 0;  // Voor p: BEAMalert (beam_value > 50 ? 1 : 0)  
 uint8_t neo_r = 255;       // Voor s: R waarde (hardcoded 255)  
 uint8_t neo_g = 255;       // Voor t: G waarde (hardcoded 255)  
 uint8_t neo_b = 255;       // Voor u: B waarde (hardcoded 255)  
@@ -634,7 +647,23 @@ float calculateDewPoint(float t, float h) { return isnan(t) || isnan(h) ? 0 : t 
 
 int scaleLDR(int r) { return map(constrain(r, 100, 3800), 100, 3800, 100, 0); }
 
-int readDust() { digitalWrite(SHARP_LED, LOW); delayMicroseconds(280); int v = analogRead(SHARP_ANALOG); delayMicroseconds(40); digitalWrite(SHARP_LED, HIGH); delayMicroseconds(9680); return v; }
+// v3.5.2: Generic ADC — gemiddelde van 8 metingen in mV (gekalibreerd), × factor → V
+float readGenericAdc() {
+  uint32_t mv = 0;
+  for (int i = 0; i < 8; i++) mv += analogReadMilliVolts(GP3_ADC_PIN);
+  return (mv / 8.0f) / 1000.0f * adc_factor;
+}
+// v3.5.2: tekst veilig in HTML (en tussen dubbele aanhalingstekens in JS) afdrukken
+void printEsc(Print* p, const char* s) {
+  for (; *s; s++) {
+    if      (*s == '<')  p->print(F("&lt;"));
+    else if (*s == '>')  p->print(F("&gt;"));
+    else if (*s == '&')  p->print(F("&amp;"));
+    else if (*s == '"')  p->print(F("&quot;"));
+    else if (*s == '\\') p->print(F("&#92;"));
+    else                 p->print(*s);
+  }
+}
 
 // ============== DS18B20 MULTI-SENSOR (v1.3) ==============
 
@@ -912,9 +941,7 @@ const char* getJSON() {
     "\"i\":%.1f,"     // dew °C
     "\"j\":%d,"       // dew_alert (0/1)
     "\"k\":%d,"       // co2 (ppm)
-    "\"l\":%d,"       // dust (raw)
     "\"m\":%d,"       // light_ldr (0-100)
-    "\"n\":%d,"       // sun_light (lux)
     "\"o\":%d,"       // night (0/1)
     "\"p\":%d,"       // bed (0/1)
     "\"q\":%d,"       // neo_r (0-255)
@@ -927,8 +954,6 @@ const char* getJSON() {
     "\"x\":%d,"       // mov2_triggers (/min)
     "\"y\":%d,"       // mov1_light (lamp aan 0/1)
     "\"z\":%d,"       // mov2_light (lamp aan 0/1)
-    "\"aa\":%d,"      // beam_value (0-100)
-    "\"ab\":%d,"      // beam_alert (0/1)
     "\"ac\":%d,"      // wifi_rssi (dBm)
     "\"ad\":%d,"      // free_heap (%)
     "\"ae\":%u,"      // largest_block (KB)
@@ -942,11 +967,11 @@ const char* getJSON() {
     isnan(humi) ? 0 : (int)round(humi),  // v2.7: NaN-guard — anders INT_MAX (2147483647) in JSON
     isnan(dew)  ? 0.0f : dew,
     dew_alert,
-    co2, dust, light_ldr, sun_light, night, bed,
+    co2, light_ldr, night, bed,
     (int)neo_r, (int)neo_g, (int)neo_b,
     pixel_on_str, pixel_mode_str,
     home_mode, mov1_triggers, mov2_triggers,
-    mov1_light, mov2_light, beam_value, beam_alert_new,
+    mov1_light, mov2_light,
     (int)WiFi.RSSI(),
     (int)((ESP.getFreeHeap() * 100) / ESP.getHeapSize()),
     (unsigned)(ESP.getMaxAllocHeap() / 1024),
@@ -967,6 +992,13 @@ const char* getJSON() {
     char scd_entry[32];
     snprintf(scd_entry, sizeof(scd_entry), ",\"al\":%.1f,\"am\":%d", scd_temp, scd_humi);
     strncat(json, scd_entry, sizeof(json) - strlen(json) - 1);
+  }
+  // v3.5.2: ar = Generic ADC op GP3 in volt; null als hij uit staat
+  {
+    char adc_entry[24];
+    if (adc_enabled && !isnan(adc_volt)) snprintf(adc_entry, sizeof(adc_entry), ",\"ar\":%.2f", adc_volt);
+    else strcpy(adc_entry, ",\"ar\":null");
+    strncat(json, adc_entry, sizeof(json) - strlen(json) - 1);
   }
   strncat(json, "}", sizeof(json) - strlen(json) - 1);
 
@@ -1118,15 +1150,13 @@ void setup() {
     preferences.putInt(NVS_LIGHT_THRESHOLD, 50);
     preferences.putULong(NVS_MOV_WINDOW, 60000UL);
     preferences.putInt(NVS_LDR_DARK, 50);
-    preferences.putInt(NVS_BEAM_THRESHOLD, 50);
     
     preferences.putBool(NVS_CO2_ENABLED, false);
     preferences.putBool(NVS_SCD_ASC, true);      // v3.4
     preferences.putFloat(NVS_SCD_TOFF, 4.0f);    // v3.4
-    preferences.putBool(NVS_DUST_ENABLED, false);
     preferences.putBool(NVS_MOV2_ENABLED, true);
     preferences.putBool(NVS_TSTAT_ENABLED, true);
-    preferences.putBool(NVS_BEAM_ENABLED, true);
+    preferences.putBool(NVS_ADC_ENABLED, false);   // v3.5.2
     preferences.putUChar(NVS_NEO_R, 255);
     preferences.putUChar(NVS_NEO_G, 255);
     preferences.putUChar(NVS_NEO_B, 255);
@@ -1161,16 +1191,20 @@ void setup() {
   light_dark_threshold     = preferences.getInt(NVS_LIGHT_THRESHOLD, 50);
   mov_window_ms            = preferences.getULong(NVS_MOV_WINDOW, 60000UL);
   ldr_dark_threshold       = preferences.getInt(NVS_LDR_DARK, 50);
-  beam_alert_threshold     = preferences.getInt(NVS_BEAM_THRESHOLD, 50);
   
   co2_enabled      = preferences.getBool(NVS_CO2_ENABLED, false);   // v2.5 fix: default false. v3.4: = SCD41 aan/uit
   scd_asc          = preferences.getBool(NVS_SCD_ASC, true);        // v3.4
   scd_toff         = constrain(preferences.getFloat(NVS_SCD_TOFF, 4.0f), 0.0f, 20.0f);  // v3.4
-  dust_enabled     = preferences.getBool(NVS_DUST_ENABLED, false);  // v2.5 fix: default false
   mov2_enabled     = preferences.getBool(NVS_MOV2_ENABLED, true);
   num_mov_pixels = 1 + (mov2_enabled ? 1 : 0);  // v2.4 FIX 4: 'int' verwijderd — was lokale shadowing van globale variabele → globale bleef altijd 2
   tstat_enabled    = preferences.getBool(NVS_TSTAT_ENABLED, true);
-  beam_enabled     = preferences.getBool(NVS_BEAM_ENABLED, true);
+  adc_enabled      = preferences.getBool(NVS_ADC_ENABLED, false);   // v3.5.2
+  { String tmp = preferences.getString(NVS_ADC_NAME, "");
+    strlcpy(adc_name, tmp.c_str(), sizeof(adc_name)); }
+  adc_factor       = constrain(preferences.getFloat(NVS_ADC_FACTOR, 1.0f), 0.01f, 100.0f);
+  // v3.5.2: oude keys van stof en lichtstraal eenmalig wissen
+  { const char* oud[] = { "dust_en", "beam_en", "beam_thresh" };
+    for (const char* k : oud) if (preferences.isKey(k)) { preferences.remove(k); Serial.printf("[NVS] Oude key %s gewist\n", k); } }
   serial_verbose   = preferences.getBool(NVS_SERIAL_VERBOSE, true);
   serial_interval  = constrain(preferences.getInt(NVS_SERIAL_INTERVAL, 15), 5, 30);
   neo_r = preferences.getUChar(NVS_NEO_R, 255);
@@ -1267,9 +1301,9 @@ void setup() {
 
   pinMode(PIR_MOV1, INPUT_PULLUP);  // Voor 3.3V HC-SR501: beweging = LOW
   pinMode(PIR_MOV2, INPUT_PULLUP);
-  pinMode(SHARP_LED, OUTPUT); digitalWrite(SHARP_LED, HIGH);
+  pinMode(FREE_IO12, INPUT); pinMode(FREE_IO7, INPUT);   // v3.5.2: vrij (was stofsensor)
   pinMode(TSTAT_PIN, INPUT_PULLUP);
-  pinMode(OPTION_LDR, INPUT);
+  pinMode(GP3_ADC_PIN, INPUT);   // v3.5.2: Generic ADC
 
   pinMode(DHT_PIN, INPUT_PULLUP);   // v3.4.4: eigen DHT22-uitlezing (geen dht.begin() meer)
   // v3.4: I2C + SCD41, alleen als de sensor aan staat in /settings
@@ -1460,7 +1494,9 @@ void setup() {
         }
         p->print('"');
       }
-      p->print(F("]};</script>"));
+      p->print(F("],adc:\""));        // v3.5.2: bijnaam Generic ADC ("" = niet in gebruik)
+      if (adc_enabled) printEsc(p, adc_name[0] ? adc_name : "Generic ADC");
+      p->print(F("\"};</script>"));
       p->print(FPSTR(LANDING_SCRIPT));
       request->send(p);
     });
@@ -1572,13 +1608,6 @@ void setup() {
       p->printf("<tr><td class=\"label\">SCD41 temp</td><td class=\"value\">%.1f &deg;C</td><td class=\"control\"></td></tr>", scd_temp);
       p->printf("<tr><td class=\"label\">SCD41 vocht</td><td class=\"value\">%d %%</td><td class=\"control\"></td></tr>", scd_humi);
     }
-    if (dust_enabled) {
-      p->print(F("<tr><td class=\"label\">Stof</td><td class=\"value\">"));
-      p->print(dust);
-      // v2.8: warn als dust == 0 (sensor leest niet)
-      p->print(sensorWarn(dust == 0));
-      p->print(F("</td><td class=\"control\"></td></tr>"));
-    }
     p->print(F("<tr><td class=\"label\">Heating setpoint</td><td class=\"value\">"));
     p->printf("%d &deg;C", heating_setpoint);
     p->printf("</td><td class=\"control\"><form action=\"/set_setpoint\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\"><input type=\"range\" class=\"slider\" name=\"setpoint\" min=\"10\" max=\"30\" value=\"%d\" onchange=\"submitAjax(this.form);\"></form></td></tr>", heating_setpoint);
@@ -1681,15 +1710,13 @@ void setup() {
       p->print(F("</td><td class=\"control\"></td></tr>"));
     }
     p->print(F("</table>"));
-    if (beam_enabled) {
-      p->print(F("<div class=\"group-title\">BEWAKING</div>"
+    if (adc_enabled) {   // v3.5.2: Generic ADC op GP3
+      p->print(F("<div class=\"group-title\">ALGEMENE INGANG</div>"
         "<table>"
-        "<tr><td class=\"label\">Beam sensor waarde</td><td class=\"value\">"));
-      p->print(beam_value);
-      p->print(F("</td><td class=\"control\"></td></tr>"
-        "<tr><td class=\"label\">Beam alert</td><td class=\"value\">"));
-      // v2.12: dot — rood als alert actief
-      p->printf("<span class='dot' style='background:%s'></span>", beam_alert_new ? "#c00" : "#bbb");
+        "<tr><td class=\"label\">"));
+      printEsc(p, adc_name[0] ? adc_name : "Generic ADC");
+      p->print(F(" (GP3)</td><td class=\"value\">"));
+      if (isnan(adc_volt)) p->print(F("&mdash;")); else p->printf("%.2f V", adc_volt);
       p->print(F("</td><td class=\"control\"></td></tr></table>"));
     }
     p->print(F("<div class=\"group-title\">CONTROLLER</div>"
@@ -1722,10 +1749,10 @@ void setup() {
 
     // v2.5: JavaScript met bijgewerkte JSON-keys (schema §4.2)
     // Key-mapping: a=uptime, b=heating_on, c=setpoint, d=tstat, e=temp_dht, f=temp_ds,
-    //   g=vent%, h=humi, i=dew, j=dew_alert, k=co2, l=dust, m=ldr, n=sun_light,
+    //   g=vent%, h=humi, i=dew, j=dew_alert, k=co2, m=ldr,   (v3.5.2: l en n weg)
     //   o=night, p=bed, q=neo_r, r=neo_g, s=neo_b, t=pixel_on_str, u=pixel_mode_str,
     //   v=home_mode, w=mov1_trig, x=mov2_trig, y=mov1_light, z=mov2_light,
-    //   aa=beam_value, ab=beam_alert, ac=rssi, ad=free_heap%, ae=largest_block_KB, af=min_free_KB
+    //   ac=rssi, ad=free_heap%, ae=largest_block_KB, af=min_free_KB, ar=Generic ADC V (v3.5.2: aa/ab weg)
     // v2.8: sw() helper voor sensor health indicators (loopt in browser — nul ESP32-impact)
     p->print(F("<script>"
       // v2.16: timer fix — onafhankelijke klok, losgekoppeld van JSON-fetch
@@ -1789,8 +1816,7 @@ void setup() {
       // v2.19: Dim snelheid + Licht tijd — slider DOM-waarde lezen (geen JSON key)
       "else if(lbl.includes('Dim snelheid')){var sl=document.querySelector('input[name=duration]');if(sl)td.textContent=sl.value+' s';}"
       "else if(lbl.includes('Licht tijd')){var sl=document.querySelector('input[name=mins]');if(sl)td.textContent=sl.value+' min';}"
-      "else if(lbl.includes('Beam sensor waarde')) td.textContent=data.aa;"
-      "else if(lbl.includes('Beam alert')) td.innerHTML=dot(data.ab,'#c00');"
+      "else if(lbl.includes('(GP3)')) td.textContent=(data.ar===null||data.ar===undefined)?'\u2014':data.ar.toFixed(2)+' V';"
       "else if(lbl.includes('WiFi RSSI')) td.innerHTML=data.ac+' dBm'"
         "+sw(data.ac<-75,data.ac<-85);"
       "else if(lbl.includes('WiFi kwaliteit')) td.innerHTML=Math.min(100,Math.max(0,2*(data.ac+100)))+' %'"
@@ -1925,6 +1951,7 @@ void setup() {
     bool ok = ota_done && ota_err[0] == 0;   // v3.5.1: alleen OK als Update.end(true) gelukt is
     if (ok) {
       request->send(200, "text/html", "<h2 style='color:#0f0'>Update succesvol!</h2><p>Herstart binnen enkele seconden...</p>");
+      restart_cause = CW_OTA;                // v3.5.2
       restart_at = millis() + 3000UL;        // v3.5.1: herstart vanuit loop(), antwoord komt eerst aan
     } else {
       if (ota_err[0] == 0) strlcpy(ota_err, Update.hasError() ? Update.errorString() : "upload onvolledig", sizeof(ota_err));
@@ -1974,6 +2001,7 @@ void setup() {
   server.on("/reboot", HTTP_GET, [](AsyncWebServerRequest *request) {
     crumbW(CW_OTHER);  // v3.3
     request->send(200, "text/html", "<h2>Rebooting ESP32...</h2>");
+    restart_cause = CW_OTHER;        // v3.5.2
     restart_at = millis() + 1000UL;  // v3.5.1: herstart vanuit loop(), niet met delay() in de webserver
   });
 
@@ -2216,9 +2244,8 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     home_mode_default == 0 ? "selected" : "",
     home_mode_default == 1 ? "selected" : "");
   p->printf("<tr><td class=\"lbl\">LDR dark threshold</td><td class=\"inp\"><input type=\"number\" name=\"ldr_dark\" min=\"10\" max=\"100\" value=\"%d\"></td></tr>"
-    "<tr><td class=\"lbl\">Beam threshold</td><td class=\"inp\"><input type=\"number\" name=\"beam_thresh\" min=\"0\" max=\"100\" value=\"%d\"></td></tr>"
     "<tr><td class=\"lbl\">Aantal NeoPixels</td><td class=\"inp\"><input type=\"number\" name=\"pixels\" min=\"1\" max=\"30\" value=\"%d\"></td></tr>",
-    ldr_dark_threshold, beam_alert_threshold, pixels_num);
+    ldr_dark_threshold, pixels_num);
   p->printf("<tr><td class=\"lbl\">Standaard RGB</td><td class=\"inp\">"
     "R:<input type=\"number\" name=\"neo_r\" min=\"0\" max=\"255\" value=\"%d\" style=\"width:70px;\">"
     "G:<input type=\"number\" name=\"neo_g\" min=\"0\" max=\"255\" value=\"%d\" style=\"width:70px;\">"
@@ -2235,16 +2262,21 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
 
   p->printf("<tr><td class=\"lbl\">Optionele sensoren</td><td class=\"inp\">"
     "<label><input type=\"checkbox\" name=\"co2\"%s> SCD41 (CO&#8322;)</label> "
-    "<label><input type=\"checkbox\" name=\"dust\"%s> Stof</label> "
     "<label><input type=\"checkbox\" name=\"mov2\"%s> MOV2</label> "
-    "<label><input type=\"checkbox\" name=\"tstat\"%s> Thermostaat</label> "
-    "<label><input type=\"checkbox\" name=\"beam\"%s> Beam</label>"
+    "<label><input type=\"checkbox\" name=\"tstat\"%s> Thermostaat</label>"
     "</td></tr>",
     co2_enabled ? " checked" : "",
-    dust_enabled ? " checked" : "",
     mov2_enabled ? " checked" : "",
-    tstat_enabled ? " checked" : "",
-    beam_enabled ? " checked" : "");
+    tstat_enabled ? " checked" : "");
+  // v3.5.2: Generic ADC op GP3 (IO2)
+  p->printf("<tr><td class=\"lbl\">Generic ADC (GP3/IO2)</td><td class=\"inp\">"
+    "<label><input type=\"checkbox\" name=\"adc_en\"%s> in gebruik</label><br>"
+    "Bijnaam: <input type=\"text\" name=\"adc_name\" maxlength=\"20\" style=\"width:160px;\" value=\"",
+    adc_enabled ? " checked" : "");
+  printEsc(p, adc_name);
+  p->printf("\"> &nbsp; Factor: <input type=\"number\" name=\"adc_fac\" step=\"0.01\" min=\"0.01\" max=\"100\" value=\"%.2f\" style=\"width:80px;\">"
+    "<br><span style=\"font-size:12px;color:#666;\">Spanning op de pin 0&hellip;&plusmn;3,1 V. Hogere spanning enkel via een spanningsdeler; "
+    "factor = (R1+R2)/R2, bv. 10k/10k &rarr; 2,00. Uit = leeg in /json (ar) en de Sheet.</span></td></tr>", adc_factor);
   // v3.4: SCD41-instellingen + kalibratie in buitenlucht
   p->printf("<tr><td class=\"lbl\">SCD41</td><td class=\"inp\">"
     "<label><input type=\"checkbox\" name=\"scd_asc\"%s> Automatische kalibratie (ASC)</label>"
@@ -2334,16 +2366,16 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
   preferences.putFloat(NVS_DEW_MARGIN,     request->hasArg("dew_margin")      ? request->arg("dew_margin").toFloat()   : 2.0);
   preferences.putInt(NVS_HOME_MODE,        request->hasArg("home_mode")       ? request->arg("home_mode").toInt()      : 0);
   preferences.putInt(NVS_LDR_DARK,        request->hasArg("ldr_dark")        ? request->arg("ldr_dark").toInt()       : 50);
-  preferences.putInt(NVS_BEAM_THRESHOLD,  request->hasArg("beam_thresh")      ? request->arg("beam_thresh").toInt()    : 50);
 
   // Checkboxes
   preferences.putBool(NVS_CO2_ENABLED,    request->hasArg("co2"));
   preferences.putBool(NVS_SCD_ASC,        request->hasArg("scd_asc"));   // v3.4
   preferences.putFloat(NVS_SCD_TOFF,      request->hasArg("scd_toff") ? constrain(request->arg("scd_toff").toFloat(), 0.0f, 20.0f) : 4.0f);  // v3.4
-  preferences.putBool(NVS_DUST_ENABLED,   request->hasArg("dust"));
   preferences.putBool(NVS_MOV2_ENABLED,   request->hasArg("mov2"));
   preferences.putBool(NVS_TSTAT_ENABLED,  request->hasArg("tstat"));
-  preferences.putBool(NVS_BEAM_ENABLED,   request->hasArg("beam"));
+  preferences.putBool(NVS_ADC_ENABLED,    request->hasArg("adc_en"));   // v3.5.2
+  if (request->hasArg("adc_name")) preferences.putString(NVS_ADC_NAME, request->arg("adc_name").substring(0, 20));
+  if (request->hasArg("adc_fac"))  preferences.putFloat(NVS_ADC_FACTOR, constrain(request->arg("adc_fac").toFloat(), 0.01f, 100.0f));
   preferences.putBool(NVS_SERIAL_VERBOSE, request->hasArg("serial_verbose"));
   int new_interval = request->hasArg("serial_interval") ? constrain(request->arg("serial_interval").toInt(), 5, 30) : 15;
   preferences.putInt(NVS_SERIAL_INTERVAL, new_interval);
@@ -2400,6 +2432,7 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
 
   request->send(200, "text/html",
     "<h2 style='text-align:center;padding:50px;color:#336699;'>Instellingen opgeslagen!<br>Rebooting...</h2>");
+  restart_cause = CW_SAVE;         // v3.5.2
   restart_at = millis() + 1500UL;  // v3.5.1: herstart vanuit loop()
 });  // einde save_settings
 
@@ -2412,6 +2445,7 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     crumbW(CW_OTHER);  // v3.3
     request->send(200, "text/html", "<h2 style='color:#f00'>Factory reset uitgevoerd!<br>Rebooting...</h2>");
     preferences.clear();
+    restart_cause = CW_OTHER;        // v3.5.2
     restart_at = millis() + 1500UL;  // v3.5.1: herstart vanuit loop()
   });
 
@@ -2744,6 +2778,7 @@ void loop() {
 
   // v3.5.1: geplande herstart (na geslaagde OTA of /reboot)
   if (restart_at && (long)(millis() - restart_at) >= 0) {
+    if (restart_cause) crumbW(restart_cause);   // v3.5.2: echte oorzaak in de herstartgeschiedenis
     Serial.println("[RESTART] Geplande herstart");
     Serial.flush();
     ESP.restart();
@@ -2809,13 +2844,11 @@ void loop() {
   
   crumbL(CL_LDR);
   light_ldr = scaleLDR(analogRead(LDR_ANALOG));
-  crumbL(CL_DUST);
-  if (dust_enabled) dust = readDust();  // v1.9: bewaakt — delayMicroseconds blokkeert WDT als sensor niet aanwezig
+  crumbL(CL_ADC);
+  adc_volt = adc_enabled ? readGenericAdc() : NAN;   // v3.5.2: Generic ADC op GP3
   // v3.4: CO2 komt van de SCD41 (scdPoll hierboven, elke 5 s)
   night = (light_ldr > 50) ? 1 : 0;  
   // bed blijft voorlopig hardcoded 0, tot toggle in webserver  
-  beam_value = map(analogRead(OPTION_LDR), 0, 4095, 0, 100);  // Schaal ruwe ADC naar 0-100 voor o  
-  beam_alert_new = (beam_value > 50) ? 1 : 0;  // Voor p, vervangt oude beam_alert
 
 
   crumbL(CL_REST);
@@ -2879,9 +2912,6 @@ void loop() {
     }
     Serial.printf("Effective setpoint   : %.1f °C\n", effective_setpoint);
     Serial.printf("Heating aan          : %s\n", heating_on ? "JA" : "NEE");
-    if (dust_enabled) {
-      Serial.printf("Stof                 : %d\n", dust);
-    }
     if (co2_enabled) {
       Serial.printf("CO₂ (SCD41)          : %d ppm%s\n", co2, scd_ok ? "" : "  (sensor ontbreekt)");
       Serial.printf("SCD41 temp / vocht   : %.1f °C / %d %%\n", scd_temp, scd_humi);
@@ -2898,9 +2928,8 @@ void loop() {
     }
     Serial.printf("Night mode (donker)  : %s\n", night ? "JA" : "NEE");
     Serial.printf("Bed switch           : %s\n", bed ? "AAN" : "UIT");
-    if (beam_enabled) {
-      Serial.printf("Beam sensor waarde   : %d\n", beam_value);
-      Serial.printf("Beam sensor alert    : %s\n", beam_alert_new ? "JA" : "NEE");
+    if (adc_enabled) {
+      Serial.printf("Generic ADC (GP3)    : %.2f V  (%s)\n", adc_volt, adc_name[0] ? adc_name : "zonder bijnaam");
     }
     Serial.printf("NeoPixel RGB         : %d, %d, %d\n", neo_r, neo_g, neo_b);
     Serial.printf("Dim snelheid (s)     : %d s\n", fade_duration);

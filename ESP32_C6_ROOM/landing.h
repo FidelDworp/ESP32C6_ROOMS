@@ -1,5 +1,5 @@
 // ============================================================================
-// landing.h — landingspagina "/" van de ROOM-sketch (hoort bij v3.2; v3.2: versie onderaan)
+// landing.h — landingspagina "/" van de ROOM-sketch (hoort bij v3.2; v3.2: versie onderaan; v3.5.2: Generic ADC)
 // Eenvoudige pagina voor huisgenoten en gasten: temperatuur + setpoint, lampen,
 // kleur, bed-modus, thuis/weg. Technische pagina: /advanced (⚙ onderaan).
 //
@@ -50,7 +50,7 @@ const char LANDING_MIDDEN[] PROGMEM = R"HTML(</div><div class="box">
 <div class="kaart">
  <div class="rij"><div class="icring" id="heat">🔥</div>
   <div><div><span class="groot" id="temp">…</span><span class="sp" id="sp"></span></div>
-  <div class="sub" id="vocht"></div></div></div>
+  <div class="sub" id="vocht"></div><div class="sub" id="adc"></div></div></div>
  <input type="range" id="sl" min="10" max="30" step="1">
  <div class="uitleg">Gewenste temperatuur: <b id="slv">…</b></div>
 </div>
@@ -79,6 +79,7 @@ function toon(d){laatst=d;
  var ok=function(v){return v!==null&&v!==undefined&&v>=-10&&v<=40;};var t=ok(d.f)?d.f:ok(d.e)?d.e:null;$('temp').textContent=(t!==null?t.toFixed(1):'–')+'°';  /* v3.5: e/f kunnen null zijn */
  $('sp').textContent='(→ '+d.c+'°)';$('vocht').textContent=d.h>0?'Vocht '+Math.round(d.h)+' %':'';
  $('heat').classList.toggle('actief',d.b==1);
+ if(CFG.adc)$('adc').textContent=CFG.adc+': '+(d.ar===null||d.ar===undefined?'–':d.ar.toFixed(2)+' V');  /* v3.5.2 */
  if(document.activeElement!==$('sl')){$('sl').value=d.c;$('slv').textContent=d.c+' °C';}
  var k='#'+hex(d.q)+hex(d.r)+hex(d.s),licht=(0.3*d.q+0.59*d.r+0.11*d.s)>140;
  if(document.activeElement!==$('kl'))$('kl').value=k;

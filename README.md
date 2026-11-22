@@ -82,7 +82,7 @@ Het menu links (of bovenaan op een gsm) heeft op elke technische pagina een **�
 
 **Arduino IDE:** board **ESP32C6 Dev Module** · Flash Size **16 MB** · Partition Scheme: `partitions.csv` in de schetsmap (wordt automatisch gebruikt) · USB CDC On Boot **Disabled** (sinds v3.4.2; met Enabled geeft de sketch een foutmelding) · Core Debug Level **None**.
 
-**USB-poorten van de devkit (sinds v3.4.2):** voeding, flashen en seriële monitor (115200 baud) via de USB-C-poort **"UART"**. De poort **"USB"** niet gebruiken: die zit op IO12/IO13, en die pinnen gebruikt het shield (IO13 = I2C SDA, IO12 = stof-LED, later GP1).
+**USB-poorten van de devkit (sinds v3.4.2):** voeding, flashen en seriële monitor (115200 baud) via de USB-C-poort **"UART"**. De poort **"USB"** niet gebruiken: die zit op IO12/IO13, en die pinnen gebruikt het shield (IO13 = I2C SDA, IO12 = vrij sinds v3.5.2, later GP1).
 
 **Uploaden:**
 1. De eerste keer via de USB-kabel.
@@ -113,8 +113,9 @@ Bijgekomen op 5 nov 2026: de **"goodies" van de Sjalay-controller** (v1.8, repo 
 | | v3.4 | **SCD41** (CO2 + temp + vocht via I2C) · CO2-PWM weg · geen metingen in AP-mode — naar voren gehaald 9/11, daarna 24 u-test. **GAS v1.6** als aparte stap ná de test (beslist 9/11) | B&B, BADK, ZITPL (test op room80) | ⚠️ v3.4.3: 24 u-test niet gehaald (3 herstarts 10/11, laatste = interrupt-watchdog tijdens "DHT22 lezen") → v3.4.4 (eigen DHT22-uitlezing) + **v3.4.5** (NVS opgeruimd: 181 vakjes Matter-resten weg) op room80 sinds 11/11 ±10:25; ✅ **test geslaagd: 86 u zonder herstart** (15/11) |
 | | v3.5 | **Temperatuurveiligheid** (20/11: grens −10 °C, terugval DS→DHT→SCD41, `null` i.p.v. 0,0, vorstbeveiliging 15 min/uur) — ✅ geflasht 20/11, ✅ 24 u-test OK (44 u zonder herstart op 22/11); uittrektest van de sensoren als FiDel thuis is | alle rooms | samen met GAS v1.6 |
 | | v3.5.1 | **Veilige OTA** (22/11, les uit Sjalay v1.10): afgebroken upload opruimen, `begin()` controleren, "succes" alleen na `Update.end(true)`, reden bij mislukking, herstart vanuit `loop()` (ook /reboot, instellingen opslaan, factory reset), Diagnose-rij OTA — ✅ **geflasht en getest 22/11** (van op afstand: Mac + mobiele data + Tailscale; antwoord "Update succesvol!" komt aan; afgebroken upload → volgende poging lukt zonder reboot) | alle rooms | geen /json-wijziging |
-| | v3.5.2 | **Opruimen:** stofsensor, lichtstraal en zonlicht (`n`) volledig weg, ook hun `/json`-keys; oude NVS-keys; IO12/IO7 veilige ingangen; RPi-tegel "Zonlicht" | alle rooms | |
-| | v3.5.3 | **GP3 analoog in volt** (key `ar`) + **ASC-streefwaarde** SCD41 instelbaar (standaard 420 ppm) | alle rooms | |
+| | v3.5.2 | **Opruimen + Generic ADC** (22/11): stof (`l`), zon (`n`) en lichtstraal (`aa`, `ab`) weg; lichtstraal-pin IO2 = GP3 wordt **Generic ADC** in volt (`ar`, `null` als uit) met bijnaam en factor (spanningsdeler) in /settings; oude NVS-keys gewist; IO12/IO7 gewone ingangen; echte oorzaak van een geplande herstart in de geschiedenis; RPi-tegel "Zonlicht" weg — 🔨 gebouwd | alle rooms | GAS v1.6 logt `ar` al (kolom AP) |
+| | v3.5.3 | **LDR omkeren** (`m`: 100 = licht, 0 = donker, zoals de Sjalay); drempel automatisch omgerekend; nacht (`o`) volgt de drempel i.p.v. vast 50; Dashboard-Matrix en RPi `matrix.html` gelijktijdig mee | alle rooms | Sheet kolom N draait om vanaf de flashdatum |
+| | later | **ASC-streefwaarde** SCD41 instelbaar (standaard 420 ppm) | alle rooms | |
 | | v3.6 | WiFi robuuster + mDNS terug | alle rooms | |
 | **B. Functies** | v3.7 | **Temperatuurbewaking** (zoals de Sjalay) + overzicht alle DS18B20's, **maximum 6** (nieuwe keys `an`, `ao`) | alle rooms | |
 | | v3.8 | **Verwarmingslogica zoals de Sjalay:** effectief setpoint, dauwpunt aan/uit, marge −10…+10, instelbare hysterese, minimum setpoint, landingspagina "IST (→ SOLL)" | alle rooms | |
@@ -131,7 +132,7 @@ Niet meer in dit plan (6 nov 2026, zie `docs/ROOM_STANDAARD.md` §1.5): het **bu
 
 ### Nieuwe `/json`-keys (beslist 5 nov 2026)
 
-Alle nieuwe keys komen **achteraan**; bestaande keys blijven ongewijzigd, op `l`, `aa` en `ab` na (vervallen in v3.5). `ae`/`af` zijn bezet door het geheugen, `ah`–`aj` door de extra DS18B20's 2–4. Het Dashboard en de Portal gebruiken `ag`–`aj` niet (nagekeken 5/11); alleen de Sheet.
+Alle nieuwe keys komen **achteraan**; bestaande keys blijven ongewijzigd, op `l`, `n`, `aa` en `ab` na (vervallen in v3.5.2); `ar` = Generic ADC op GP3 in volt sinds v3.5.2. `ae`/`af` zijn bezet door het geheugen, `ah`–`aj` door de extra DS18B20's 2–4. Het Dashboard en de Portal gebruiken `ag`–`aj` niet (nagekeken 5/11); alleen de Sheet.
 
 | Key | Inhoud | Sinds | In de Sheet |
 |---|---|---|---|
