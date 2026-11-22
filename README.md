@@ -125,7 +125,7 @@ Bijgekomen op 5 nov 2026: de **"goodies" van de Sjalay-controller** (v1.8, repo 
 | **C. Pagina's** | v3.10 | `/update` → `ota.h`, met voortgangsbalk | alle rooms | |
 | | v3.11 | `/advanced` → `advanced.h` | alle rooms | |
 | | v3.12 | `/settings` → `settings.h` | alle rooms | |
-| **D. Later** | v3.13 | LDR-schaal gelijk met de Sjalay (samen met Dashboard en Sheet) | alle rooms | |
+| **D. Later** | ~~v3.13~~ | LDR-schaal gelijk met de Sjalay — ✅ vervroegd en gedaan als **v3.5.3** (22/11) | alle rooms | |
 
 Niet meer in dit plan (6 nov 2026, zie `docs/ROOM_STANDAARD.md` §1.5): het **buitenlicht** van de B&B (eigen controllers ACCESS2, ACCESS3…), de **pixelklok** (eigen ESP32 in de ZITPL). De **TSL2561** gaat al in v3.3 weg: die sensor komt voortaan op een ACCESS- of OUTSIDE-controller, niet meer op een room.
 | | — | Uitrol: elke Photon-room krijgt een ESP32 met deze sketch | | |
