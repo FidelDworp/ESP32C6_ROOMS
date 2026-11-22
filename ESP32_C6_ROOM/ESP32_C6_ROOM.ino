@@ -1,4 +1,4 @@
-// ESP32-C6 ROOM v3.5.2 — 22 nov 2026 — zonder Matter
+// ESP32-C6 ROOM v3.5.3 — 22 nov 2026 — zonder Matter
 // Zarlar thuisautomatisering — Room controller (Apple Home via de RPi-bridge, niet meer via Matter op de ESP32)
 // Filip Delannoy — Zarlardinge (BE)
 //
@@ -8,6 +8,14 @@
 // PARTITIETABEL: Compileer met "partitions.csv" in de schetsmap (Custom partition scheme):
 //   nvs (20 KB), otadata (8 KB), app0 (6 MB), app1 (6 MB), spiffs (~4 MB)
 //
+// v3.5.3 (22nov26): LDR OMGEKEERD (beslist door FiDel 22/11, zoals de Sjalay).
+//                 (1) /json m = licht: 100 = licht, 0 = donker (was 100 = donker). Ook op /advanced en serieel.
+//                 (2) "LDR dark threshold": donker = ONDER deze waarde (was boven). De bewaarde drempel wordt
+//                 bij de eerste opstart eenmalig omgerekend (nieuw = 100 − oud, NVS-vlag ldr_inv), zodat de
+//                 bewegingslampen op hetzelfde lichtniveau aangaan als voorheen.
+//                 (3) Nacht (o) volgt die drempel (was vast 50).
+//                 Mee aangepast in de overkoepelende repo: Dashboard-Matrix v6.5 (kolom 12) en RPi matrix.html.
+//                 Google Sheet: kolom N "Licht LDR" draait om vanaf de flash van v3.5.3.
 // v3.5.2 (22nov26): OPRUIMEN + GENERIC ADC (beslist door FiDel 22/11).
 //                 (1) Stofsensor (Sharp) volledig weg: code, instelling, /json-key l. IO12 en IO7 zijn nu
 //                 gewone ingangen zonder pull-up (IO12 werd vroeger als uitgang gestuurd).
@@ -177,7 +185,7 @@ void releaseUsbPins() {
   usb_serial_jtag_ll_phy_enable_pad(false);
 }
 
-#define ROOM_VERSION "v3.5.2"  // v3.2: enige plaats met het versienummer
+#define ROOM_VERSION "v3.5.3"  // v3.2: enige plaats met het versienummer
 
 // v3.2: reden van de laatste herstart, leesbaar
 esp_reset_reason_t boot_reason = ESP_RST_UNKNOWN;
@@ -269,6 +277,7 @@ const char* NVS_HOME_MODE           = "home_mode";
 const char* NVS_LIGHT_THRESHOLD     = "light_thresh";
 const char* NVS_MOV_WINDOW          = "mov_window";
 const char* NVS_LDR_DARK            = "ldr_dark";
+const char* NVS_LDR_INV             = "ldr_inv";         // v3.5.3: drempel al omgerekend naar de nieuwe schaal
 const char* NVS_CO2_ENABLED         = "co2_en";          // v3.4: = SCD41 aan/uit
 const char* NVS_SCD_ASC             = "scd_asc";         // v3.4: bool, automatische kalibratie (standaard aan)
 const char* NVS_SCD_TOFF            = "scd_toff";        // v3.4: float, temperatuuroffset °C (standaard 4,0)
@@ -486,7 +495,7 @@ int tstat_on = 0, mov1_triggers = 0, mov2_triggers = 0;
 int mov1_light = 0, mov2_light = 0;
 unsigned long uptime_sec = 0;
 int dew_alert = 0;       // Voor k: DewAlert (temp_ds < dew ? 1 : 0)  
-int night = 0;           // Voor q: Night (light_ldr > 50 ? 1 : 0, aangezien light_ldr donker=100, helder=0)  
+int night = 0;           // o: nacht (v3.5.3: light_ldr < drempel; light_ldr licht=100, donker=0)  
 int bed = 0;             // Voor r: Bed switch (0/1, hardcoded initieel 0, later togglebaar)  
 uint8_t neo_r = 255;       // Voor s: R waarde (hardcoded 255)  
 uint8_t neo_g = 255;       // Voor t: G waarde (hardcoded 255)  
@@ -645,7 +654,7 @@ const char* jsonTemp(float t, char* buf) {
 
 float calculateDewPoint(float t, float h) { return isnan(t) || isnan(h) ? 0 : t - ((100 - h) / 5.0); } // Berekening dauwpunt met DHT22 data
 
-int scaleLDR(int r) { return map(constrain(r, 100, 3800), 100, 3800, 100, 0); }
+int scaleLDR(int r) { return map(constrain(r, 100, 3800), 100, 3800, 0, 100); }   // v3.5.3: 100 = licht, 0 = donker (was omgekeerd)
 
 // v3.5.2: Generic ADC — gemiddelde van 8 metingen in mV (gekalibreerd), × factor → V
 float readGenericAdc() {
@@ -1150,6 +1159,7 @@ void setup() {
     preferences.putInt(NVS_LIGHT_THRESHOLD, 50);
     preferences.putULong(NVS_MOV_WINDOW, 60000UL);
     preferences.putInt(NVS_LDR_DARK, 50);
+    preferences.putBool(NVS_LDR_INV, true);    // v3.5.3: nieuwe schaal
     
     preferences.putBool(NVS_CO2_ENABLED, false);
     preferences.putBool(NVS_SCD_ASC, true);      // v3.4
@@ -1191,6 +1201,14 @@ void setup() {
   light_dark_threshold     = preferences.getInt(NVS_LIGHT_THRESHOLD, 50);
   mov_window_ms            = preferences.getULong(NVS_MOV_WINDOW, 60000UL);
   ldr_dark_threshold       = preferences.getInt(NVS_LDR_DARK, 50);
+  // v3.5.3: LDR-schaal omgekeerd → bewaarde drempel eenmalig omrekenen (zelfde lichtniveau)
+  if (!preferences.isKey(NVS_LDR_INV)) {
+    int oud = ldr_dark_threshold;
+    ldr_dark_threshold = constrain(100 - oud, 0, 100);
+    preferences.putInt(NVS_LDR_DARK, ldr_dark_threshold);
+    preferences.putBool(NVS_LDR_INV, true);
+    Serial.printf("[NVS] LDR-drempel omgerekend naar de nieuwe schaal: %d -> %d\n", oud, ldr_dark_threshold);
+  }
   
   co2_enabled      = preferences.getBool(NVS_CO2_ENABLED, false);   // v2.5 fix: default false. v3.4: = SCD41 aan/uit
   scd_asc          = preferences.getBool(NVS_SCD_ASC, true);        // v3.4
@@ -1636,7 +1654,7 @@ void setup() {
       "</table>"
       "<div class=\"group-title\">VERLICHTING</div>"
       "<table>"));
-    p->print(F("<tr><td class=\"label\">LDR (donker=100)</td><td class=\"value\">"));
+    p->print(F("<tr><td class=\"label\">LDR (licht=100)</td><td class=\"value\">"));
     p->print(light_ldr);
     p->print(F("</td><td class=\"control\"></td></tr>"
       "<tr><td class=\"label\">MOV1</td><td class=\"value\">"));
@@ -2243,7 +2261,8 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     "</select></td></tr>",
     home_mode_default == 0 ? "selected" : "",
     home_mode_default == 1 ? "selected" : "");
-  p->printf("<tr><td class=\"lbl\">LDR dark threshold</td><td class=\"inp\"><input type=\"number\" name=\"ldr_dark\" min=\"10\" max=\"100\" value=\"%d\"></td></tr>"
+  p->printf("<tr><td class=\"lbl\">LDR dark threshold</td><td class=\"inp\"><input type=\"number\" name=\"ldr_dark\" min=\"0\" max=\"100\" value=\"%d\">"
+    " <span style=\"font-size:12px;color:#666;\">donker = LDR onder deze waarde (100 = licht, 0 = donker)</span></td></tr>"
     "<tr><td class=\"lbl\">Aantal NeoPixels</td><td class=\"inp\"><input type=\"number\" name=\"pixels\" min=\"1\" max=\"30\" value=\"%d\"></td></tr>",
     ldr_dark_threshold, pixels_num);
   p->printf("<tr><td class=\"lbl\">Standaard RGB</td><td class=\"inp\">"
@@ -2690,7 +2709,7 @@ void loop() {
       }
       else {
         // AUTO: PIR + LDR
-        bool dark = (light_ldr > LDR_DARK_THRESHOLD);
+        bool dark = (light_ldr < LDR_DARK_THRESHOLD);   // v3.5.3: omgekeerde schaal
         bool movement = (millis() < mov1_off_time);
         bool on = dark && movement;
 
@@ -2720,7 +2739,7 @@ void loop() {
       }
       else {
         // AUTO: PIR + LDR
-        bool dark = (light_ldr > LDR_DARK_THRESHOLD);
+        bool dark = (light_ldr < LDR_DARK_THRESHOLD);   // v3.5.3: omgekeerde schaal
         bool movement = (millis() < mov2_off_time);
         bool on = dark && movement;
 
@@ -2847,7 +2866,7 @@ void loop() {
   crumbL(CL_ADC);
   adc_volt = adc_enabled ? readGenericAdc() : NAN;   // v3.5.2: Generic ADC op GP3
   // v3.4: CO2 komt van de SCD41 (scdPoll hierboven, elke 5 s)
-  night = (light_ldr > 50) ? 1 : 0;  
+  night = (light_ldr < LDR_DARK_THRESHOLD) ? 1 : 0;   // v3.5.3: volgt de drempel (was vast 50, oude schaal)
   // bed blijft voorlopig hardcoded 0, tot toggle in webserver  
 
 
@@ -2917,7 +2936,7 @@ void loop() {
       Serial.printf("SCD41 temp / vocht   : %.1f °C / %d %%\n", scd_temp, scd_humi);
     }
     Serial.printf("Ventilatie snelheid %%         : %d %%\n", vent_percent);
-    Serial.printf("LDR (donker=100)     : %d\n", light_ldr);
+    Serial.printf("LDR (licht=100)      : %d\n", light_ldr);
     Serial.printf("MOV1 PIR trig/min    : %d\n", mov1_triggers);
     if (mov2_enabled) {
       Serial.printf("MOV2 PIR trig/min    : %d\n", mov2_triggers);
