@@ -1,6 +1,6 @@
 # ROOM-standaard (Zarlar)
 
-*v1.4 — 18 nov 2026 — Filip Delannoy (FiDel). Status: **vastgelegd**.*
+*v1.5 — 22 nov 2026 — Filip Delannoy (FiDel). Status: **vastgelegd**.*
 
 Elke room in Zarlardinge gebruikt **dezelfde hardware en dezelfde sketch**. Dit document legt vast wat er in een room zit en wat er bewust níet in zit. Het is het antwoord op jaren "feature creep": telkens een nieuwe sensor op de Photon-rooms deed hard- en software steeds verder uit elkaar lopen.
 
@@ -28,7 +28,7 @@ Wat per room verschilt, is een **instelling** in `/settings` (opgeslagen in NVS)
 | RoomSense | 1 | IO3 | **DS18B20-bus**: 1 tot 6 sensoren, de sketch zoekt ze zelf; één is primair (kamertemperatuur) |
 | RoomSense | 2 | IO5 | **MOV1**: PIR, AM312 op 3,3 V |
 | RoomSense | 3 | IO6 | **DHT22**: temperatuur en vocht (dauwpunt) |
-| RoomSense | 6 | IO1 | **LDR** kamerlicht (ADC), 10 kΩ pull-up op het shield |
+| RoomSense | 6 | IO1 | **LDR** kamerlicht (ADC), 10 kΩ pull-up op het shield. In `/json` 100 = licht, 0 = donker; "donker" = onder de instelbare drempel |
 | Pixel-line | data | IO4 | **Pixels en Powerpixels**, aantal en lichtgroepen instelbaar |
 
 ### 1.2 Opties: vaste pin, aan of uit in `/settings`
@@ -71,10 +71,10 @@ De pinnen van RoomSense en Option die niet voor de kern of de opties gebruikt wo
 |---|---|---|---|---|
 | **GP1** | RoomSense | 4 | IO12 | digitaal in / uit / PWM |
 | **GP2** | RoomSense | 5 | IO7 | digitaal in / uit / PWM |
-| **GP3** | Option | 3 | IO2 | digitaal in / uit / PWM, **analoog in (ADC)** |
+| **GP3** | Option | 3 | IO2 | **Generic ADC** in volt (sinds v3.5.2): bijnaam en factor voor een spanningsdeler in `/settings`, `/json` `ar`. Max. ±3,1 V op de pin |
 | **GP4** | Option | 4 | IO18 | digitaal in / uit / PWM |
 
-- Per pin in `/settings`: **modus** (uit · digitale ingang · analoge ingang (alleen GP3) · digitale uitgang · PWM-uitgang), **bijnaam**, voor ingangen pull-up aan/uit.
+- GP3 is de analoge ingang. GP1, GP2 en GP4 krijgen in v3.9 per pin in `/settings` een **modus** (uit · digitale ingang · digitale uitgang · PWM-uitgang), **bijnaam** en pull-up aan/uit.
 - **Zichtbaar** op `/advanced` (en de landingspagina als hij aan staat), in `/json` en dus in de Sheet.
 - Uitgangen zijn bedienbaar via een eigen adres (gepland, zie README).
 - Standaardmodus na de eerste flash: **uit** (pin is ingang zonder pull-up: veilig).
@@ -99,6 +99,7 @@ De pinnen van RoomSense en Option die niet voor de kern of de opties gebruikt wo
 
 - **Eén sketch** `ESP32_C6_ROOM` voor alle rooms. Kamernaam, pixels, sensoren en opties stel je per controller in via `/settings`.
 - **Vast IP** per room, Apple Home via de RPi-bridge (geen Matter op de ESP32), logging via het Dashboard naar de Sheet (de room post zelf niets).
+- **WiFi:** blijft zelf herverbinden; zonder router een nood-AP `ROOM-<naam>` (192.168.4.1) met normale werking; bereikbaar als `<kamernaam>.local` (sinds v3.6).
 - **DHT22 met de eigen uitlezing** van de sketch (sinds v3.4.4), nooit met de Adafruit-DHT-bibliotheek (interrupt-watchdog-herstarts).
 - **Overstap van een oude sketch (met Matter):** na de eerste flash in `/settings` → Diagnose eenmaal "Ongebruikte NVS-gegevens wissen" (sinds v3.4.5).
 - **`/json` is een contract.** Keys en bedieningsadressen wijzigen alleen met uitdrukkelijk akkoord (Dashboard, Portal, RPi-bridge en Sheet hangen ervan af). Nieuwe keys komen achteraan.
@@ -115,6 +116,7 @@ De pinnen van RoomSense en Option die niet voor de kern of de opties gebruikt wo
 
 | Versie | Datum | Wat |
 |---|---|---|
+| v1.5 | 22 nov 2026 | GP3 = Generic ADC in volt (`ar`); LDR-schaal 100 = licht; WiFi-gedrag en mDNS (ROOM v3.5.2–v3.6) |
 | v1.4 | 18 nov 2026 | Zekering per lichtkring op maat in plaats van vast 2 A (B&B: badkamer 4 A, spanlampen 3 A) |
 | v1.3 | 16 nov 2026 | Regels voor Powerpixels (§1.3): één TRIO per lichtkring met de kanalen parallel (geen R/G/B-verdeling), sketch ongewijzigd (vrije RGB per pixel blijft voor RGB-strips), fix-draadje naar +12V, externe schakelaar als override toegelaten |
 | v1.2 | 11 nov 2026 | USB-poort "UART" i.p.v. "USB" (IO12/IO13 = USB D−/D+), I2C-pull-ups 3,3 kΩ op het shield, DHT22 alleen met de eigen uitlezing, NVS opruimen na overstap van Matter |

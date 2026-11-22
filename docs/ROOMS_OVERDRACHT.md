@@ -1,134 +1,77 @@
 # Overdracht — project "Rooms" (Zarlar ROOM-controllers)
 
-*Stand 16 november 2026 — Filip Delannoy (FiDel), Zarlardinge (BE)*
+*Stand 22 november 2026 — Filip Delannoy (FiDel), Zarlardinge (BE)*
 
-Dit document start een **nieuw gesprek met Claude** over de ROOM-sketch en de overstap van de Photon-rooms naar ESP32-C6. Het vat samen hoe we werken, wat er beslist en gebouwd is, en wat nog openstaat. Overkoepelend (alle repo's, systeem, compileren in de sessie): [`ZARLAR_OVERDRACHT.md`](https://github.com/FidelDworp/Zarlardinge-Home-Automation/blob/main/docs/ZARLAR_OVERDRACHT.md). Wie het systeem wil begrijpen, begint beter bij de [README](../README.md) en de [ROOM-standaard](ROOM_STANDAARD.md).
+Start van een **nieuw gesprek met Claude** over de ROOM-sketch en de overstap van de Photon-rooms naar ESP32-C6. Plan, `/json`-keys en versiegeschiedenis staan in de [README](../README.md); wat er in een room zit in de [ROOM-standaard](ROOM_STANDAARD.md). Overkoepelend: [`ZARLAR_OVERDRACHT.md`](https://github.com/FidelDworp/Zarlardinge-Home-Automation/blob/main/docs/ZARLAR_OVERDRACHT.md).
 
----
+## 1. Werkwijze
 
-## 1. Werkwijze (altijd)
+- **Nederlands**, ESP32-C6 in de **Arduino IDE**.
+- **Nooit code zonder akkoord:** eerst een kort plan, dan code na **GO**. Eén stap per versie, met versiekop + changelog, daarna testen.
+- **Alles via OTA.** Terminalcommando's voor Mac/RPi kant-en-klaar geven.
+- **`/json`-keys en bedieningsadressen niet wijzigen** zonder akkoord.
+- **Docs bijwerken bij elke stap**, beknopt, zonder achterhaalde info. De repo's zijn de enige bron. Geen sketches of `.md` in de chat tonen tenzij gevraagd.
+- **Vragen één voor één**, duidelijk.
+- **Logs lezen:** Google Sheets-koppeling, tab `Data` (nieuwste onderaan; uptime met punt als duizendtal).
+- **Eén gesprek per repo tegelijk.** Bij twijfel over IP's, namen of verschillen tussen documenten: eerst met FiDel bespreken.
 
-- **Nederlands.** ESP32-C6 in de **Arduino IDE**.
-- **Nooit een sketch of script maken zonder akkoord vooraf** (GO). Eerst een kort plan, dan code. **Eén stap per keer**, met feedback ertussen.
-- **Eén stap per versie**, met **versiekop + changelog** in elke sketch, en daarna een **48 u-test** (Sheet: geheugen en herstarts).
-- **Alles via OTA**: diagnose en updates zonder seriële kabel.
-- **README's bijwerken** bij elke stap: beknopt, logisch, geen achterhaalde info. Ook het Master-document en het Portal Plan bijhouden.
-- **`/json`-keys en bedieningsadressen niet wijzigen** zonder uitdrukkelijk akkoord: het Dashboard, de Portal, de RPi-bridge en de Google Sheets hangen ervan af.
-- **Logs lezen:** via de Google Sheets-koppeling (`get_values`, tab `Data`, oudste rij bovenaan, nieuwste onderaan). De uptime staat met punten als duizendtal-scheiding (`99.000`).
-- **Bij twijfel over IP's, namen of verschillen tussen documenten: eerst met FiDel bespreken**, dan pas aanpassen.
+### GitHub
 
-### Werkwijze GitHub
+- Claude koppelt de repo's met schrijfrechten (`add_repo`, `push`) en commit rechtstreeks naar `main`, één commit per stap.
+- **Indeling:** `README.md` in de root, documenten in `docs/`, sketchmap, `GoogleScript/`, `bin/` (alleen de laatste `.bin`), `old/`. Elke repo heeft een `docs/<NAAM>_OVERDRACHT.md`.
+- Nieuwe repo's, "About" en releases doet FiDel.
 
-- Claude koppelt de repo's van FidelDworp met **schrijfrechten** aan de sessie (`add_repo`, access `push`) en werkt docs, sketches en mappen **rechtstreeks** bij: één commit per stap, vóór het pushen eerst `fetch` + `rebase` (FiDel commit soms zelf tussendoor).
-- **Indeling van elke repo:** `README.md` in de root; **alle andere documenten in `docs/`**; sketchmap `<SketchNaam>/` (ino + `.h` + `partitions.csv`); `GoogleScript/`; `bin/` (laatste gecompileerde `.bin`); `old/`.
-- **Elke repo heeft een overdracht** `docs/<NAAM>_OVERDRACHT.md` voor een nieuw gesprek (afspraak 7/11). Claude houdt die bij.
-- Een **nieuwe repo** maakt FiDel zelf aan (leeg, public); Claude vult hem daarna.
-- **Niet mogelijk voor Claude:** repo-beschrijving ("About") en andere instellingen, GitHub-releases. Dat doet FiDel.
-- **Na GO:** sketch in de repo, gecompileerd in de sessie (zie §8), de `.bin` in `bin/` (vorige versie weg) en een zip van de sketchmap naar FiDel. FiDel uploadt via `/update`. Photon-sketches: FiDel flasht via de Particle Web IDE.
+## 2. Controllers
 
-## 2. GitHub-repos (FidelDworp)
+| Controller | Adres | Stand |
+|---|---|---|
+| **room80** (testbord, eetplaats) | 192.168.0.80 · `eetplaats.local` | **ROOM v3.6** (22/11) |
+| Dashboard (matrix, logging) | 192.168.0.60 | v6.5 (22/11) |
+| RPi (portal + Apple Home-bridge) | 192.168.0.50:3000 | `update.sh` 22/11 |
+| HVAC · ECO-boiler · S-ENERGY | .70 · .71 · .73 | eigen repo's |
+| Photon-rooms | — | nog in productie, behalve de B&B (defect) |
 
-**Overkoepelend:** [`Zarlardinge-Home-Automation`](https://github.com/FidelDworp/Zarlardinge-Home-Automation): `README.md` = overzicht van alle controllers, `docs/ARCHITECTUUR.md`, `docs/UITLEG_VOOR_MAARTEN.md`, `ESP32_Zarlar/` (Master, Dashboard-sketchmap, `zarlar-rpi/`). Lokale map op de Mac blijft `~/Zarlardinge_Dashboards` (deploy.sh).
+**IP-plan:** .50 RPi · .60 Dashboard · .70 HVAC · .71 ECO · .72 S-OUTSIDE (gereserveerd) · .73 S-ENERGY · .75 B&B · .76 Badkamer · .77 Inkom · .78 Keuken · .79 Wasplaats · .80 Eetplaats · .81 Zitplaats · .82/.83/.84 ACCESS1/2/3. Telenet laat geen DHCP-reservering toe: vaste IP's staan in de controller.
 
-| Repo | Inhoud |
-|---|---|
-| `ESP32C6_ROOMS` | `ESP32_C6_ROOM/`, `bin/`, `docs/ROOM_STANDAARD.md` (v1.1), `docs/ROOMS_OVERDRACHT.md` (dit document), `docs/aansluitingen.md` |
-| `ESP32C6_HVAC` | `ESP32C6_HVAC/` |
-| `ESP32C6_ECO-boiler` | `ESP32-C6_ECO-boiler/` |
-| `ESP32C6_Smart-Energy` | `ESP32_C6_ENERGY/`, `Tesla/TeslaChargeTest/` |
-| `ESP32C6_ACCESS` | `ESP32_C6_ACCESS/` (nog te ontwerpen) · `old/R8-ACCESS.ino` |
-| `SJALAY-YSERMONDE` | `ESP32-C6_SJALAY_CONTROLLER/` |
-| `HVAC_WONING` | `ESP32_PWM_Test/` |
-| `PHOTON_ROOMS` | Particle-build; R8-ACCESS kreeg 6/11 `JSON_status` |
-| `ESP32C6_Experiments` | elke test in een eigen map, Matter-sims in `old/` |
+**Dashboard-matrix:** rij 0 HVAC · 1 ECO · 2 S-ENERGY · 3 ACCESS · 5–11 rooms. Kolom 12 = LDR (sinds v6.5 nieuwe schaal).
 
-**Open (Claude):** S-ENERGY-kop noemt nog `partitions_16mb.csv` → rechtzetten bij v1.31.
+**Sheets:** R-ROOMS Log `1UiaexdpgpL3XjPWHNdMEbJ18_H9yp1w_VN8VBdVCpY0` (GAS v1.6) · S-ECO `1nn_GBmLhS9zZhp5On_3r-LRLonetSjnHCuHZiNOc4Q0` · S-HVAC `1LL7swNRIVl2qfREHxAU7nCq9fH9zTUxa37s0IduHTXY`.
 
-## 3. Het systeem in het kort
+## 3. ROOM-sketch: stand
 
-**Eén netwerk** achter de Telenet-router: woning en schuur zien elkaar rechtstreeks. Telenet laat **geen DHCP-reservering** toe: vaste IP's worden in de controller zelf ingesteld. Bereik **.50–.84 is voor de schuur**.
+- **v3.5 → v3.6 op 22/11 geflasht** (v3.5.1 veilige OTA, v3.5.2 opruimen + Generic ADC, v3.5.3 LDR omgekeerd, v3.6 WiFi + mDNS). Diagnose telkens in orde. v3.5 haalde vooraf 44 u zonder herstart.
+- **Thuis nog te testen** (FiDel):
+  1. Sensoren lostrekken: DS18B20, daarna DHT22 → terugval en melding op `/advanced`.
+  2. IO2 met een draadje aan GND → Generic ADC ±0,00 V.
+  3. `http://eetplaats.local/`.
+  4. Router 2–3 min uit → room80 komt vanzelf terug, Diagnose "1 keer weggevallen" met reden. Optioneel: router en room80 samen herstarten → kort nood-AP, dan terug op het netwerk.
+  5. Bewegingslamp 's avonds aan, overdag niet (LDR-drempel omgerekend).
+- **Volgende stappen:** zie het plan in de README. Open vraag aan FiDel: **pixelmodi** vóór de B&B live gaat (per pixel manueel / beweging / nachtlampje — aan bij donker, uit in BED-modus — en een kleur per pixel; nodig voor de vloermat op pixel 1).
 
-| Controller | Adres | Sketch | Stand 7/11/2026 |
-|---|---|---|---|
-| **room80** (experimenteerbord, op tafel in de eetplaats) | 192.168.0.80 | ROOM | **v3.3**, geflasht 7/11 ±16:00; **v3.4 geflasht 9/11 ±19:40: SCD41 "ontbreekt"** (voeding 3,3 V en SDA/SCL hoog gemeten, draden volgens opdruk) → v3.4.1 I2C-scan: "geen enkel apparaat", doorgang shield–IO13/IO11 ok → **oorzaak: IO13 = USB D+ van de C6** (CDC aan hield de pin vast; verklaart ook de "defecte" TSL2561) → **v3.4.2** (CDC uit, USB-pad van IO12/IO13 uit; voeding/flashen/serieel via poort "UART") **geflasht 9/11 ±20:50: SCD41 ok** (serienr AC3FEF073B56, ASC aan, offset 4,0 °C). → v3.4.3 (ventilatie op CO2 instelbaar, 600/1200 ppm) geflasht 9/11 ±21:38: **3 herstarts op 10/11** (01:29, 04:19, 14:10); de laatste = **interrupt-watchdog tijdens "DHT22 lezen"** → oorzaak: Adafruit-DHT zet interrupts seconden uit bij een haperende sensor (ook v3.2 en de Sjalay). v3.4.4 (eigen DHT22-uitlezing, NVS in Diagnose) geflasht 11/11 ±10:10: DHT22 0 fouten; NVS 496/630 vakjes = praktisch vol (herstartgeschiedenis bleef op #19). **v3.4.5** geflasht 11/11 ±10:20 en NVS opgeruimd: 181 vakjes oude Matter/BLE-gegevens gewist (`CHIP_KVS`, `esp_matter_kvs`, `chip-config`, `chip-counters`, `nimble_bond`) → 315/630 gebruikt, herstartgeschiedenis werkt weer (#27). **24 u-test geslaagd: 86 u zonder herstart** (11/11 10:23 → 15/11 00:44), heap 65–68 %, grootste blok 235–247 KB, laagste heap 219 KB, RSSI −51…−68 dBm. Bij elke room die vroeger Matter draaide: na de flash eenmaal "Ongebruikte NVS-gegevens wissen"; v3.3: **48 u-test geslaagd** (50 u 47 min zonder herstart, heap 67–68 %, grootste blok 239–255 KB). 9/11 18:48 herstart = stroom eraf door FiDel om de **SCD41** (I2C, 3,3 V) aan te sluiten. TSL2561 weg |
-| HVAC (testbord slaapkamer) | 192.168.0.70 | ESP32C6_HVAC | v2.0 |
-| ECO-boiler (bordje slaapkamer) | 192.168.0.71 | ESP32-C6_ECO-boiler | v2.0 |
-| Smart Energy (bordje slaapkamer) | 192.168.0.73 · `smart-energy.local` | ESP32_C6_ENERGY | v1.30 (6/11), 48 u-test loopt |
-| Tesla-proxy (wasplaats) | DHCP · `tesla-key-esp32.local` | firmware 0Bu/tesla-key-esp32 | S-ENERGY vindt hem op naam |
-| Dashboard (matrix, zitplaats) | 192.168.0.60 | Dashboard | v6.4 (6/11), in test. Logt elke 5 min naar Google Sheets |
-| RPi (portal + Matter-bridge, zitplaats) | 192.168.0.50:3000 | server.js v2.12 + matterbridge-zarlar v0.8 | Apple Home woning Zarlardinge |
-| Photon-rooms | — | PHOTON_ROOMS | nog in productie, behalve de B&B (defect) |
+**Technisch om te onthouden**
+- IO12/IO13 = USB D−/D+ van de C6: compileren met CDC uit + `releaseUsbPins()`; I2C (SCD41) op IO13/IO11.
+- DHT22 alleen met de eigen uitlezing (`dhtRead22`), nooit de Adafruit-bibliotheek.
+- Geplande herstarts (OTA, /reboot, instellingen) gaan via `restart_at` in `loop()`, met `restart_cause` voor de herstartgeschiedenis.
+- `ap_mode_active` = setupmodus (geen SSID, geen metingen/verwarming); `ap_rescue` = nood-AP met normale werking.
+- mDNS-naam komt uit de kamernaam in `/settings` (room80 "Eetplaats").
 
-**IP-plan:** .50 RPi · .60 Dashboard · .70 HVAC · .71 ECO · .72 S-OUTSIDE (alleen een idee, adres gereserveerd) · .73 S-ENERGY · .74 vrij · .75 B&B · .76 Badkamer · .77 Inkom · .78 Keuken · .79 Wasplaats · .80 Eetplaats (room80) · .81 Zitplaats · .82/.83/.84 ACCESS1/2/3.
+## 4. Hardware
 
-**Dashboard-matrix:** rij 0 HVAC · 1 ECO · 2 S-ENERGY · 3 ACCESS (W·Z·N·O) · 4 scheiding · 5–11 rooms · 12–15 leeg.
+Standaard: [`ROOM_STANDAARD.md`](ROOM_STANDAARD.md) · ombouw: [`aansluitingen.md`](aansluitingen.md) en `Zarlar_Photon_inventaris_v3.xlsx`.
+- RoomSense op 3,3 V; geen signaal boven 3,3 V op een ESP32-pin (elke ader meten).
+- **SCD41** (I2C) voor B&B, BADK, ZITPL (4 besteld). Pull-ups 3,3 kΩ op het shield.
+- **Powerpixels:** één PowerPiXel-TRIO per lichtkring, kanalen parallel, fix-draadje naar +12V, zekering per kring op maat. B&B-invulling: `aansluitingen.md` §4.4 (17 pixels: 5 Powerpixels + 12 trede-pixels).
+- **Eerste room: B&B** (.75, R-BandB). Bij ingebruikname: flashen, kamernaam, IP .75, 17 pixels, NVS opruimen, en op het Dashboard → `/settings` R-BandB op **actief** zetten (anders geen logging).
 
-- **Geen enkele ESP32 heeft nog Matter.** Zonder Matter: grootste blok ±240–250 KB.
-- **Sheets:** R-ROOMS Log `1UiaexdpgpL3XjPWHNdMEbJ18_H9yp1w_VN8VBdVCpY0` · S-ECO `1nn_GBmLhS9zZhp5On_3r-LRLonetSjnHCuHZiNOc4Q0` · S-HVAC `1LL7swNRIVl2qfREHxAU7nCq9fH9zTUxa37s0IduHTXY`.
+## 5. Andere open punten
 
-## 4. ROOM-sketch: stand en plan
+- **ACCESS** (buitenverlichting): eigen gesprek en repo `ESP32C6_ACCESS`. N2/E1-drivers defect (met Maarten).
+- **S-ENERGY:** kop noemt nog `partitions_16mb.csv` → rechtzetten bij v1.31.
+- **Sjalay:** eigen gesprek; v1.12 wacht op de SCD41.
 
-**Versies:** v3.0 Matter weg · v3.1 landingspagina · v3.2 versie + Diagnose in `/settings` · **v3.4** (9/11): SCD41 via I2C, keys `al`/`am` · **v3.3** (7/11, geflasht ±16:00): TSL2561 weg, "laatste stap vóór herstart" in Diagnose. Eerste opstart na de OTA had nog geen stap (v3.2 noteerde er geen); "Lage-heap meldingen" gewist.
+## 6. Praktisch
 
-**48 u-test v3.2 (5/11 21:45 → 7/11 15:05): niet gehaald.** 4 herstarts (6/11 17:10 na 19,4 u; 7/11 06:31 na 13,3 u; 07:16; 07:29), reden **"Watchdog (interrupt)"**. Geheugen in orde (grootste blok 239–247 KB, laagste 225–228 KB), RSSI −54…−62 dBm. Verdachten: **defecte TSL2561** (I2C), DHT22-uitlezing (zet interrupts uit), NeoPixel + WiFi. "Lage-heap meldingen 59" is een oude teller in NVS.
-
-**Na het flashen van v3.3:** in `/settings` → Diagnose staan "Laatste stap ervoor" en "Vorige herstarts" (laatste drie: reden, uptime ervoor, laatste stap in loop en web). Daarmee de 48 u-test beoordelen.
-
-**Verbeterplan** (volledig in de README; eerst functies, dan pagina's):
-
-| Versie | Wat |
-|---|---|
-| **v3.3** | Stabiliteit: TSL2561 weg, laatste stap vóór herstart. **Geflasht 7/11, 48 u-test geslaagd (9/11)** |
-| **v3.4** | **In de repo 9/11.** **SCD41** (keys `al`/`am`), CO2-PWM weg; GAS v1.6 als aparte stap ná de 24 u-test (beslist 9/11) (+ kolommen `aj`, `ak`, `an`, `ao`, `ap`–`as`). **Naar voren gehaald 9/11** (sensor zit al op room80); daarna **24 u-test** |
-| v3.5 | **Opruimen:** stofsensor en lichtstraal weg (keys `l`, `aa`, `ab`) **+ GAS v1.6**, direct na de 24 u-test van v3.4.3 (beslist 9/11) |
-| v3.6 | WiFi robuuster (geen modemslaap, periodiek opnieuw verbinden) + mDNS `<kamer>.local` (zoals S-ENERGY v1.30) |
-| v3.7 | Temperatuurbewaking zoals de Sjalay; max 6 DS18B20's (keys `an`, `ao`) |
-| v3.8 | Verwarmingslogica zoals de Sjalay (key `ak`; dauwpuntbeveiliging ook bij Thuis + thermostaatcontact) → B&B live |
-| v3.9 | Generieke I/O GP1–GP4 (IO12, IO7, IO2 = enige ADC, IO18), keys `ap`–`as`, bediening `/set_gp?n=1..4&v=0..100` |
-| v3.10–v3.12 | Pagina's naar `ota.h`, `advanced.h`, `settings.h` |
-| v3.13 | LDR-schaal 0 = donker, samen met Dashboard en Sheet |
-
-**Beslist:** `ak` loggen (5/11) · dauwpuntbeveiliging ook bij Thuis + thermostaat (5/11) · max 6 DS18B20's (5/11) · keys `ap`–`as` en `/set_gp` (7/11) · TSL2561 nooit meer op een room, wel op ACCESS/OUTSIDE (7/11) · SCD41 naar voren als v3.4, met 24 u-test (9/11) · opruimen als v3.5 samen met GAS v1.6 (9/11).
-
-**`/json`-keys ROOM** (v3.3): a uptime · b heating_on · c setpoint · d tstat · e temp DHT · f temp DS primair · g vent % · h vocht · i dauwpunt · j dauwpunt-alert · k CO2 · m LDR · o nacht · p bed · q/r/s RGB · t pixels aan · u pixelmodus · v thuis · w/x MOV1/2 triggers · y/z MOV1/2 licht · ac RSSI · ad heap % · ae grootste blok · af laagste heap · ag DS-aantal · ah–aj extra DS 2–4 · al/am SCD41 temp/vocht (sinds v3.4) · ar Generic ADC GP3 in V of null (sinds v3.5.2, achteraan). m = LDR, sinds v3.5.3 100 = licht. l, n, aa, ab vervallen in v3.5.2. Gepland: an/ao (v3.7), ak (v3.8), ap–as (v3.9). Dashboard en Portal gebruiken ag–aj niet; GAS v1.5 logt ag–ai, niet aj.
-
-## 5. Hardware
-
-Standaard: [`ROOM_STANDAARD.md`](ROOM_STANDAARD.md). Ombouw: [`aansluitingen.md`](aansluitingen.md) en `Zarlar_Photon_inventaris_v3.xlsx`.
-
-- RoomSense-kant op **3,3 V**; Option-kant mag 5 V voeden, maar **geen signaal boven 3,3 V** (elke ader meten).
-- **CO2:** Sensirion **SCD41** (I2C, IO13/IO11), 4 stuks besteld (5/11) voor B&B, BADK, ZITPL.
-- **Vervalt:** stofsensor, alert-LDR, CO2-PWM, de relais van R7 (worden Powerpixels), TSL2561 (naar ACCESS/OUTSIDE).
-- **Powerpixels (16/11):** één PowerPiXel-TRIO per lichtkring, kanalen parallel (kleur in `/settings` op wit; de sketch verandert niet, RGB-strips op een Powerpixel houden hun kleuren); fix-draadje naar +12V; externe schakelaars als override toegelaten. Regels in [`ROOM_STANDAARD.md`](ROOM_STANDAARD.md) §1.3, B&B-invulling in [`aansluitingen.md`](aansluitingen.md) §4.4.
-- **Eerste room: B&B** (Photon defect), op basis van room80. Daarna Badkamer, Inkom, Keuken, Wasplaats, Zitplaats.
-
-## 6. ACCESS (buitenverlichting) — repo `ESP32C6_ACCESS`
-
-- Photon **R8-ACCESS** bedient vandaag W1 Voordeur, W2 Veldkant, S Terras; `JSON_status` naar het Dashboard (rij 3).
-- **Nog te ontwerpen:** ACCESS1 (.82), ACCESS2 (.83, noord, B&B), ACCESS3 (.84, oost, B&B), één sketch. Zonlicht (TSL2561) komt op een ACCESS- of OUTSIDE-controller.
-- **Checkpunten ACCESS1:** terraslicht gaat niet aan; koppeling W1 → W2; PIR W2 defect.
-
-## 7. Andere open punten
-
-- **ROOM v3.5 op room80 sinds 20/11 ±21:42:** 24 u-test geslaagd (22/11: uptime 158.580 s ≈ 44 u, geen herstarts, logging zonder gaten). Uittrektest (DS18B20, daarna DHT22 los) nog te doen als FiDel thuis is.
-- **ROOM v3.5.1 (veilige OTA) gebouwd 22/11** — `bin/ESP32_C6_ROOM_v3.5.1.ino.bin`. Oplossing overgenomen uit Sjalay v1.10 (repo SJALAY-YSERMONDE) + Diagnose #29: `Update.abort()` bij een hangende upload, `begin()` gecontroleerd, succes alleen via vlag `ota_done` (na `Update.end(true)`), reden in "Update mislukt!", herstart via `restart_at` in `loop()` (ook /reboot, save_settings, factory_reset), Diagnose-rij "OTA" (aantal mislukte uploads + laatste reden). ✅ Geflasht en getest 22/11 ±18:05 vanaf de Mac via mobiele data + Tailscale (niet via de wifi in Nieuwpoort: zelfde 192.168.0.x-bereik botst met de Tailscale-route). Test 1: "Update succesvol!" komt nu als antwoord aan. Test 2: upload met Ctrl-C afgebroken, meteen opnieuw → succesvol zonder reboot. Flashen via 4G is vanaf v3.5.1 veilig. Daarna v3.5.2 (opruimen) en v3.5.3 (GP3 analoog + ASC-streefwaarde).
-- **ROOM v3.5.2 (opruimen + Generic ADC) geflasht 22/11 ±18:35** (Mac + 4G, "Update succesvol!"; NVS 315→312: de 3 oude keys gewist) — `bin/ESP32_C6_ROOM_v3.5.2.ino.bin`. Stof/zon/lichtstraal weg (keys l, n, aa, ab), GP3 (IO2) = Generic ADC (`ar`, NVS `adc_en`/`adc_name`/`adc_fac`), oude NVS-keys gewist bij opstart, IO12/IO7 INPUT, `restart_cause` zet de echte oorzaak in de herstartgeschiedenis. RPi room.html: tegel Zonlicht weg (overkoepelende repo). Volgende: v3.5.3 LDR omkeren (+ Dashboard-Matrix kolom 12 en `matrix.html` mee).
-- **ROOM v3.5.3 (LDR omgekeerd) geflasht 22/11 ±21:07** op room80 (Mac + 4G), Dashboard v6.5 21:08, RPi update.sh 21:09 (2decb01). Sheet kolom N omgedraaid vanaf 22/11 21:07. — `bin/ESP32_C6_ROOM_v3.5.3.ino.bin`. `m`: 100 = licht, 0 = donker; "LDR dark threshold" = donker ONDER de waarde, eenmalig omgerekend (100 − oud, NVS-vlag `ldr_inv`); nacht `o` volgt de drempel. Samen met Dashboard v6.5 (kolom 12) en RPi `matrix.html` (overkoepelende repo). Sheet kolom N draait om vanaf de flash. Nog te testen: ADC-test IO2 aan GND (als FiDel thuis is).
-- **ROOM v3.6 (WiFi robuuster + mDNS) geflasht 22/11 ±22:02** (Mac + 4G; Diagnose OK, mDNS eetplaats.local) — `bin/ESP32_C6_ROOM_v3.6.ino.bin`. `WiFi.setSleep(false)`, hostnaam = mDNS-naam (uit de kamernaam in /settings: room80 "Eetplaats" → `eetplaats.local`), WiFi-events (drops + reden), elke 30 s `WiFi.reconnect()`, herstart na 15 min zonder WiFi als niemand op het nood-AP zit (crumb "WiFi weg > 15 min"). `ap_mode_active` (setupmodus, geen metingen/verwarming) enkel als SSID "netwerknaam"/leeg; anders `ap_rescue`: nood-AP 192.168.4.1 + router blijven proberen, sluit vanzelf. Te testen thuis: `eetplaats.local`, router even uittrekken (< 15 min en > 15 min), stroompanne-scenario.
-- **GAS v1.6 in gebruik sinds 20/11 ±19:40** (werkt, gecontroleerd in de Sheet).
-- **GAS v1.6 klaar in de repo (20/11, GO van FiDel):** 43 kolommen, null → lege cel, tabblad "Data", MAX_ROWS 20 000, kamerfilter in C1, `archiveerEnNieuweKoppen()`. In gebruik nemen volgens README "GAS v1.6 in gebruik nemen".
-- **Volgende ROOM-stap (18/11, "binnenkort, stap voor stap"):** GAS v1.6 en daarna ROOM v3.5 volgens de README (met de aanvullingen van 18/11: `n` weg, GP3 analoog in volt als `ar`, ASC-streefwaarde 420 ppm). Pixel-effecten als v3.8b (idee, detailplan later).
-- **B&B (.75) in de Sheet:** komt er niet vanzelf in. Op het Dashboard (.60) → `/settings` het vinkje "actief" bij **R-BandB** aanzetten; dan pollt het Dashboard de room en post het naar het room-script (zelfde Sheet, kolom "Kamer").
-- S-ENERGY v1.30 en Dashboard v6.4: 48 u-test bekijken.
-- ECO v2.1: dode `publishHVAC()` weg, mDNS. HVAC v2.1: eigen Sheets-push weg.
-- Dashboard: HOME/UIT-tegel via de RPi, nieuwe matrixlegende, Master bijwerken voor v6.1–v6.4.
-- Master §17 Optimalisatieplan: opruimversies + mDNS overal, statuspagina op de RPi, ROOM-uitrol.
-- Particle-token leesbaar in `worker-status.js`: bewust zo gelaten (Photons verdwijnen).
-
-## 8. Praktisch
-
-- **Compileren (FiDel):** ESP32C6 Dev Module, **Flash 16 MB**, Partition Custom (`partitions.csv` in de sketchmap). JavaScript altijd in een `.h`-bestand.
-- **OTA:** enkel `<sketch>.ino.bin` uploaden via `http://<ip>/update`. De partitietabel kan niet via OTA veranderen.
-- **Compileren in de Claude-sessie** (werkte op 7/11): `arduino-cli` 1.3.1 van GitHub-releases; ESP32-index `package_esp32_index.json` van de GitHub-release 3.3.12 (espressif.github.io en downloads.arduino.cc zijn niet bereikbaar), ingekort tot `esp-rv32`, `esptool_py` en `esp32c6-libs` en als `file://`-index gebruikt; bibliotheken via `git clone` (ESP32Async/ESPAsyncWebServer + AsyncTCP, adafruit DHT + Adafruit_Sensor + NeoPixel, pstolarz/OneWireNg, Sensirion/arduino-i2c-scd4x + Sensirion/arduino-core); `--build-property runtime.tools.ctags.path=` naar een lege `ctags` (de ROOM-sketch heeft geen automatische prototypes nodig). FQBN ROOM sinds v3.4.2: `esp32:esp32:esp32c6:FlashSize=16M,PartitionScheme=custom,CDCOnBoot=default` (CDC uit; IO12/IO13 = USB D−/D+ worden gewone pinnen). Andere C6-sketches: nog `CDCOnBoot=cdc`.
-- **RPi:** `ssh fidel@192.168.0.50 'bash ~/update.sh'` voor wat al in de repo staat; vanaf de Mac `bash ~/deploy.sh "omschrijving"`.
-- **Google Apps Script:** "Implementaties beheren → potlood → nieuwe versie", nooit "nieuwe implementatie". Na kolomwijzigingen `setupHeaders()` één keer uitvoeren.
+- **Compileren in de sessie:** `cd /home/claude/tools && python3 gen_protos.py <sketchmap>`, daarna `./arduino-cli --config-file cli.yaml compile --fqbn esp32:esp32:esp32c6:FlashSize=16M,PartitionScheme=custom,CDCOnBoot=default --build-path build --build-property "runtime.tools.ctags.path=/home/claude/tools/fakectags" /tmp/bp/ESP32_C6_ROOM`. Structs bovenaan de sketch (vóór de automatische prototypes). Dashboard en andere C6-sketches: `CDCOnBoot=cdc`.
+- **Flashen van op afstand:** vanaf de Mac via mobiele data + Tailscale met `curl` (commando's in de README); de wifi in Nieuwpoort gebruikt ook 192.168.0.x en botst met de Tailscale-route. Alternatief via de RPi: overkoepelende `docs/DEPLOY.md` §A2.
+- **RPi bijwerken:** `ssh -t fidel@192.168.0.50 'bash ~/update.sh'`.
+- **Google Apps Script:** altijd "Nieuwe versie", nooit "Nieuwe implementatie".
