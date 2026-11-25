@@ -1,4 +1,4 @@
-// ESP32-C6 ROOM v3.7.1 — 25 nov 2026 — zonder Matter
+// ESP32-C6 ROOM v3.8 — 25 nov 2026 — zonder Matter
 // Zarlar thuisautomatisering — Room controller (Apple Home via de RPi-bridge, niet meer via Matter op de ESP32)
 // Filip Delannoy — Zarlardinge (BE)
 //
@@ -8,6 +8,18 @@
 // PARTITIETABEL: Compileer met "partitions.csv" in de schetsmap (Custom partition scheme):
 //   nvs (20 KB), otadata (8 KB), app0 (6 MB), app1 (6 MB), spiffs (~4 MB)
 //
+// v3.8 (25nov26): VERWARMINGSLOGICA ZOALS DE SJALAY.
+//                 (1) Effectief setpoint = dauwpuntbeveiliging aan (en vochtmeting) ? max(setpoint, dauwpunt + marge)
+//                 : setpoint. Nieuwe /json-key ak (1 decimaal), achteraan. c blijft het ingestelde setpoint.
+//                 (2) Echte hysterese: AAN onder effectief − hyst/2, UIT boven effectief + hyst/2 (was: aan onder
+//                 effectief − 0,5, uit erboven, zonder band).
+//                 (3) Thuis + thermostaatcontact: b = thermostaat OF dauwpuntbeveiliging (met dezelfde hysterese).
+//                 (4) Veiligheid: altijd UIT vanaf 30 °C kamertemperatuur; zonder geldige temperatuur vorstbeveiliging (v3.5).
+//                 (5) /settings: dauwpuntbeveiliging aan/uit (dew_en, aan), marge −10…+10 °C (was 0,5…5), hysterese
+//                 0,2…5,0 °C (hyst, 1,0), minimum setpoint 2…25 °C (sp_min, 10) = onderkant van de schuifbalken;
+//                 een lager opgeslagen setpoint wordt mee opgetrokken.
+//                 (6) Landingspagina: "21,3° (→ 18,4°)" met het echte doel (ak), "tegen condensatie" als het dauwpunt
+//                 het doel optrekt. /advanced: effectief setpoint, hysterese, condensbeveiliging.
 // v3.7.1 (25nov26): TERUGVAL SCD41 OOK IN DE PAGINA'S. Landingspagina toonde "–°" als DS18B20 en DHT22 weg waren
 //                 (room regelde wel op de SCD41): nu DS18B20 → DHT22 → SCD41 (al, ≠ 0), zoals /advanced. /advanced:
 //                 bron en melding blijven na de automatische verversing (JS leidt ze af uit f, e, al). Mee aangepast
@@ -229,7 +241,7 @@ void releaseUsbPins() {
   usb_serial_jtag_ll_phy_enable_pad(false);
 }
 
-#define ROOM_VERSION "v3.7.1"  // v3.2: enige plaats met het versienummer
+#define ROOM_VERSION "v3.8"  // v3.2: enige plaats met het versienummer
 
 // v3.2: reden van de laatste herstart, leesbaar
 esp_reset_reason_t boot_reason = ESP_RST_UNKNOWN;
@@ -317,6 +329,9 @@ const char* NVS_VENT_REQUEST        = "vent_request";
 const char* NVS_CO2_LO               = "co2_lo";          // v3.4.3: ppm voor 0 % ventilatie
 const char* NVS_CO2_HI               = "co2_hi";          // v3.4.3: ppm voor 100 % ventilatie
 const char* NVS_DEW_MARGIN          = "dew_margin";
+const char* NVS_DEW_EN              = "dew_en";          // v3.8: dauwpuntbeveiliging aan/uit (standaard aan)
+const char* NVS_HYST                = "hyst";            // v3.8: hysterese °C (standaard 1,0)
+const char* NVS_SP_MIN              = "sp_min";          // v3.8: minimum setpoint °C (standaard 10)
 const char* NVS_HOME_MODE           = "home_mode";
 const char* NVS_LIGHT_THRESHOLD     = "light_thresh";
 const char* NVS_MOV_WINDOW          = "mov_window";
@@ -472,6 +487,11 @@ int vent_request_default     = 25;  // v2.21: default 0→25%
 int co2_vent_lo              = 600;   // v3.4.3: ppm → 0 % ventilatie
 int co2_vent_hi              = 1200;  // v3.4.3: ppm → 100 % ventilatie
 float dew_safety_margin      = 2.0;
+bool  dew_prot_en            = true;   // v3.8
+float heat_hyst              = 1.0f;   // v3.8
+int   sp_min                 = 10;     // v3.8
+float eff_setpoint           = 20.0f;  // v3.8: effectief setpoint (ak)
+bool  dew_raises             = false;  // v3.8: dauwpunt trekt het doel op
 int home_mode_default        = 0;              // 0 = Weg
 int light_dark_threshold     = 50;
 unsigned long mov_window_ms  = 60000;
@@ -1137,6 +1157,12 @@ const char* getJSON() {
     else strcpy(adc_entry, ",\"ar\":null");
     strncat(json, adc_entry, sizeof(json) - strlen(json) - 1);
   }
+  // v3.8: ak = effectief setpoint (°C, 1 decimaal)
+  {
+    char ak_entry[20];
+    snprintf(ak_entry, sizeof(ak_entry), ",\"ak\":%.1f", eff_setpoint);
+    strncat(json, ak_entry, sizeof(json) - strlen(json) - 1);
+  }
   strncat(json, "}", sizeof(json) - strlen(json) - 1);
 
   return json;  // v2.7: const char* — geen String-kopie op heap
@@ -1325,7 +1351,10 @@ void setup() {
   co2_vent_lo              = constrain(preferences.getInt(NVS_CO2_LO, 600), 400, 2000);   // v3.4.3
   co2_vent_hi              = constrain(preferences.getInt(NVS_CO2_HI, 1200), 500, 5000);  // v3.4.3
   if (co2_vent_hi < co2_vent_lo + 100) co2_vent_hi = co2_vent_lo + 100;
-  dew_safety_margin        = preferences.getFloat(NVS_DEW_MARGIN, 2.0);
+  dew_safety_margin        = constrain(preferences.getFloat(NVS_DEW_MARGIN, 2.0), -10.0f, 10.0f);
+  dew_prot_en              = preferences.getBool(NVS_DEW_EN, true);                              // v3.8
+  heat_hyst                = constrain(preferences.getFloat(NVS_HYST, 1.0f), 0.2f, 5.0f);        // v3.8
+  sp_min                   = constrain(preferences.getInt(NVS_SP_MIN, 10), 2, 25);               // v3.8
   home_mode_default        = preferences.getInt(NVS_HOME_MODE, 0);
   light_dark_threshold     = preferences.getInt(NVS_LIGHT_THRESHOLD, 50);
   mov_window_ms            = preferences.getULong(NVS_MOV_WINDOW, 60000UL);
@@ -1429,6 +1458,10 @@ void setup() {
 
   // Heating Setpoint persistent maken
   heating_setpoint = preferences.getInt(NVS_CURRENT_SETPOINT, heating_setpoint_default);
+  if (heating_setpoint < sp_min) {   // v3.8: minimum setpoint trekt een lager setpoint mee op
+    heating_setpoint = sp_min;
+    preferences.putInt(NVS_CURRENT_SETPOINT, heating_setpoint);
+  }
 
   // Fade duration persistent maken
   fade_duration = preferences.getInt(NVS_FADE_DURATION, 2);
@@ -1644,7 +1677,8 @@ void setup() {
       p->print(FPSTR(LANDING_KOP));
       p->print(room_id);
       p->print(FPSTR(LANDING_MIDDEN));
-      p->print(F("<script>var CFG={ver:\"ROOM " ROOM_VERSION "\",mov2:"));
+      p->printf("<script>var CFG={spmin:%d,", sp_min);   // v3.8: onderkant schuifbalk
+      p->print(F("ver:\"ROOM " ROOM_VERSION "\",mov2:"));
       p->print(mov2_enabled ? 1 : 0);
       p->print(F(",px:["));
       for (int i = 0; i < pixels_num; i++) {
@@ -1776,7 +1810,13 @@ void setup() {
     }
     p->print(F("<tr><td class=\"label\">Heating setpoint</td><td class=\"value\">"));
     p->printf("%d &deg;C", heating_setpoint);
-    p->printf("</td><td class=\"control\"><form action=\"/set_setpoint\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\"><input type=\"range\" class=\"slider\" name=\"setpoint\" min=\"10\" max=\"30\" value=\"%d\" onchange=\"submitAjax(this.form);\"></form></td></tr>", heating_setpoint);
+    p->printf("</td><td class=\"control\"><form action=\"/set_setpoint\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\"><input type=\"range\" class=\"slider\" name=\"setpoint\" min=\"%d\" max=\"30\" value=\"%d\" onchange=\"submitAjax(this.form);\"></form></td></tr>", sp_min, heating_setpoint);
+    // v3.8: effectief setpoint, hysterese, condensbeveiliging
+    p->printf("<tr><td class=\"label\">Effectief setpoint</td><td class=\"value\">%.1f &deg;C%s</td><td class=\"control\"></td></tr>",
+      eff_setpoint, dew_raises ? " <small>(tegen condensatie)</small>" : "");
+    p->printf("<tr><td class=\"label\">Hysterese</td><td class=\"value\">&plusmn;%.1f &deg;C</td><td class=\"control\"></td></tr>", heat_hyst / 2.0f);
+    p->printf("<tr><td class=\"label\">Condensbeveiliging</td><td class=\"value\">%s</td><td class=\"control\"></td></tr>",
+      dew_prot_en ? (humi_ok ? "aan" : "aan (geen vochtmeting)") : "uit");
     p->print(F("<tr><td class=\"label\">Ventilatie snelheid %</td><td class=\"value\">"));
     p->printf("%d %%", vent_percent);
     // v2.21: CO2 dot — lichtblauw als CO2 stuurt, grijs als slider bepaalt
@@ -1990,6 +2030,7 @@ void setup() {
       "else if(lbl==='SCD41 vocht') td.innerHTML=(data.am||0)+' %';"
       "else if(lbl.includes('Stof')) td.innerHTML=data.l+sw(data.l==0);"
       "else if(lbl.includes('Heating setpoint')) td.textContent=data.c+' \u00b0C';"
+      "else if(lbl.includes('Effectief setpoint')) td.innerHTML=(data.ak!==undefined?data.ak.toFixed(1):'\u2014')+' \u00b0C'+(data.ak>data.c+0.05?' <small>(tegen condensatie)</small>':'');"
       "else if(lbl.includes('Ventilatie snelheid')){"
         "td.innerHTML=data.g+' %'+(data.k>0?\"<span class='dot' style='background:#3aafe0;margin-left:5px'></span>\":\"<span class='dot' style='background:#bbb;margin-left:5px'></span>\");"
         "var sl=document.querySelector('input[name=vent]');"
@@ -2489,10 +2530,16 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     "<tr><td class=\"lbl\">Static IP</td><td class=\"inp\"><input type=\"text\" name=\"static_ip\" value=\""));
   p->print(static_ip_str);
   p->printf("\" placeholder=\"leeg = DHCP\"></td></tr>"
-    "<tr><td class=\"lbl\">Heating setpoint</td><td class=\"inp\"><input type=\"number\" name=\"heat_sp\" min=\"10\" max=\"30\" value=\"%d\"></td></tr>"
+    "<tr><td class=\"lbl\">Heating setpoint</td><td class=\"inp\"><input type=\"number\" name=\"heat_sp\" min=\"2\" max=\"30\" value=\"%d\"></td></tr>"
     "<tr><td class=\"lbl\">Vent default %%</td><td class=\"inp\"><input type=\"number\" name=\"vent_req\" min=\"0\" max=\"100\" value=\"%d\"></td></tr>"
-    "<tr><td class=\"lbl\">Dew margin (&deg;C)</td><td class=\"inp\"><input type=\"number\" step=\"0.1\" name=\"dew_margin\" min=\"0.5\" max=\"5.0\" value=\"%.1f\"></td></tr>",
-    heating_setpoint_default, vent_request_default, dew_safety_margin);
+    "<tr><td class=\"lbl\">Dauwpuntbeveiliging</td><td class=\"inp\"><label><input type=\"checkbox\" name=\"dew_en\"%s> aan</label> &nbsp; "
+    "marge <input type=\"number\" step=\"0.1\" name=\"dew_margin\" min=\"-10\" max=\"10\" value=\"%.1f\" style=\"width:70px;\"> &deg;C"
+    "<br><span style=\"font-size:12px;color:#666;\">Doel minstens dauwpunt + marge (standaard 2,0). Negatief = vochtrisico voor eigen rekening.</span></td></tr>"
+    "<tr><td class=\"lbl\">Hysterese (&deg;C)</td><td class=\"inp\"><input type=\"number\" step=\"0.1\" name=\"hyst\" min=\"0.2\" max=\"5\" value=\"%.1f\" style=\"width:70px;\">"
+    "<span style=\"font-size:12px;color:#666;\"> aan onder doel &minus; helft, uit boven doel + helft (standaard 1,0)</span></td></tr>"
+    "<tr><td class=\"lbl\">Minimum setpoint (&deg;C)</td><td class=\"inp\"><input type=\"number\" step=\"1\" name=\"sp_min\" min=\"2\" max=\"25\" value=\"%d\" style=\"width:70px;\">"
+    "<span style=\"font-size:12px;color:#666;\"> onderkant van de schuifbalk (standaard 10)</span></td></tr>",
+    heating_setpoint_default, vent_request_default, dew_prot_en ? " checked" : "", dew_safety_margin, heat_hyst, sp_min);
   // v3.4.3: ventilatie volgens CO2 (rechtlijnig tussen de twee waarden)
   p->printf("<tr><td class=\"lbl\">Ventilatie (CO&#8322;)</td><td class=\"inp\">"
     "0 %% bij <input type=\"number\" name=\"co2_lo\" min=\"400\" max=\"2000\" step=\"50\" value=\"%d\" style=\"width:80px;\"> ppm &nbsp; "
@@ -2629,7 +2676,10 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     preferences.putInt(NVS_CO2_LO, lo);
     preferences.putInt(NVS_CO2_HI, hi);
   }
-  preferences.putFloat(NVS_DEW_MARGIN,     request->hasArg("dew_margin")      ? request->arg("dew_margin").toFloat()   : 2.0);
+  preferences.putFloat(NVS_DEW_MARGIN,     request->hasArg("dew_margin")      ? constrain(request->arg("dew_margin").toFloat(), -10.0f, 10.0f) : 2.0f);
+  preferences.putBool(NVS_DEW_EN,          request->hasArg("dew_en"));   // v3.8
+  if (request->hasArg("hyst"))   preferences.putFloat(NVS_HYST, constrain(request->arg("hyst").toFloat(), 0.2f, 5.0f));   // v3.8
+  if (request->hasArg("sp_min")) preferences.putInt(NVS_SP_MIN, constrain(request->arg("sp_min").toInt(), 2, 25));       // v3.8
   preferences.putInt(NVS_HOME_MODE,        request->hasArg("home_mode")       ? request->arg("home_mode").toInt()      : 0);
   preferences.putInt(NVS_LDR_DARK,        request->hasArg("ldr_dark")        ? request->arg("ldr_dark").toInt()       : 50);
 
@@ -2822,7 +2872,7 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     crumbW(CW_SETPOINT);  // v3.3
   if (request->hasParam("setpoint")) {
     heating_setpoint = request->getParam("setpoint")->value().toInt();
-    heating_setpoint = constrain(heating_setpoint, 10, 30);
+    heating_setpoint = constrain(heating_setpoint, sp_min, 30);   // v3.8: minimum setpoint
     preferences.putInt(NVS_CURRENT_SETPOINT, heating_setpoint);  // direct opslaan
   }
   request->send(200, "text/plain", "OK");
@@ -3046,17 +3096,33 @@ void loop() {
   // v2.21: altijd AUTO — setpoint + dauwpuntbeveiliging (heating_mode verwijderd)
   crumbL(CL_HEAT);
   tstat_on = !digitalRead(TSTAT_PIN);
-  float effective_setpoint = max((float)heating_setpoint, dew + dew_safety_margin);
+  // v3.8: effectief setpoint + echte hysterese (zoals de Sjalay)
+  bool  dew_active = dew_prot_en && humi_ok;
+  float dew_target = dew + dew_safety_margin;
+  dew_raises   = dew_active && dew_target > (float)heating_setpoint;
+  eff_setpoint = dew_raises ? dew_target : (float)heating_setpoint;
+  float effective_setpoint = eff_setpoint;   // voor de seriële uitvoer
+  static bool heat_state = false, dew_state = false;
+  float h2 = heat_hyst / 2.0f;
+  if (room_temp_ok) {
+    if (room_temp < eff_setpoint - h2) heat_state = true;
+    else if (room_temp > eff_setpoint + h2) heat_state = false;
+    if (dew_active) {
+      if (room_temp < dew_target - h2) dew_state = true;
+      else if (room_temp > dew_target + h2) dew_state = false;
+    } else dew_state = false;
+  }
   if (home_mode == 1 && tstat_enabled) {
-    heating_on = tstat_on;              // Thuis + hardware TSTAT → volg hardware
+    heating_on = (tstat_on || dew_state) ? 1 : 0;   // Thuis + hardware TSTAT → volg hardware, plus dauwpuntbeveiliging
   } else {
     if (room_temp_ok) {
-      heating_on = (room_temp < (effective_setpoint - 0.5f)) ? 1 : 0;  // Anti-condens altijd actief
+      heating_on = heat_state ? 1 : 0;
     } else {
       // v3.5: VORSTBEVEILIGING — geen geldige temperatuur → FROST_ON_MIN minuten per uur aan
       heating_on = ((millis() / 60000UL) % 60UL < FROST_ON_MIN) ? 1 : 0;
     }
   }
+  if (room_temp_ok && room_temp >= 30.0f) heating_on = 0;   // v3.8: veiligheid, altijd voorrang
   if (ap_mode_active) heating_on = 0;   // v3.4: in AP-mode geen metingen → ook geen verwarmingsvraag
 
   // v2.4 FIX 5: Rescan DS18B20 vanuit loop() (async-safe — delay(750) is hier WDT-safe)

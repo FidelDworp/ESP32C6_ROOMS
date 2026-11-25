@@ -1,5 +1,5 @@
 // ============================================================================
-// landing.h — landingspagina "/" van de ROOM-sketch (hoort bij v3.2; v3.2: versie onderaan; v3.5.2: Generic ADC; v3.6.2: kamernaam als titel; v3.7.1: SCD41-terugval)
+// landing.h — landingspagina "/" van de ROOM-sketch (hoort bij v3.2; v3.2: versie onderaan; v3.5.2: Generic ADC; v3.6.2: kamernaam als titel; v3.7.1: SCD41-terugval; v3.8: echt doel (ak) en minimum setpoint)
 // Eenvoudige pagina voor huisgenoten en gasten: temperatuur + setpoint, lampen,
 // kleur, bed-modus, thuis/weg. Technische pagina: /advanced (⚙ onderaan).
 //
@@ -79,7 +79,8 @@ function aan(d,i){var s=(d.t||'').replace('P=','');
  if(i==0)return d.y==1; if(i==1&&CFG.mov2)return d.z==1; return s.charAt(i)=='1';}
 function toon(d){laatst=d;
  var ok=function(v){return v!==null&&v!==undefined&&v>=-10&&v<=40;};var t=ok(d.f)?d.f:ok(d.e)?d.e:(ok(d.al)&&d.al!=0)?d.al:null;  /* v3.7.1: SCD41 als derde bron */$('temp').textContent=(t!==null?t.toFixed(1):'–')+'°';  /* v3.5: e/f kunnen null zijn */
- $('sp').textContent='(→ '+d.c+'°)';$('vocht').textContent=d.h>0?'Vocht '+Math.round(d.h)+' %':'';
+ var doel=(d.ak!==undefined&&d.ak!==null)?d.ak:d.c;  /* v3.8: echt doel */
+ $('sp').textContent='(→ '+(Math.round(doel*10)/10)+'°'+(doel>d.c+0.05?' · tegen condensatie':'')+')';$('vocht').textContent=d.h>0?'Vocht '+Math.round(d.h)+' %':'';
  $('heat').classList.toggle('actief',d.b==1);
  if(CFG.adc)$('adc').textContent=CFG.adc+': '+(d.ar===null||d.ar===undefined?'–':d.ar.toFixed(2)+' V');  /* v3.5.2 */
  if(document.activeElement!==$('sl')){$('sl').value=d.c;$('slv').textContent=d.c+' °C';}
@@ -97,5 +98,6 @@ $('sl').addEventListener('input',function(){$('slv').textContent=this.value+' °
 $('sl').addEventListener('change',function(){knop('/set_setpoint?setpoint='+this.value);});
 $('kl').addEventListener('change',function(){var v=this.value;
  knop('/setcolor?r='+parseInt(v.substr(1,2),16)+'&g='+parseInt(v.substr(3,2),16)+'&b='+parseInt(v.substr(5,2),16));});
+if(CFG.spmin)$('sl').min=CFG.spmin;  /* v3.8 */
 $('ver').textContent=CFG.ver||'';tegels();ververs();setInterval(ververs,3000);
 </script></body></html>)HTML";
