@@ -41,10 +41,10 @@ Start van een **nieuw gesprek met Claude** over de ROOM-sketch en de overstap va
 
 - **v3.5 → v3.6 op 22/11 geflasht** (v3.5.1 veilige OTA, v3.5.2 opruimen + Generic ADC, v3.5.3 LDR omgekeerd, v3.6 WiFi + mDNS). Diagnose telkens in orde. v3.5 haalde vooraf 44 u zonder herstart.
 - **Thuis nog te testen** (FiDel):
-  2. IO2 met een draadje aan GND → Generic ADC ±0,00 V.
-  3. `http://eetplaats.local/`.
-  4. Router 2–3 min uit → room80 komt vanzelf terug, Diagnose "1 keer weggevallen" met reden. Optioneel: router en room80 samen herstarten → kort nood-AP, dan terug op het netwerk.
-  5. Bewegingslamp 's avonds aan, overdag niet (LDR-drempel omgerekend).
+  1. IO2 met een draadje aan GND → Generic ADC ±0,00 V.
+  2. `http://eetplaats.local/`.
+  3. Router 2–3 min uit → room80 komt vanzelf terug, Diagnose "1 keer weggevallen" met reden. Optioneel: router en room80 samen herstarten → kort nood-AP, dan terug op het netwerk.
+  4. Bewegingslamp 's avonds aan, overdag niet (LDR-drempel omgerekend).
 - **Volgende stappen:** zie het plan in de README. **v3.6.1 OTA-voortgangspagina** (uit Vakantiehuizen v1.13) geflasht en getest 25/11: voortgangsbalk, "Terug online" en sprong naar /advanced werken. **v3.6.2** (paginatitels met de kamernaam) geflasht 25/11 via de nieuwe OTA-pagina: in orde. **v3.6.3** (CO2-referentie SCD41, NVS `scd_ref`, standaard 420 ppm: ASC-doel + FRC) geflasht 25/11; effect pas zichtbaar na de volgende ASC-correctie (±7 dagen). **v3.7** (temperatuurbewaking, max. 6 DS18B20, vocht-terugval op SCD41) geflasht 25/11 en getest door de RoomSense-kabel (RJ45) los te trekken: DS18B20 "ontbreekt" na ±15 s, na 5 min temperatuur en vocht van de SCD41. Toen bleek de landingspagina "–°" te tonen → **v3.7.1** (SCD41-terugval ook in landingspagina, /advanced-melding, RPi index.html en bridge v0.8.1). Open vraag aan FiDel: **pixelmodi** vóór de B&B live gaat (per pixel manueel / beweging / nachtlampje — aan bij donker, uit in BED-modus — en een kleur per pixel; nodig voor de vloermat op pixel 1).
 
 **Technisch om te onthouden**
