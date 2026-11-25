@@ -11,7 +11,7 @@ Room-controllers van het Zarlar-thuisautomatiseringssysteem (Zarlardinge): een E
 
 | | |
 |---|---|
-| **Sketch** | **v3.7** — map `ESP32_C6_ROOM/`, klaar om te uploaden: `bin/ESP32_C6_ROOM_v3.7.ino.bin` |
+| **Sketch** | **v3.7.1** — map `ESP32_C6_ROOM/`, klaar om te uploaden: `bin/ESP32_C6_ROOM_v3.7.1.ino.bin` |
 | **Draait op** | room80: `192.168.0.80` · `http://eetplaats.local/`. Testbord met alle sensoren, rij R-EETPL op de Dashboard-matrix |
 | **Board** | ESP32-C6-DevKitM-1, 16 MB, op het Zarlar shield |
 | **Apple Home** | Via de RPi-bridge (`server.js` + `matterbridge-zarlar`), toestel "Eetplaats". Geen Matter op de ESP32 |
@@ -49,7 +49,7 @@ Room-controllers van het Zarlar-thuisautomatiseringssysteem (Zarlardinge): een E
 
 **Van op afstand** (Mac via mobiele data + Tailscale, **niet** via de wifi in Nieuwpoort: zelfde 192.168.0.x-bereik):
 ```
-curl -L -o /tmp/room.bin https://raw.githubusercontent.com/FidelDworp/ESP32C6_ROOMS/main/bin/ESP32_C6_ROOM_v3.7.ino.bin
+curl -L -o /tmp/room.bin https://raw.githubusercontent.com/FidelDworp/ESP32C6_ROOMS/main/bin/ESP32_C6_ROOM_v3.7.1.ino.bin
 ls -l /tmp/room.bin
 curl -F "update=@/tmp/room.bin" http://192.168.0.80/update
 ```
@@ -95,7 +95,7 @@ Sheet "R-ROOMS Log", tabblad **"Data"**: 43 kolommen (A–AQ), één rij per roo
 | v3.6.1 | **OTA-voortgangspagina** zoals Vakantiehuizen v1.13: upload via JavaScript met voortgangsbalk (% en KB), daarna wachten tot de controller terug is ("✅ Terug online: ROOM vX") en automatisch naar `/advanced`; nieuwe route `/ver` (`versie\|uptime_s`). POST-handler en curl-upload ongewijzigd — ✅ 25/11 geflasht en getest | alle rooms |
 | — | **RPi:** ontbrekende temperatuur (`null`) als "–" i.p.v. 0,0 °C (`room.html`, `index.html`) — ✅ 25/11 in de overkoepelende repo | RPi |
 | v3.6.3 | **CO2-referentie SCD41** instelbaar ("CO2 buitenlucht", standaard 420 ppm): ASC-streefwaarde én waarde voor "Kalibreren in buitenlucht" — ✅ geflasht 25/11 | alle rooms |
-| v3.7 | **Temperatuurbewaking** zoals de Sjalay, max. **6 DS18B20's** (`an`, `ao`), vocht valt terug op de SCD41 — 🔨 gebouwd 25/11 | alle rooms |
+| v3.7 | **Temperatuurbewaking** zoals de Sjalay, max. **6 DS18B20's** (`an`, `ao`), vocht valt terug op de SCD41 — ✅ 25/11 geflasht en getest met de RoomSense-kabel los (v3.7.1: SCD41-terugval ook op landingspagina, `/advanced`, RPi en Apple Home) | alle rooms |
 | v3.8 | **Verwarmingslogica** zoals de Sjalay (`ak`) | alle rooms |
 | *open* | **Pixelmodi:** per pixel manueel / beweging / nachtlampje, kleur per pixel (vraag van 18/11, nog te beslissen) | B&B (vloermat) |
 | v3.8b | **Pixel-effecten** achter de Powerpixels | B&B, BADK, SLPK |
@@ -128,7 +128,8 @@ Elke pagina in een eigen `.h`-bestand (zoals `landing.h`): de `.ino` bevat enkel
 
 | Versie | Datum | Wat |
 |---|---|---|
-| **v3.7** | 25/11 | **Temperatuurbewaking:** max. 6 DS18B20's (`an`, `ao`; `ah`–`ao` altijd aanwezig), fouten per sensor (3 op rij = ontbreekt), 85,0 °C genegeerd, DHT22 5 min geldig, vocht/dauwpunt terugval op de SCD41, overzicht "Alle temperatuursensoren" op `/advanced` |
+| **v3.7.1** | 25/11 | Terugval op de SCD41 ook op de landingspagina en in de melding op `/advanced` (+ RPi `index.html`, bridge v0.8.1) |
+| v3.7 | 25/11 | **Temperatuurbewaking:** max. 6 DS18B20's (`an`, `ao`; `ah`–`ao` altijd aanwezig), fouten per sensor (3 op rij = ontbreekt), 85,0 °C genegeerd, DHT22 5 min geldig, vocht/dauwpunt terugval op de SCD41, overzicht "Alle temperatuursensoren" op `/advanced` |
 | v3.6.3 | 25/11 | CO2-referentie SCD41 instelbaar (ASC-doel + FRC, standaard 420 ppm; was 400/425) |
 | v3.6.2 | 25/11 | Paginatitels met de kamernaam: landingspagina "Eetplaats" (was "Zarlar"), "Eetplaats - OTA", "Eetplaats - Status" |
 | v3.6.1 | 25/11 | **OTA-voortgangspagina** (uit Vakantiehuizen v1.13): voortgangsbalk, "Terug online", naar `/advanced`; route `/ver` |

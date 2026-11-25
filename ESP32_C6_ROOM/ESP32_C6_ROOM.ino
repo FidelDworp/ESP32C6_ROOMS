@@ -1,4 +1,4 @@
-// ESP32-C6 ROOM v3.7 — 25 nov 2026 — zonder Matter
+// ESP32-C6 ROOM v3.7.1 — 25 nov 2026 — zonder Matter
 // Zarlar thuisautomatisering — Room controller (Apple Home via de RPi-bridge, niet meer via Matter op de ESP32)
 // Filip Delannoy — Zarlardinge (BE)
 //
@@ -8,6 +8,10 @@
 // PARTITIETABEL: Compileer met "partitions.csv" in de schetsmap (Custom partition scheme):
 //   nvs (20 KB), otadata (8 KB), app0 (6 MB), app1 (6 MB), spiffs (~4 MB)
 //
+// v3.7.1 (25nov26): TERUGVAL SCD41 OOK IN DE PAGINA'S. Landingspagina toonde "–°" als DS18B20 en DHT22 weg waren
+//                 (room regelde wel op de SCD41): nu DS18B20 → DHT22 → SCD41 (al, ≠ 0), zoals /advanced. /advanced:
+//                 bron en melding blijven na de automatische verversing (JS leidt ze af uit f, e, al). Mee aangepast
+//                 in de overkoepelende repo: RPi index.html en Apple Home-bridge (module.js). Geen /json-wijziging.
 // v3.7 (25nov26): TEMPERATUURBEWAKING (zoals de Sjalay).
 //                 (1) Max. 6 DS18B20's (was 4). /json: ah, ai, aj (sensor 2–4) en NIEUW an, ao (sensor 5–6);
 //                 alle vijf altijd aanwezig, null als de sensor ontbreekt of geen geldige meting heeft
@@ -225,7 +229,7 @@ void releaseUsbPins() {
   usb_serial_jtag_ll_phy_enable_pad(false);
 }
 
-#define ROOM_VERSION "v3.7"  // v3.2: enige plaats met het versienummer
+#define ROOM_VERSION "v3.7.1"  // v3.2: enige plaats met het versienummer
 
 // v3.2: reden van de laatste herstart, leesbaar
 esp_reset_reason_t boot_reason = ESP_RST_UNKNOWN;
@@ -1970,7 +1974,10 @@ void setup() {
         "var ok=function(v){return v!==null&&v!==undefined&&v>=-10&&v<=40;};"
         "var fx=function(v){return ok(v)?v.toFixed(1):'\u2014';};"
         "var rt=ok(data.f)?data.f:ok(data.e)?data.e:(ok(data.al)&&data.al!=0)?data.al:null;"
-        "td.innerHTML=(rt!==null?rt.toFixed(1)+' \u00b0C':'\u2014')+'<br><small>(DHT '+fx(data.e)+', DS '+fx(data.f)+')</small>'"
+        "var src=ok(data.f)?'DS18B20':ok(data.e)?'DHT22':rt!==null?'SCD41':'';"
+        "var mel=ok(data.f)?'':ok(data.e)?'DS18B20 defect - DHT22 gebruikt':rt!==null?'DS18B20 en DHT22 defect - SCD41 gebruikt':'Geen geldige temperatuur - vorstbeveiliging';"
+        "td.innerHTML=(rt!==null?rt.toFixed(1)+' \u00b0C':'\u2014')+'<br><small>(DHT '+fx(data.e)+', DS '+fx(data.f)+')'+(src?' \u00b7 bron '+src:'')+'</small>'"
+        "+(mel?'<br><small style=\"color:'+(rt!==null?'#c60':'#c00')+';font-weight:bold;\">'+mel+'</small>':'')"
         "+sw(!ok(data.f))+sw(!ok(data.e));}"
       "else if(lbl.includes('Humidity')) td.innerHTML=Math.round(data.h)+' %'"
         "+sw(data.h==0||data.h<10||data.h>99);"
