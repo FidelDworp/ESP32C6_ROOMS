@@ -26,8 +26,8 @@ Start van een **nieuw gesprek met Claude** over de ROOM-sketch en de overstap va
 | Controller | Adres | Stand |
 |---|---|---|
 | **room80** (testbord, eetplaats) | 192.168.0.80 · `eetplaats.local` | **ROOM v3.6.2** (25/11) |
-| Dashboard (matrix, logging) | 192.168.0.60 | v6.5 (22/11) |
-| RPi (portal + Apple Home-bridge) | 192.168.0.50:3000 | `update.sh` 22/11 |
+| Dashboard (matrix, logging) | 192.168.0.60 | v6.6 (wifi-herstel) |
+| RPi (portal + Apple Home-bridge) | 192.168.0.50:3000 | `update.sh` 25/11 (ff99359) |
 | HVAC · ECO-boiler · S-ENERGY | .70 · .71 · .73 | eigen repo's |
 | Photon-rooms | — | nog in productie, behalve de B&B (defect) |
 
