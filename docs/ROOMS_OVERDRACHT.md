@@ -46,7 +46,7 @@ Start van een **nieuw gesprek met Claude** over de ROOM-sketch en de overstap va
   3. `http://eetplaats.local/`.
   4. Router 2–3 min uit → room80 komt vanzelf terug, Diagnose "1 keer weggevallen" met reden. Optioneel: router en room80 samen herstarten → kort nood-AP, dan terug op het netwerk.
   5. Bewegingslamp 's avonds aan, overdag niet (LDR-drempel omgerekend).
-- **Volgende stappen:** zie het plan in de README. **v3.6.1 OTA-voortgangspagina** (uit Vakantiehuizen v1.13) geflasht en getest 25/11: voortgangsbalk, "Terug online" en sprong naar /advanced werken. **v3.6.2** (paginatitels met de kamernaam) geflasht 25/11 via de nieuwe OTA-pagina: in orde. Open vraag aan FiDel: **pixelmodi** vóór de B&B live gaat (per pixel manueel / beweging / nachtlampje — aan bij donker, uit in BED-modus — en een kleur per pixel; nodig voor de vloermat op pixel 1).
+- **Volgende stappen:** zie het plan in de README. **v3.6.1 OTA-voortgangspagina** (uit Vakantiehuizen v1.13) geflasht en getest 25/11: voortgangsbalk, "Terug online" en sprong naar /advanced werken. **v3.6.2** (paginatitels met de kamernaam) geflasht 25/11 via de nieuwe OTA-pagina: in orde. **v3.6.3** (CO2-referentie SCD41, NVS `scd_ref`, standaard 420 ppm: ASC-doel + FRC) gebouwd 25/11; effect pas zichtbaar na de volgende ASC-correctie (±7 dagen). Open vraag aan FiDel: **pixelmodi** vóór de B&B live gaat (per pixel manueel / beweging / nachtlampje — aan bij donker, uit in BED-modus — en een kleur per pixel; nodig voor de vloermat op pixel 1).
 
 **Technisch om te onthouden**
 - IO12/IO13 = USB D−/D+ van de C6: compileren met CDC uit + `releaseUsbPins()`; I2C (SCD41) op IO13/IO11.

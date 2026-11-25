@@ -1,4 +1,4 @@
-// ESP32-C6 ROOM v3.6.2 — 25 nov 2026 — zonder Matter
+// ESP32-C6 ROOM v3.6.3 — 25 nov 2026 — zonder Matter
 // Zarlar thuisautomatisering — Room controller (Apple Home via de RPi-bridge, niet meer via Matter op de ESP32)
 // Filip Delannoy — Zarlardinge (BE)
 //
@@ -8,6 +8,10 @@
 // PARTITIETABEL: Compileer met "partitions.csv" in de schetsmap (Custom partition scheme):
 //   nvs (20 KB), otadata (8 KB), app0 (6 MB), app1 (6 MB), spiffs (~4 MB)
 //
+// v3.6.3 (25nov26): CO2-REFERENTIE SCD41 INSTELBAAR. Nieuwe instelling "CO2 buitenlucht" (NVS scd_ref, 380–500 ppm,
+//                 standaard 420; fabriekswaarde ASC was 400 → nachtwaarden room80 395–410 ppm). Wordt bij elke start
+//                 van de SCD41 als ASC-streefwaarde gezet (niet persistent in de sensor: geen slijtage) en gebruikt door
+//                 "Kalibreren in buitenlucht" (FRC, was vast 425). Diagnose toont de referentie. Geen /json-wijziging.
 // v3.6.2 (25nov26): PAGINATITELS MET DE KAMERNAAM (browser-tab): landingspagina "<kamer>" (was "Zarlar"),
 //                 OTA "<kamer> - OTA" (was "OTA"), status "<kamer> - Status" (was zonder streepje).
 //                 Settings was al "<kamer> - Settings". Kamernaam veilig ge-escaped. Geen andere wijzigingen.
@@ -211,7 +215,7 @@ void releaseUsbPins() {
   usb_serial_jtag_ll_phy_enable_pad(false);
 }
 
-#define ROOM_VERSION "v3.6.2"  // v3.2: enige plaats met het versienummer
+#define ROOM_VERSION "v3.6.3"  // v3.2: enige plaats met het versienummer
 
 // v3.2: reden van de laatste herstart, leesbaar
 esp_reset_reason_t boot_reason = ESP_RST_UNKNOWN;
@@ -307,6 +311,7 @@ const char* NVS_LDR_INV             = "ldr_inv";         // v3.5.3: drempel al o
 const char* NVS_CO2_ENABLED         = "co2_en";          // v3.4: = SCD41 aan/uit
 const char* NVS_SCD_ASC             = "scd_asc";         // v3.4: bool, automatische kalibratie (standaard aan)
 const char* NVS_SCD_TOFF            = "scd_toff";        // v3.4: float, temperatuuroffset °C (standaard 4,0)
+const char* NVS_SCD_REF             = "scd_ref";         // v3.6.3: int, CO2 buitenlucht ppm (ASC-doel + FRC, standaard 420)
 const char* NVS_MOV2_ENABLED        = "mov2_en";
 const char* NVS_TSTAT_ENABLED       = "tstat_en";
 const char* NVS_ADC_ENABLED         = "adc_en";          // v3.5.2: Generic ADC (GP3) aan/uit
@@ -466,6 +471,7 @@ bool co2_enabled   = false;  // v1.7: default false. v3.4: = SCD41 aan/uit
 SensirionI2cScd4x scd;
 bool  scd_asc        = true;    // automatische zelfkalibratie
 float scd_toff       = 4.0f;    // temperatuuroffset (°C), Sensirion-standaard
+int   scd_ref        = 420;     // v3.6.3: CO2 buitenlucht (ppm): ASC-streefwaarde en FRC-waarde
 bool  scd_ok         = false;   // sensor antwoordt en meet
 uint64_t scd_serial  = 0;
 uint32_t scd_errors  = 0;       // leesfouten sinds de opstart
@@ -892,6 +898,7 @@ bool scdInit() {
   if (!err) { step = "serienummer";  err = scd.getSerialNumber(scd_serial); }
   if (!err) { step = "ASC";          err = scd.setAutomaticSelfCalibrationEnabled(scd_asc ? 1 : 0); }
   if (!err) { step = "offset";       err = scd.setTemperatureOffset(scd_toff); }
+  if (!err) { step = "ASC-doel";     err = scd.setAutomaticSelfCalibrationTarget((uint16_t)scd_ref); }   // v3.6.3
   if (!err) { step = "start meting"; err = scd.startPeriodicMeasurement(); }
   scd_ok = (err == 0);
   if (scd_ok) {
@@ -905,8 +912,8 @@ bool scdInit() {
   if (scd_ok) {
     scd_started_ms = millis();
     scd_last_ok_ms = millis();       // geef de eerste meting 60 s de tijd
-    Serial.printf("SCD41: gestart (serienr %llX, ASC %s, offset %.1f C)\n",
-                  (unsigned long long)scd_serial, scd_asc ? "aan" : "uit", scd_toff);
+    Serial.printf("SCD41: gestart (serienr %llX, ASC %s, offset %.1f C, referentie %d ppm)\n",
+                  (unsigned long long)scd_serial, scd_asc ? "aan" : "uit", scd_toff, scd_ref);
   } else {
     scdClearValues();
     Serial.printf("SCD41: geen antwoord op I2C (fout %d)\n", err);
@@ -946,12 +953,12 @@ void scdPoll() {
   }
 }
 
-// Geforceerde kalibratie (FRC) op 425 ppm, gevraagd via /scd_frc. Sensor moet ≥3 min in buitenlucht
+// Geforceerde kalibratie (FRC) op scd_ref ppm (v3.6.3; was 425), gevraagd via /scd_frc. Sensor moet ≥3 min in buitenlucht
 // gemeten hebben (gecontroleerd in de webhandler). Duurt ±1 s; daarna periodieke meting opnieuw.
 void scdForcedRecalibration() {
   uint16_t corr = 0xFFFF;
   scd.stopPeriodicMeasurement();
-  int16_t err = scd.performForcedRecalibration(425, corr);
+  int16_t err = scd.performForcedRecalibration((uint16_t)scd_ref, corr);   // v3.6.3: was vast 425
   if (!err && corr != 0xFFFF) {
     snprintf(scd_frc_result, sizeof(scd_frc_result), "OK, correctie %+d ppm (na %lu min uptime)",
              (int)corr - 0x8000, (unsigned long)(millis() / 60000UL));
@@ -1253,6 +1260,7 @@ void setup() {
     preferences.putBool(NVS_CO2_ENABLED, false);
     preferences.putBool(NVS_SCD_ASC, true);      // v3.4
     preferences.putFloat(NVS_SCD_TOFF, 4.0f);    // v3.4
+    preferences.putInt(NVS_SCD_REF, 420);        // v3.6.3
     preferences.putBool(NVS_MOV2_ENABLED, true);
     preferences.putBool(NVS_TSTAT_ENABLED, true);
     preferences.putBool(NVS_ADC_ENABLED, false);   // v3.5.2
@@ -1302,6 +1310,7 @@ void setup() {
   co2_enabled      = preferences.getBool(NVS_CO2_ENABLED, false);   // v2.5 fix: default false. v3.4: = SCD41 aan/uit
   scd_asc          = preferences.getBool(NVS_SCD_ASC, true);        // v3.4
   scd_toff         = constrain(preferences.getFloat(NVS_SCD_TOFF, 4.0f), 0.0f, 20.0f);  // v3.4
+  scd_ref          = constrain(preferences.getInt(NVS_SCD_REF, 420), 380, 500);         // v3.6.3
   mov2_enabled     = preferences.getBool(NVS_MOV2_ENABLED, true);
   num_mov_pixels = 1 + (mov2_enabled ? 1 : 0);  // v2.4 FIX 4: 'int' verwijderd — was lokale shadowing van globale variabele → globale bleef altijd 2
   tstat_enabled    = preferences.getBool(NVS_TSTAT_ENABLED, true);
@@ -2334,8 +2343,8 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     if (!co2_enabled) {
       p->print(F("uit"));
     } else if (scd_ok) {
-      p->printf("<b style=\"color:#0a0\">ok</b> &middot; serienr %llX &middot; leesfouten %u &middot; ASC %s &middot; offset %.1f &deg;C",
-        (unsigned long long)scd_serial, scd_errors, scd_asc ? "aan" : "uit", scd_toff);
+      p->printf("<b style=\"color:#0a0\">ok</b> &middot; serienr %llX &middot; leesfouten %u &middot; ASC %s &middot; offset %.1f &deg;C &middot; referentie %d ppm",
+        (unsigned long long)scd_serial, scd_errors, scd_asc ? "aan" : "uit", scd_toff, scd_ref);
     } else {
       p->printf("<b style=\"color:#c00\">ontbreekt</b> (geen antwoord op I2C IO13/IO11) &middot; leesfouten %u", scd_errors);
       if (scd_diag[0]) p->printf("<br><span style=\"font-size:12px;\">%s</span>", scd_diag);  // v3.4.1
@@ -2477,10 +2486,12 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     "<span style=\"font-size:12px;color:#666;\"> &mdash; aan in kamers die gelucht worden, uit in afgesloten ruimtes</span><br>"
     "Temperatuuroffset: <input type=\"number\" name=\"scd_toff\" step=\"0.1\" min=\"0\" max=\"20\" value=\"%.1f\" style=\"width:70px;\"> &deg;C"
     "<span style=\"font-size:12px;color:#666;\"> (standaard 4,0)</span><br>"
-    "<a href=\"/scd_frc\" onclick=\"return confirm('Staat de sensor al minstens 3 minuten in buitenlucht? Hij wordt dan op 425 ppm gezet.');\" "
-    "style=\"display:inline-block;margin-top:6px;background:#369;color:#fff;padding:6px 14px;border-radius:5px;text-decoration:none;font-size:13px;\">Kalibreren in buitenlucht (425 ppm)</a>"
+    "CO2 buitenlucht: <input type=\"number\" name=\"scd_ref\" step=\"1\" min=\"380\" max=\"500\" value=\"%d\" style=\"width:70px;\"> ppm"
+    "<span style=\"font-size:12px;color:#666;\"> (standaard 420) &mdash; streefwaarde van ASC en waarde voor de kalibratie hieronder</span><br>"
+    "<a href=\"/scd_frc\" onclick=\"return confirm('Staat de sensor al minstens 3 minuten in buitenlucht? Hij wordt dan op %d ppm gezet.');\" "
+    "style=\"display:inline-block;margin-top:6px;background:#369;color:#fff;padding:6px 14px;border-radius:5px;text-decoration:none;font-size:13px;\">Kalibreren in buitenlucht (%d ppm)</a>"
     "</td></tr>",
-    scd_asc ? " checked" : "", scd_toff);
+    scd_asc ? " checked" : "", scd_toff, scd_ref, scd_ref, scd_ref);
   p->printf("<tr><td class=\"lbl\">Serial logging</td><td class=\"inp\">"
     "<label><input type=\"checkbox\" name=\"serial_verbose\"%s> Aan</label>"
     "&nbsp;&nbsp;interval: <input type=\"number\" name=\"serial_interval\" min=\"5\" max=\"30\" value=\"%d\" style=\"width:50px;\"> s"
@@ -2564,6 +2575,7 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
   // Checkboxes
   preferences.putBool(NVS_CO2_ENABLED,    request->hasArg("co2"));
   preferences.putBool(NVS_SCD_ASC,        request->hasArg("scd_asc"));   // v3.4
+  if (request->hasArg("scd_ref")) preferences.putInt(NVS_SCD_REF, constrain(request->arg("scd_ref").toInt(), 380, 500));  // v3.6.3
   preferences.putFloat(NVS_SCD_TOFF,      request->hasArg("scd_toff") ? constrain(request->arg("scd_toff").toFloat(), 0.0f, 20.0f) : 4.0f);  // v3.4
   preferences.putBool(NVS_MOV2_ENABLED,   request->hasArg("mov2"));
   preferences.putBool(NVS_TSTAT_ENABLED,  request->hasArg("tstat"));
@@ -2681,7 +2693,7 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
       "<script>setTimeout(()=>location.href='/settings',12000);</script>");
   });
 
-  // v3.4: SCD41 kalibreren in buitenlucht (FRC 425 ppm) — uitgevoerd in loop(), niet hier
+  // v3.4: SCD41 kalibreren in buitenlucht (FRC op scd_ref, v3.6.3) — uitgevoerd in loop(), niet hier
   server.on("/scd_frc", HTTP_GET, [](AsyncWebServerRequest *request) {
     crumbW(CW_OTHER);
     const char* msg;
