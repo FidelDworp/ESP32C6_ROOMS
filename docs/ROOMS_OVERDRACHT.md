@@ -46,7 +46,7 @@ Start van een **nieuw gesprek met Claude** over de ROOM-sketch en de overstap va
   3. `http://eetplaats.local/`.
   4. Router 2–3 min uit → room80 komt vanzelf terug, Diagnose "1 keer weggevallen" met reden. Optioneel: router en room80 samen herstarten → kort nood-AP, dan terug op het netwerk.
   5. Bewegingslamp 's avonds aan, overdag niet (LDR-drempel omgerekend).
-- **Volgende stappen:** zie het plan in de README. Eerstvolgende: **v3.6.1 OTA-voortgangspagina** (overdracht uit het Vakantiehuizen-gesprek 25/11; bron: repo `VAKANTIEHUIZEN` v1.13, `handleOtaPage()` en `/ver`). Open vraag aan FiDel: **pixelmodi** vóór de B&B live gaat (per pixel manueel / beweging / nachtlampje — aan bij donker, uit in BED-modus — en een kleur per pixel; nodig voor de vloermat op pixel 1).
+- **Volgende stappen:** zie het plan in de README. **v3.6.1 OTA-voortgangspagina gebouwd 25/11** (uit Vakantiehuizen v1.13): nog te flashen en te testen (eerst via curl/oude pagina, daarna dezelfde .bin via de nieuwe pagina). Open vraag aan FiDel: **pixelmodi** vóór de B&B live gaat (per pixel manueel / beweging / nachtlampje — aan bij donker, uit in BED-modus — en een kleur per pixel; nodig voor de vloermat op pixel 1).
 
 **Technisch om te onthouden**
 - IO12/IO13 = USB D−/D+ van de C6: compileren met CDC uit + `releaseUsbPins()`; I2C (SCD41) op IO13/IO11.

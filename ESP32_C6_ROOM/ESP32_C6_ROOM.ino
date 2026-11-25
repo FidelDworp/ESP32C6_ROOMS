@@ -1,4 +1,4 @@
-// ESP32-C6 ROOM v3.6 — 22 nov 2026 — zonder Matter
+// ESP32-C6 ROOM v3.6.1 — 25 nov 2026 — zonder Matter
 // Zarlar thuisautomatisering — Room controller (Apple Home via de RPi-bridge, niet meer via Matter op de ESP32)
 // Filip Delannoy — Zarlardinge (BE)
 //
@@ -8,6 +8,14 @@
 // PARTITIETABEL: Compileer met "partitions.csv" in de schetsmap (Custom partition scheme):
 //   nvs (20 KB), otadata (8 KB), app0 (6 MB), app1 (6 MB), spiffs (~4 MB)
 //
+// v3.6.1 (25nov26): OTA-VOORTGANGSPAGINA (overgenomen uit Vakantiehuizen v1.13, handleOtaPage()).
+//                 (1) Nieuwe route GET /ver → platte tekst "versie|uptime_s" (bv. "v3.6.1|12"). /json ongewijzigd.
+//                 (2) /update: upload via JavaScript (XMLHttpRequest + FormData, veldnaam "update") naar de
+//                 bestaande POST /update, met voortgangsbalk (% en KB) en meldingsregel; "Nu actief: ROOM vX".
+//                 (3) Na "Update succesvol" (of een verbroken verbinding) vraagt de pagina elke 2 s /ver op:
+//                 lage uptime → "Terug online: ROOM vX (na N s)" (+ waarschuwing bij dezelfde versie) en na 3 s
+//                 naar /advanced; na 30 s nog de oude uptime → "herstartte niet"; na 180 s → geen antwoord.
+//                 POST-handler (v3.5.1) en uploaden met curl ongewijzigd.
 // v3.6 (22nov26): WIFI ROBUUSTER + mDNS TERUG.
 //                 (1) Geen modem-slaap (WiFi.setSleep(false)); WiFi-hostnaam = mDNS-naam (herkenbaar in de router).
 //                 (2) Zelf blijven herverbinden: zolang de verbinding weg is, elke 30 s WiFi.reconnect() (was één
@@ -200,7 +208,7 @@ void releaseUsbPins() {
   usb_serial_jtag_ll_phy_enable_pad(false);
 }
 
-#define ROOM_VERSION "v3.6"  // v3.2: enige plaats met het versienummer
+#define ROOM_VERSION "v3.6.1"  // v3.2: enige plaats met het versienummer
 
 // v3.2: reden van de laatste herstart, leesbaar
 esp_reset_reason_t boot_reason = ESP_RST_UNKNOWN;
@@ -2045,15 +2053,62 @@ void setup() {
       "<a href=\"/settings\">Settings</a>"
       "</div>"
       "<div class=\"main\">"
-      "<h2 style=\"color:#369;\">OTA Firmware Update</h2>"
-      "<form method=\"POST\" action=\"/update\" enctype=\"multipart/form-data\">"
-      "<input type=\"file\" name=\"update\" accept=\".bin\"><br><br>"
-      "<button class=\"btn\" type=\"submit\">Upload</button>"
-      "</form><br>"
-      "<button class=\"btn btn-red\" onclick=\"location.href='/reboot'\">Reboot</button>"
-      "<br><br><a href=\"/\">\u2190 Terug</a>"
-      "</div></div></body></html>"));
+      "<h2 style=\"color:#369;\">OTA Firmware Update</h2>"));
+    // v3.6.1: upload met voortgangsbalk en automatisch "terug online" (zoals Vakantiehuizen v1.13)
+    p->printf("<p style=\"font-size:13px;color:#555;\">Nu actief: <b>ROOM %s</b> &middot; uptime %lu s</p>"
+      "<input type=\"file\" id=\"otaf\" accept=\".bin\"><br><br>"
+      "<button class=\"btn\" type=\"button\" id=\"otab\" onclick=\"otaUp()\">Upload</button>"
+      "<div style=\"max-width:420px;height:18px;background:#eee;border-radius:9px;margin:14px auto 6px auto;overflow:hidden;\">"
+      "<div id=\"otafill\" style=\"height:100%%;width:0;background:#369;\"></div></div>"
+      "<p id=\"otamsg\" style=\"font-size:14px;\">Kies een .bin-bestand. Na een geslaagde upload herstart de controller vanzelf; "
+      "deze pagina meldt wanneer hij terug is.</p>",
+      ROOM_VERSION, millis() / 1000UL);
+    p->print(F("<br><button class=\"btn btn-red\" onclick=\"location.href='/reboot'\">Reboot</button>"
+      "<br><br><a href=\"/\">\u2190 Terug</a>"));
+    p->print(F(R"JS(<script>
+var OLDV=")JS" ROOM_VERSION R"JS(";
+function m(t){document.getElementById('otamsg').innerHTML=t;}
+function otaUp(){
+  var f=document.getElementById('otaf').files[0];
+  if(!f){m('Kies eerst een .bin-bestand.');return;}
+  document.getElementById('otab').disabled=true;
+  var fd=new FormData();fd.append('update',f,f.name);
+  var x=new XMLHttpRequest();
+  x.upload.onprogress=function(e){if(e.lengthComputable){var p=Math.round(e.loaded*100/e.total);
+    document.getElementById('otafill').style.width=p+'%';
+    m('Uploaden: <b>'+p+'%</b> ('+Math.round(e.loaded/1024)+' van '+Math.round(e.total/1024)+' KB)');}};
+  x.onload=function(){
+    if(x.status==200&&x.responseText.indexOf('Update succesvol')>=0){m('Upload geslaagd. Controller herstart...');wacht();}
+    else{document.getElementById('otab').disabled=false;m(x.responseText.replace(/<a[^>]*>.*?<\/a>/g,''));}};
+  x.onerror=function(){m('Verbinding verbroken tijdens of na de upload. Even nagaan of de controller herstart...');wacht();};
+  x.open('POST','/update');x.send(fd);
+}
+function wacht(){
+  var t0=Date.now();
+  var iv=setInterval(function(){
+    var s=Math.round((Date.now()-t0)/1000);
+    if(s>180){clearInterval(iv);m('Na 3 minuten nog geen antwoord. Over 4G kan het langer duren: probeer straks <a href="/advanced">/advanced</a>.');return;}
+    fetch('/ver?'+Date.now(),{cache:'no-store'}).then(function(r){return r.text();}).then(function(t){
+      var p=t.split('|'),v=p[0],up=+p[1];
+      if(up<s+15){clearInterval(iv);document.getElementById('otafill').style.width='100%';
+        m('&#9989; <b>Terug online</b>: ROOM '+v+' (na '+s+' s)'+(v===OLDV?' &mdash; let op: zelfde versie als voordien':'')+'. Even geduld, naar Status...');
+        setTimeout(function(){location.href='/advanced';},3000);}
+      else if(s>30){clearInterval(iv);document.getElementById('otab').disabled=false;
+        m('&#10060; Controller herstartte niet en draait nog ROOM '+v+': de update is niet gelukt. Probeer opnieuw.');}
+      else m('Controller herstart... '+s+' s');
+    }).catch(function(){m('Controller herstart... '+s+' s (nog geen antwoord)');});
+  },2000);
+}
+</script>)JS"));
+    p->print(F("</div></div></body></html>"));
     request->send(p);
+  });
+
+  // v3.6.1: "versie|uptime_s" voor de OTA-pagina
+  server.on("/ver", HTTP_GET, [](AsyncWebServerRequest *request) {
+    char b[32];
+    snprintf(b, sizeof(b), "%s|%lu", ROOM_VERSION, millis() / 1000UL);
+    request->send(200, "text/plain", b);
   });
 
 
