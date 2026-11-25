@@ -93,7 +93,7 @@ Sheet "R-ROOMS Log", tabblad **"Data"**: 43 kolommen (A–AQ), één rij per roo
 | Versie | Doel | Voor |
 |---|---|---|
 | v3.6.1 | **OTA-voortgangspagina** zoals Vakantiehuizen v1.13: upload via JavaScript met voortgangsbalk (% en KB), daarna wachten tot de controller terug is ("✅ Terug online: ROOM vX") en automatisch naar `/advanced`; nieuwe route `/ver` (`versie\|uptime_s`). POST-handler en curl-upload ongewijzigd — ✅ 25/11 geflasht en getest | alle rooms |
-| — | **Kleine stap:** RPi-roompagina toont een ontbrekende temperatuur (`null`) nog als 0,0 °C → "–" | RPi |
+| — | **RPi:** ontbrekende temperatuur (`null`) als "–" i.p.v. 0,0 °C (`room.html`, `index.html`) — ✅ 25/11 in de overkoepelende repo | RPi |
 | — | **ASC-streefwaarde SCD41** instelbaar (standaard 420 ppm) | alle rooms |
 | v3.7 | **Temperatuurbewaking** zoals de Sjalay, max. **6 DS18B20's** (`an`, `ao`) | alle rooms |
 | v3.8 | **Verwarmingslogica** zoals de Sjalay (`ak`) | alle rooms |
