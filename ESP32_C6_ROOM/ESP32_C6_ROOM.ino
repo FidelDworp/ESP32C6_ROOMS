@@ -1,4 +1,4 @@
-// ESP32-C6 ROOM v3.8 — 25 nov 2026 — zonder Matter
+// ESP32-C6 ROOM v3.8a — 25 nov 2026 — zonder Matter
 // Zarlar thuisautomatisering — Room controller (Apple Home via de RPi-bridge, niet meer via Matter op de ESP32)
 // Filip Delannoy — Zarlardinge (BE)
 //
@@ -8,6 +8,17 @@
 // PARTITIETABEL: Compileer met "partitions.csv" in de schetsmap (Custom partition scheme):
 //   nvs (20 KB), otadata (8 KB), app0 (6 MB), app1 (6 MB), spiffs (~4 MB)
 //
+// v3.8a (25nov26): PIXELMODI (beslist door FiDel 25/11).
+//                 (1) Per pixel een modus in /settings: manueel · beweging MOV1 · beweging MOV2 · nachtlampje.
+//                 Standaard (geen NVS): pixel 0 = MOV1, pixel 1 = MOV2 (als MOV2 aan), rest manueel = gedrag van
+//                 voorheen. Beweging: aan bij beweging in het donker, niet in BED-modus; tik = automatisch ↔ altijd
+//                 aan (persistent). Nachtlampje: aan zolang donker (LDR onder de drempel), uit in BED-modus; tik =
+//                 handmatig omschakelen tot de volgende dag/nacht-overgang. Meerdere pixels per PIR mogelijk.
+//                 (2) Eigen kleur per pixel (optioneel); anders de kamerkleur.
+//                 (3) /json u: één teken per pixel (1 = altijd aan / handmatig), was vast 2 tekens; eerste twee
+//                 tekens zelfde betekenis. y/z = een MOV1-/MOV2-pixel brandt. t ongewijzigd.
+//                 (4) /toggle_pixel en /toggle_pixel_mode doen hetzelfde per modus (Portal/RPi blijven werken).
+//                 NVS: px_modes (string), px_ovr (string), px_cols (blob). Oude pixel_mode_0/1 eenmalig overgenomen.
 // v3.8 (25nov26): VERWARMINGSLOGICA ZOALS DE SJALAY.
 //                 (1) Effectief setpoint = dauwpuntbeveiliging aan (en vochtmeting) ? max(setpoint, dauwpunt + marge)
 //                 : setpoint. Nieuwe /json-key ak (1 decimaal), achteraan. c blijft het ingestelde setpoint.
@@ -241,7 +252,7 @@ void releaseUsbPins() {
   usb_serial_jtag_ll_phy_enable_pad(false);
 }
 
-#define ROOM_VERSION "v3.8"  // v3.2: enige plaats met het versienummer
+#define ROOM_VERSION "v3.8a"  // v3.2: enige plaats met het versienummer
 
 // v3.2: reden van de laatste herstart, leesbaar
 esp_reset_reason_t boot_reason = ESP_RST_UNKNOWN;
@@ -654,7 +665,17 @@ bool humi_ok = false;
 
 
 // Pixel specifieke arrays
-int pixel_mode[2] = {0, 0};  // Voor pixel 0 en 1: 0 = AUTO (PIR), 1 = MANUEEL ON (RGB)
+// v3.8a: pixelmodi per pixel
+#define PXM_MAN   0   // manueel aan/uit
+#define PXM_MOV1  1   // beweging MOV1
+#define PXM_MOV2  2   // beweging MOV2
+#define PXM_NIGHT 3   // nachtlampje
+uint8_t px_mode[30];          // modus per pixel
+uint8_t px_ovr[30];           // 1 = altijd aan (beweging, persistent) / handmatig omgeschakeld (nachtlampje)
+bool    px_ovr_on[30];        // nachtlampje: gewenste stand tijdens handmatige omschakeling
+bool    px_col_en[30];        // eigen kleur aan
+uint8_t px_col[30][3];        // eigen kleur RGB
+int     last_dark_state = -1; // nachtlampje: overgang dag/nacht wist de handmatige omschakeling
 bool pixel_on[30] = {false}; // Voor alle pixels
 bool pixel_user_on[30] = {false};   // Manuele intentie (persistent)
 
@@ -794,6 +815,68 @@ const char* jsonTemp(float t, char* buf) {
 }
 
 float calculateDewPoint(float t, float h) { return isnan(t) || isnan(h) ? 0 : t - ((100 - h) / 5.0); } // Berekening dauwpunt met DHT22 data
+
+// v3.8a: effectieve modus (MOV2-pixel zonder MOV2 = manueel) en kleur per pixel
+uint8_t pxEff(int i) {
+  uint8_t m = px_mode[i];
+  if (m == PXM_MOV2 && !mov2_enabled) return PXM_MAN;
+  return m;
+}
+void pxRGB(int i, uint8_t &r, uint8_t &g, uint8_t &b) {
+  if (px_col_en[i]) { r = px_col[i][0]; g = px_col[i][1]; b = px_col[i][2]; }
+  else { r = neo_r; g = neo_g; b = neo_b; }
+}
+void savePxOvr() {   // enkel de "altijd aan" van bewegingspixels is persistent
+  char o[31];
+  for (int i = 0; i < 30; i++) {
+    uint8_t m = px_mode[i];
+    o[i] = ((m == PXM_MOV1 || m == PXM_MOV2) && px_ovr[i]) ? '1' : '0';
+  }
+  o[30] = 0;
+  preferences.putString("px_ovr", o);
+}
+void loadPixelModes() {
+  String m = preferences.getString("px_modes", "");
+  String o = preferences.getString("px_ovr", "");
+  for (int i = 0; i < 30; i++) {
+    if (i < (int)m.length()) px_mode[i] = constrain(m[i] - '0', 0, 3);
+    else px_mode[i] = (i == 0) ? PXM_MOV1 : (i == 1 && mov2_enabled) ? PXM_MOV2 : PXM_MAN;
+    px_ovr[i] = (i < (int)o.length() && o[i] == '1') ? 1 : 0;
+    if (px_mode[i] == PXM_NIGHT) px_ovr[i] = 0;
+    px_ovr_on[i] = false;
+    px_col_en[i] = false; px_col[i][0] = px_col[i][1] = px_col[i][2] = 255;
+  }
+  if (m.length() == 0) {   // migratie van v3.8 en ouder: pixel_mode_0/1 = "altijd aan"
+    px_ovr[0] = preferences.getInt(NVS_PIXEL_MODE_0, 0) == 1 ? 1 : 0;
+    px_ovr[1] = (mov2_enabled && preferences.getInt(NVS_PIXEL_MODE_1, 0) == 1) ? 1 : 0;
+  }
+  uint8_t buf[120];
+  if (preferences.getBytesLength("px_cols") == sizeof(buf) && preferences.getBytes("px_cols", buf, sizeof(buf)) == sizeof(buf)) {
+    for (int i = 0; i < 30; i++) {
+      px_col_en[i] = buf[i * 4] == 1;
+      px_col[i][0] = buf[i * 4 + 1]; px_col[i][1] = buf[i * 4 + 2]; px_col[i][2] = buf[i * 4 + 3];
+    }
+  }
+}
+// tik op een pixel (landingspagina, /advanced, Portal): gedrag volgens de modus
+void pxTap(int i) {
+  uint8_t m = pxEff(i);
+  if (m == PXM_MOV1 || m == PXM_MOV2) {
+    px_ovr[i] = !px_ovr[i];
+    savePxOvr();
+  } else if (m == PXM_NIGHT) {
+    if (px_ovr[i]) px_ovr[i] = 0;
+    else { px_ovr[i] = 1; px_ovr_on[i] = !pixel_on[i]; }
+  } else {
+    pixel_on[i] = !pixel_on[i];
+    char pokey[24]; snprintf(pokey, sizeof(pokey), "%s%d", NVS_PIXEL_ON_BASE, i);
+    preferences.putBool(pokey, pixel_on[i]);
+  }
+}
+const char* pxModeName(uint8_t m) {
+  switch (m) { case PXM_MOV1: return "beweging MOV1"; case PXM_MOV2: return "beweging MOV2";
+               case PXM_NIGHT: return "nachtlampje"; default: return "manueel"; }
+}
 
 int scaleLDR(int r) { return map(constrain(r, 100, 3800), 100, 3800, 0, 100); }   // v3.5.3: 100 = licht, 0 = donker (was omgekeerd)
 
@@ -1079,11 +1162,11 @@ const char* getJSON() {
   for (int i = 0; i < pixels_num && i < 30; i++) {
     pixel_on_str[i] = pixel_on[i] ? '1' : '0';
   }
-  char pixel_mode_str[4] = {0};
-  pixel_mode_str[0] = '0' + pixel_mode[0];
-  pixel_mode_str[1] = mov2_enabled ? ('0' + pixel_mode[1]) : '0';
+  char pixel_mode_str[32] = {0};   // v3.8a: één teken per pixel (1 = altijd aan / handmatig)
+  for (int i = 0; i < pixels_num && i < 30; i++) pixel_mode_str[i] = px_ovr[i] ? '1' : '0';
+  if (pixels_num < 2) { pixel_mode_str[0] = pixel_mode_str[0] ? pixel_mode_str[0] : '0'; pixel_mode_str[1] = '0'; }
 
-  static char json[760];   // v3.7: ruimte voor ah–ao (altijd aanwezig)
+  static char json[840];   // v3.7: ruimte voor ah–ao; v3.8a: u tot 30 tekens
   char e_buf[12], f_buf[12];   // v3.5: temperaturen als tekst ("21.3" of "null")
   snprintf(json, sizeof(json),
     "{"
@@ -1280,15 +1363,9 @@ void setup() {
   // ===== BOOT: restore pixel states from NVS =====
   for (int i = 0; i < pixels_num; i++) {
 
-    if (i < num_mov_pixels) {
-      // Pixel 0–1: mode (AUTO / ON)
-      const char* mkey = (i == 0) ? NVS_PIXEL_MODE_0 : NVS_PIXEL_MODE_1;
-      pixel_mode[i] = preferences.getInt(mkey, 0);   // default = AUTO
-    } else {
-      // Pixels 2+
-      char pkey[24]; snprintf(pkey, sizeof(pkey), "%s%d", NVS_PIXEL_ON_BASE, i);
-      pixel_on[i] = preferences.getBool(pkey, false);
-    }
+    // v3.8a: modi worden later geladen (loadPixelModes); hier enkel aan/uit van manuele pixels
+    char pkey[24]; snprintf(pkey, sizeof(pkey), "%s%d", NVS_PIXEL_ON_BASE, i);
+    pixel_on[i] = preferences.getBool(pkey, false);
   }
   
 
@@ -1416,13 +1493,8 @@ void setup() {
 
 
 
-  // pixel_mode alleen laden als i < 2 (MOV pixels)
-  pixel_mode[0] = preferences.getInt(NVS_PIXEL_MODE_0, 0);
-  if (mov2_enabled) {
-    pixel_mode[1] = preferences.getInt(NVS_PIXEL_MODE_1, 0);
-  } else {
-    pixel_mode[1] = 0;  // Forceer AUTO als MOV2 uitgeschakeld
-  }
+  // v3.8a: pixelmodi, "altijd aan" en eigen kleuren
+  loadPixelModes();
 
 
 
@@ -1522,21 +1594,14 @@ void setup() {
     uint8_t r = 0, g = 0, b = 0;
     bool is_on = false;
 
-    if (i < num_mov_pixels) {  // MOV-pixel
-      if (pixel_mode[i] == 1) {  // MANUEEL ON
-        r = neo_r; g = neo_g; b = neo_b;
-        is_on = true;
-      } else {  // AUTO → uit bij start
-        r = 0; g = 0; b = 0;
-        is_on = false;
-      }
-      if (i == 0) mov1_light = is_on ? 1 : 0;
-      if (i == 1) mov2_light = is_on ? 1 : 0;
-    } else {  // Normale pixel (incl. pixel 1 als mov2 uit)
-      is_on = pixel_on[i];
-      r = is_on ? neo_r : 0;
-      g = is_on ? neo_g : 0;
-      b = is_on ? neo_b : 0;
+    {  // v3.8a: per modus
+      uint8_t m = pxEff(i);
+      if (m == PXM_MOV1 || m == PXM_MOV2) is_on = (bed != 1) && px_ovr[i];
+      else if (m == PXM_NIGHT)            is_on = false;   // loop() beslist meteen
+      else                                is_on = pixel_on[i];
+      pixel_on[i] = is_on;
+      uint8_t cr, cg, cb; pxRGB(i, cr, cg, cb);
+      r = is_on ? cr : 0; g = is_on ? cg : 0; b = is_on ? cb : 0;
     }
 
     pixels.setPixelColor(i, r, g, b);
@@ -1693,6 +1758,14 @@ void setup() {
           else                p->print(c);
         }
         p->print('"');
+      }
+      p->print(F("],md:\""));          // v3.8a: modus per pixel (0 manueel, 1 MOV1, 2 MOV2, 3 nachtlampje)
+      for (int i = 0; i < pixels_num; i++) p->print((char)('0' + pxEff(i)));
+      p->print(F("\",cl:["));          // v3.8a: eigen kleur per pixel ("" = kamerkleur)
+      for (int i = 0; i < pixels_num; i++) {
+        if (i) p->print(',');
+        if (px_col_en[i]) p->printf("\"#%02x%02x%02x\"", px_col[i][0], px_col[i][1], px_col[i][2]);
+        else p->print(F("\"\""));
       }
       p->print(F("],adc:\""));        // v3.5.2: bijnaam Generic ADC ("" = niet in gebruik)
       if (adc_enabled) printEsc(p, adc_name[0] ? adc_name : "Generic ADC");
@@ -1906,28 +1979,24 @@ void setup() {
     // Dynamische pixels loop — v2.7: char[] i.p.v. String label/action (geen heap-alloc per pixel)
     for (int i = 0; i < pixels_num; i++) {
       char label[48];
-      if (pixel_nicknames[i][0] == '\0') {
-        if      (i == 0)               snprintf(label, sizeof(label), "Pixel %d (MOV1)", i);
-        else if (i == 1 && mov2_enabled) snprintf(label, sizeof(label), "Pixel %d (MOV2)", i);
-        else                           snprintf(label, sizeof(label), "Pixel %d", i);
-      } else {
-        snprintf(label, sizeof(label), "%s", pixel_nicknames[i]);
-      }
+      if (pixel_nicknames[i][0] == '\0') snprintf(label, sizeof(label), "Pixel %d", i);
+      else snprintf(label, sizeof(label), "%s", pixel_nicknames[i]);
       const char* val  = pixel_on[i] ? "On" : "Off";
       const char* chkd = pixel_on[i] ? "checked" : "";
       char action[40];
-      if (i == 0 || (i == 1 && mov2_enabled))
+      if (pxEff(i) != PXM_MAN)   // v3.8a: schakelaar = altijd aan / handmatig
         snprintf(action, sizeof(action), "/toggle_pixel_mode?idx=%d", i);
       else
         snprintf(action, sizeof(action), "/toggle_pixel?idx=%d", i);
       // v2.12: dot met neo-kleur als pixel aan, grijs als uit
       char dotSpan[64];
+      char pxh[8]; { uint8_t cr, cg, cb; pxRGB(i, cr, cg, cb); snprintf(pxh, sizeof(pxh), "#%02x%02x%02x", cr, cg, cb); }   // v3.8a
       snprintf(dotSpan, sizeof(dotSpan), "<span class='dot' style='background:%s'></span>",
-               pixel_on[i] ? nh : "#bbb");
-      p->printf("<tr><td class=\"label\">%s</td><td class=\"value\">%s</td>"
+               pixel_on[i] ? pxh : "#bbb");
+      p->printf("<tr data-px=\"%d\" data-c=\"%s\"><td class=\"label\">%s <small style=\"font-weight:normal;color:#888\">(%s)</small></td><td class=\"value\">%s</td>"
         "<td class=\"control\"><form action=\"%s\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\"><label class=\"switch\">"
         "<input type=\"checkbox\" %s onchange=\"submitAjax(this.form);\"><span class=\"slider-switch\"></span></label></form></td></tr>",
-        label, dotSpan, action, chkd);
+        i, pxh, label, pxModeName(pxEff(i)), dotSpan, action, (pxEff(i) == PXM_MAN) ? chkd : (px_ovr[i] ? "checked" : ""));
     }
 
     p->print(F("</table>"
@@ -2009,6 +2078,11 @@ void setup() {
       "document.querySelectorAll('td.value').forEach(td=>{"
       "const l=td.previousElementSibling;if(!l)return;"
       "const lbl=l.textContent.trim();"
+      // v3.8a: pixelrijen herkend aan data-px (niet aan de naam); kleur uit data-c
+      "const row=td.parentElement;"
+      "if(row&&row.dataset&&row.dataset.px!==undefined){"
+        "const pstr=(data.t||'').replace('P=','');"
+        "const sp=td.querySelector('.dot');if(sp)sp.style.background=pstr.charAt(+row.dataset.px)==='1'?row.dataset.c:'#bbb';return;}"
       // v3.5: e/f kunnen null zijn; kamertemperatuur = DS, anders DHT, anders SCD41 (al)
       "if(lbl.includes('Room temp')){"
         "var ok=function(v){return v!==null&&v!==undefined&&v>=-10&&v<=40;};"
@@ -2064,17 +2138,12 @@ void setup() {
         "var detail=document.getElementById('heap-lb');"
         "if(detail) detail.innerHTML='largest: <b style=\"color:'+col+'\">'+lbKB+' KB</b>';}"
       // v2.12: pixel-cirkels met neo-kleur
-      "else if(lbl.includes('Pixel')){"
-        "const idx=parseInt(lbl.match(/\\d+/)[0]);"
-        "const pstr=(data.t||'').replace('P=','');"
-        "if(idx===0) td.innerHTML=dot(data.y,nh);"
-        "else if(idx===1) td.innerHTML=dot(data.z,nh);"
-        "else td.innerHTML=dot(pstr.charAt(idx)==='1',nh);}"
+
       "});"
       "const homeT=document.querySelector('td.control form[action=\"/toggle_home\"] input');"
       "if(homeT) homeT.checked=(data.v==1);"
-      "document.querySelectorAll('td.control form[action^=\"/toggle_pixel_mode\"] input').forEach((cb,i)=>{"
-        "cb.checked=(data.u&&data.u.charAt(i)==='1');});"
+      "document.querySelectorAll('td.control form[action^=\"/toggle_pixel_mode\"] input').forEach(cb=>{"   // v3.8a: per idx
+        "const m=(cb.form.getAttribute('action')||'').match(/idx=(\\d+)/);if(m)cb.checked=(data.u&&data.u.charAt(+m[1])==='1');});"
       // v2.16: uptime opslaan voor updateClock(), header update zit in updateClock()
       "lastUptime=data.a;"
       "}).catch(e=>console.error(e));}"
@@ -2309,10 +2378,8 @@ function wacht(){
 server.on("/toggle_pixel_mode", HTTP_GET, [](AsyncWebServerRequest *request) {
     crumbW(CW_PIXEL);  // v3.3
   if (!request->hasParam("idx")) { request->send(400, "text/plain", "idx?"); return; }
-  int i = constrain(request->getParam("idx")->value().toInt(), 0, 1);
-  pixel_mode[i] = 1 - pixel_mode[i];
-  const char* key = (i == 0) ? NVS_PIXEL_MODE_0 : NVS_PIXEL_MODE_1;
-  preferences.putInt(key, pixel_mode[i]);
+  int i = constrain(request->getParam("idx")->value().toInt(), 0, pixels_num - 1);
+  pxTap(i);   // v3.8a: gedrag volgens de modus van de pixel
   request->send(200, "text/plain", "OK");
 });
 
@@ -2320,9 +2387,7 @@ server.on("/toggle_pixel", HTTP_GET, [](AsyncWebServerRequest *request) {
     crumbW(CW_PIXEL);  // v3.3
   if (!request->hasParam("idx")) { request->send(400, "text/plain", "idx?"); return; }
   int i = constrain(request->getParam("idx")->value().toInt(), 0, pixels_num - 1);
-  pixel_on[i] = !pixel_on[i];
-  char pokey[24]; snprintf(pokey, sizeof(pokey), "%s%d", NVS_PIXEL_ON_BASE, i);
-  preferences.putBool(pokey, pixel_on[i]);
+  pxTap(i);   // v3.8a: gedrag volgens de modus van de pixel
   request->send(200, "text/plain", "OK");
 });
 
@@ -2563,13 +2628,21 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     "B:<input type=\"number\" name=\"neo_b\" min=\"0\" max=\"255\" value=\"%d\" style=\"width:70px;\"></td></tr>",
     (int)neo_r, (int)neo_g, (int)neo_b);
 
-  // Pixel namen
-  p->print(F("<tr><td class=\"lbl\">Pixel namen</td><td class=\"inp\">"));
+  // Pixels: naam, modus, eigen kleur (v3.8a)
+  p->print(F("<tr><td class=\"lbl\">Pixels</td><td class=\"inp\">"));
   for (int i = 0; i < pixels_num; i++) {
-    p->printf("<label style=\"display:block;margin:4px 0;\">P%d: <input type=\"text\" name=\"pixel_nick_%d\" value=\"%s\" style=\"width:200px;\"></label>",
-      i, i, pixel_nicknames[i]);
+    p->printf("<div style=\"margin:6px 0;\">P%d: <input type=\"text\" name=\"pixel_nick_%d\" value=\"", i, i);
+    printEsc(p, pixel_nicknames[i]);
+    p->printf("\" style=\"width:170px;\"> <select name=\"px_mode_%d\" style=\"width:auto;padding:4px;\">", i);
+    for (uint8_t m = 0; m <= 3; m++)
+      p->printf("<option value=\"%u\"%s>%s</option>", m, px_mode[i] == m ? " selected" : "", pxModeName(m));
+    p->printf("</select> <label><input type=\"checkbox\" name=\"px_col_en_%d\"%s> eigen kleur</label> "
+      "<input type=\"color\" name=\"px_col_%d\" value=\"#%02x%02x%02x\" style=\"width:44px;padding:0;vertical-align:middle;\"></div>",
+      i, px_col_en[i] ? " checked" : "", i, px_col[i][0], px_col[i][1], px_col[i][2]);
   }
-  p->print(F("</td></tr>"));
+  p->print(F("<span style=\"font-size:12px;color:#666;\">Beweging: aan bij beweging in het donker (niet in bed-modus), tik = altijd aan. "
+    "Nachtlampje: aan zolang het donker is, uit in bed-modus, tik = handmatig tot de volgende dag/nacht-overgang. "
+    "Zonder eigen kleur volgt de pixel de kamerkleur. MOV2-pixels werken enkel als MOV2 aan staat.</span></td></tr>"));
 
   p->printf("<tr><td class=\"lbl\">Optionele sensoren</td><td class=\"inp\">"
     "<label><input type=\"checkbox\" name=\"co2\"%s> SCD41 (CO&#8322;)</label> "
@@ -2711,6 +2784,28 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
   preferences.putUChar(NVS_NEO_R, request->hasArg("neo_r") ? request->arg("neo_r").toInt() : 255);
   preferences.putUChar(NVS_NEO_G, request->hasArg("neo_g") ? request->arg("neo_g").toInt() : 255);
   preferences.putUChar(NVS_NEO_B, request->hasArg("neo_b") ? request->arg("neo_b").toInt() : 255);
+
+  // v3.8a: pixelmodi en eigen kleuren
+  {
+    char modes[31]; uint8_t cols[120];
+    for (int i = 0; i < 30; i++) {
+      char an[16];
+      snprintf(an, sizeof(an), "px_mode_%d", i);
+      int m = request->hasArg(an) ? constrain(request->arg(an).toInt(), 0, 3) : px_mode[i];
+      modes[i] = '0' + m;
+      snprintf(an, sizeof(an), "px_col_en_%d", i);
+      bool en = (i < pixels_num) ? request->hasArg(an) : px_col_en[i];
+      snprintf(an, sizeof(an), "px_col_%d", i);
+      uint32_t c = (request->hasArg(an) && request->arg(an).length() == 7)
+        ? strtoul(request->arg(an).c_str() + 1, nullptr, 16)
+        : ((uint32_t)px_col[i][0] << 16 | (uint32_t)px_col[i][1] << 8 | px_col[i][2]);
+      cols[i * 4] = en ? 1 : 0;
+      cols[i * 4 + 1] = (c >> 16) & 0xFF; cols[i * 4 + 2] = (c >> 8) & 0xFF; cols[i * 4 + 3] = c & 0xFF;
+    }
+    modes[30] = 0;
+    preferences.putString("px_modes", modes);
+    preferences.putBytes("px_cols", cols, sizeof(cols));
+  }
 
   // Pixel nicknames — tijdelijke String voor trim(), dan strlcpy naar char[]
   for (int i = 0; i < 30; i++) {
@@ -3014,75 +3109,35 @@ void loop() {
   // NeoPixel aansturing — gesaneerd & deterministisch
   crumbL(CL_PIXLOGIC);
 
-  for (int i = 0; i < pixels_num; i++) {
-
-    // -------- PIXEL 0 : MOV1 --------
-    if (i == 0) {
-
-      if (bed == 1) {
-        setTargetColor(0, 0, 0, 0);
-        mov1_light = 0;
-        pixel_on[0] = false;   // <<< SYNC UI
-      }
-      else if (pixel_mode[0] == 1) {
-        // Manueel AAN
-        setTargetColor(0, neo_r, neo_g, neo_b);
-        mov1_light = 1;
-        pixel_on[0] = true;    // <<< SYNC UI
-      }
-      else {
-        // AUTO: PIR + LDR
-        bool dark = (light_ldr < LDR_DARK_THRESHOLD);   // v3.5.3: omgekeerde schaal
-        bool movement = (millis() < mov1_off_time);
-        bool on = dark && movement;
-
-        setTargetColor(0, on ? neo_r : 0, on ? neo_g : 0, on ? neo_b : 0);  // v2.12: was hardcoded groen
-        mov1_light = on;
-        pixel_on[0] = on;      // <<< SYNC UI
-      }
-
-      continue;
+  {  // v3.8a: per pixel volgens de modus
+    bool dark = (light_ldr < LDR_DARK_THRESHOLD);   // v3.5.3: omgekeerde schaal
+    if (last_dark_state != (int)dark) {             // overgang dag/nacht → handmatige omschakeling nachtlampjes vervalt
+      if (last_dark_state != -1) for (int i = 0; i < pixels_num; i++) if (pxEff(i) == PXM_NIGHT) px_ovr[i] = 0;
+      last_dark_state = dark;
     }
-
-
-
-
-    // -------- PIXEL 1 : MOV2 --------
-    if (i == 1 && mov2_enabled) {
-      if (bed == 1) {
-        setTargetColor(1, 0, 0, 0);
-        mov2_light = 0;
-        pixel_on[1] = false;
+    int m1 = 0, m2 = 0;
+    for (int i = 0; i < pixels_num; i++) {
+      uint8_t m = pxEff(i);
+      bool on;
+      if (m == PXM_MOV1 || m == PXM_MOV2) {
+        unsigned long off = (m == PXM_MOV1) ? mov1_off_time : mov2_off_time;
+        if (bed == 1)        on = false;
+        else if (px_ovr[i])  on = true;                       // altijd aan
+        else                 on = dark && (millis() < off);   // automatisch: beweging in het donker
+        if (on) { if (m == PXM_MOV1) m1 = 1; else m2 = 1; }
+      } else if (m == PXM_NIGHT) {
+        on = px_ovr[i] ? px_ovr_on[i] : (dark && bed != 1);
+      } else {
+        on = pixel_on[i];
       }
-      else if (pixel_mode[1] == 1) {
-        // Manueel AAN
-        setTargetColor(1, neo_r, neo_g, neo_b);
-        mov2_light = 1;
-        pixel_on[1] = true;
-      }
-      else {
-        // AUTO: PIR + LDR
-        bool dark = (light_ldr < LDR_DARK_THRESHOLD);   // v3.5.3: omgekeerde schaal
-        bool movement = (millis() < mov2_off_time);
-        bool on = dark && movement;
-
-        setTargetColor(1, on ? neo_r : 0, on ? neo_g : 0, on ? neo_b : 0);  // v2.12: was hardcoded groen
-        mov2_light = on;
-        pixel_on[1] = on;
-      }
-      continue;
+      pixel_on[i] = on;   // <<< SYNC UI
+      uint8_t r, g, b; pxRGB(i, r, g, b);
+      setTargetColor(i, on ? r : 0, on ? g : 0, on ? b : 0);
     }
-
-
-
-
-    // -------- NORMALE PIXELS --------
-    if (pixel_on[i]) {
-      setTargetColor(i, neo_r, neo_g, neo_b);
-    } else {
-      setTargetColor(i, 0, 0, 0);
-    }
+    mov1_light = m1;
+    mov2_light = m2;
   }
+
 
 
 
@@ -3311,15 +3366,9 @@ void loop() {
     Serial.printf("Dim snelheid (s)     : %d s\n", fade_duration);
     
 
-    Serial.print("Pixel modes (MOV1");
-      if (mov2_enabled) Serial.print(",MOV2");
-      Serial.print("): ");
-      Serial.print(pixel_mode[0]);
-      if (mov2_enabled) {
-        Serial.print(", ");
-        Serial.print(pixel_mode[1]);
-      }
-     Serial.println();
+    Serial.print("Pixel modi (0-3)     : ");   // v3.8a: 0 manueel, 1 MOV1, 2 MOV2, 3 nachtlampje
+    for (int i = 0; i < pixels_num; i++) Serial.print((int)pxEff(i));
+    Serial.println();
 
 
     Serial.printf("Pixels on (0-%d)      : ", pixels_num - 1);

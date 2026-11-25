@@ -11,7 +11,7 @@ Room-controllers van het Zarlar-thuisautomatiseringssysteem (Zarlardinge): een E
 
 | | |
 |---|---|
-| **Sketch** | **v3.8** — map `ESP32_C6_ROOM/`, klaar om te uploaden: `bin/ESP32_C6_ROOM_v3.8.ino.bin` |
+| **Sketch** | **v3.8a** — map `ESP32_C6_ROOM/`, klaar om te uploaden: `bin/ESP32_C6_ROOM_v3.8a.ino.bin` |
 | **Draait op** | room80: `192.168.0.80` · `http://eetplaats.local/`. Testbord met alle sensoren, rij R-EETPL op de Dashboard-matrix |
 | **Board** | ESP32-C6-DevKitM-1, 16 MB, op het Zarlar shield |
 | **Apple Home** | Via de RPi-bridge (`server.js` + `matterbridge-zarlar`), toestel "Eetplaats". Geen Matter op de ESP32 |
@@ -49,7 +49,7 @@ Room-controllers van het Zarlar-thuisautomatiseringssysteem (Zarlardinge): een E
 
 **Van op afstand** (Mac via mobiele data + Tailscale, **niet** via de wifi in Nieuwpoort: zelfde 192.168.0.x-bereik):
 ```
-curl -L -o /tmp/room.bin https://raw.githubusercontent.com/FidelDworp/ESP32C6_ROOMS/main/bin/ESP32_C6_ROOM_v3.8.ino.bin
+curl -L -o /tmp/room.bin https://raw.githubusercontent.com/FidelDworp/ESP32C6_ROOMS/main/bin/ESP32_C6_ROOM_v3.8a.ino.bin
 ls -l /tmp/room.bin
 curl -F "update=@/tmp/room.bin" http://192.168.0.80/update
 ```
@@ -64,10 +64,10 @@ Keys en bedieningsadressen wijzigen alleen met uitdrukkelijk akkoord: Dashboard,
 | Key | Inhoud | Key | Inhoud |
 |---|---|---|---|
 | `a` | uptime (s) | `t` | pixels aan (`P=0101…`) |
-| `b` | verwarming vraagt (0/1) | `u` | pixelmodus MOV1/MOV2 |
+| `b` | verwarming vraagt (0/1) | `u` | per pixel: 1 = altijd aan / handmatig (sinds v3.8a één teken per pixel) |
 | `c` | ingesteld setpoint (°C) | `v` | thuis (0/1) |
 | `d` | thermostaatcontact (0/1) | `w`, `x` | MOV1/MOV2 triggers per min |
-| `e` | DHT22-temp (°C of `null`) | `y`, `z` | MOV1/MOV2-lamp aan |
+| `e` | DHT22-temp (°C of `null`) | `y`, `z` | een MOV1-/MOV2-pixel brandt |
 | `f` | DS18B20 primair (°C of `null`) | `ac` | WiFi RSSI (dBm) |
 | `g` | ventilatie (%) | `ad` | vrij geheugen (%) |
 | `h` | vocht (%, DHT22, anders SCD41) | `ae`, `af` | grootste blok, laagste heap (KB) |
@@ -97,7 +97,7 @@ Sheet "R-ROOMS Log", tabblad **"Data"**: 43 kolommen (A–AQ), één rij per roo
 | v3.6.3 | **CO2-referentie SCD41** instelbaar ("CO2 buitenlucht", standaard 420 ppm): ASC-streefwaarde én waarde voor "Kalibreren in buitenlucht" — ✅ geflasht 25/11 | alle rooms |
 | v3.7 | **Temperatuurbewaking** zoals de Sjalay, max. **6 DS18B20's** (`an`, `ao`), vocht valt terug op de SCD41 — ✅ 25/11 geflasht en getest met de RoomSense-kabel los (v3.7.1: SCD41-terugval ook op landingspagina, `/advanced`, RPi en Apple Home) | alle rooms |
 | v3.8 | **Verwarmingslogica** zoals de Sjalay (`ak`) — ✅ geflasht 25/11 | alle rooms |
-| *open* | **Pixelmodi:** per pixel manueel / beweging / nachtlampje, kleur per pixel (vraag van 18/11, nog te beslissen) | B&B (vloermat) |
+| v3.8a | **Pixelmodi:** per pixel manueel / beweging MOV1 / beweging MOV2 / nachtlampje, eigen kleur per pixel; `u` één teken per pixel — 🔨 gebouwd 25/11 | B&B (vloermat) |
 | v3.8b | **Pixel-effecten** achter de Powerpixels | B&B, BADK, SLPK |
 | → | **B&B gaat live** | B&B |
 | v3.9 | **Generieke I/O** GP1, GP2, GP4 (`ap`, `aq`, `as`, `/set_gp`) | alle rooms |
@@ -120,7 +120,8 @@ Elke pagina in een eigen `.h`-bestand (zoals `landing.h`): de `.ino` bevat enkel
 
 | Versie | Datum | Wat |
 |---|---|---|
-| **v3.8** | 25/11 | **Verwarmingslogica zoals de Sjalay:** effectief setpoint `ak` (dauwpuntbeveiliging aan/uit, marge −10…+10), echte hysterese (standaard 1,0), Thuis + thermostaat óf dauwpunt, altijd uit vanaf 30 °C, minimum setpoint = onderkant schuifbalk, landingspagina toont het echte doel |
+| **v3.8a** | 25/11 | **Pixelmodi:** per pixel manueel / beweging MOV1 / MOV2 / nachtlampje (aan bij donker, uit in bed-modus, tik = handmatig tot de volgende dag/nacht-overgang), eigen kleur per pixel; `u` één teken per pixel |
+| v3.8 | 25/11 | **Verwarmingslogica zoals de Sjalay:** effectief setpoint `ak` (dauwpuntbeveiliging aan/uit, marge −10…+10), echte hysterese (standaard 1,0), Thuis + thermostaat óf dauwpunt, altijd uit vanaf 30 °C, minimum setpoint = onderkant schuifbalk, landingspagina toont het echte doel |
 | v3.7.1 | 25/11 | ✅ Terugval op de SCD41 ook op de landingspagina en in de melding op `/advanced` (+ RPi `index.html`, bridge v0.8.1) |
 | v3.7 | 25/11 | **Temperatuurbewaking:** max. 6 DS18B20's (`an`, `ao`; `ah`–`ao` altijd aanwezig), fouten per sensor (3 op rij = ontbreekt), 85,0 °C genegeerd, DHT22 5 min geldig, vocht/dauwpunt terugval op de SCD41, overzicht "Alle temperatuursensoren" op `/advanced` |
 | v3.6.3 | 25/11 | CO2-referentie SCD41 instelbaar (ASC-doel + FRC, standaard 420 ppm; was 400/425) |

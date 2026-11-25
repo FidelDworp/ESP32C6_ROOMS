@@ -1,5 +1,5 @@
 // ============================================================================
-// landing.h — landingspagina "/" van de ROOM-sketch (hoort bij v3.2; v3.2: versie onderaan; v3.5.2: Generic ADC; v3.6.2: kamernaam als titel; v3.7.1: SCD41-terugval; v3.8: echt doel (ak) en minimum setpoint)
+// landing.h — landingspagina "/" van de ROOM-sketch (hoort bij v3.2; v3.2: versie onderaan; v3.5.2: Generic ADC; v3.6.2: kamernaam als titel; v3.7.1: SCD41-terugval; v3.8: echt doel (ak) en minimum setpoint; v3.8a: pixelmodi en eigen kleur)
 // Eenvoudige pagina voor huisgenoten en gasten: temperatuur + setpoint, lampen,
 // kleur, bed-modus, thuis/weg. Technische pagina: /advanced (⚙ onderaan).
 //
@@ -71,12 +71,12 @@ const char LANDING_MIDDEN[] PROGMEM = R"HTML(</div><div class="box">
 const char LANDING_SCRIPT[] PROGMEM = R"HTML(<script>
 var $=function(i){return document.getElementById(i);},laatst=null,bezig=0;
 function hex(v){return ('0'+Math.round(v).toString(16)).slice(-2);}
-function isMov(i){return i==0||(i==1&&CFG.mov2);}
+function md(i){return CFG.md?+CFG.md.charAt(i):(i==0||(i==1&&CFG.mov2)?1:0);}  /* v3.8a: 0 manueel, 1 MOV1, 2 MOV2, 3 nachtlampje */
+function isMov(i){var m=md(i);return m==1||m==2;}
 function tegels(){var h='';for(var i=0;i<CFG.px.length;i++){
  h+='<div class="tegel" id="t'+i+'" onclick="tik('+i+')"><div class="ic">💡</div><div>'+CFG.px[i]+'</div><div class="bd" id="b'+i+'"></div></div>';}
  $('tegels').innerHTML=h;}
-function aan(d,i){var s=(d.t||'').replace('P=','');
- if(i==0)return d.y==1; if(i==1&&CFG.mov2)return d.z==1; return s.charAt(i)=='1';}
+function aan(d,i){var s=(d.t||'').replace('P=','');return s.charAt(i)=='1';}  /* v3.8a: t = echte stand van elke pixel */
 function toon(d){laatst=d;
  var ok=function(v){return v!==null&&v!==undefined&&v>=-10&&v<=40;};var t=ok(d.f)?d.f:ok(d.e)?d.e:(ok(d.al)&&d.al!=0)?d.al:null;  /* v3.7.1: SCD41 als derde bron */$('temp').textContent=(t!==null?t.toFixed(1):'–')+'°';  /* v3.5: e/f kunnen null zijn */
  var doel=(d.ak!==undefined&&d.ak!==null)?d.ak:d.c;  /* v3.8: echt doel */
@@ -87,8 +87,10 @@ function toon(d){laatst=d;
  var k='#'+hex(d.q)+hex(d.r)+hex(d.s),licht=(0.3*d.q+0.59*d.r+0.11*d.s)>140;
  if(document.activeElement!==$('kl'))$('kl').value=k;
  for(var i=0;i<CFG.px.length;i++){var e=$('t'+i);if(!e)continue;var on=aan(d,i);
-  e.style.background=on?k:'#fff';e.style.color=on&&!licht?'#fff':'#222';e.style.borderColor=on?k:'#ccc';
-  var b='';if(isMov(i))b=(d.u||'00').charAt(i)=='1'?'altijd aan':(d.p==1?'bed-modus':'automatisch');
+  var kk=(CFG.cl&&CFG.cl[i])?CFG.cl[i]:k,rr=parseInt(kk.substr(1,2),16),gg=parseInt(kk.substr(3,2),16),bb=parseInt(kk.substr(5,2),16),li=(0.3*rr+0.59*gg+0.11*bb)>140;  /* v3.8a: eigen kleur */
+  e.style.background=on?kk:'#fff';e.style.color=on&&!li?'#fff':'#222';e.style.borderColor=on?kk:'#ccc';
+  var b='',o=(d.u||'').charAt(i)=='1';if(isMov(i))b=o?'altijd aan':(d.p==1?'bed-modus':'automatisch');
+  else if(md(i)==3)b=o?'handmatig':(d.p==1?'bed-modus':'nachtlampje');
   $('b'+i).textContent=b;}
  $('bed').classList.toggle('bed',d.p==1);$('thuis').classList.toggle('thuis',d.v==1);}
 function ververs(){if(bezig)return;fetch('/json?'+Date.now(),{cache:'no-store'}).then(function(r){return r.json();}).then(toon).catch(function(){});}
