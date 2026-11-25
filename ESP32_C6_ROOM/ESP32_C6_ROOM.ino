@@ -1,4 +1,4 @@
-// ESP32-C6 ROOM v3.6.1 — 25 nov 2026 — zonder Matter
+// ESP32-C6 ROOM v3.6.2 — 25 nov 2026 — zonder Matter
 // Zarlar thuisautomatisering — Room controller (Apple Home via de RPi-bridge, niet meer via Matter op de ESP32)
 // Filip Delannoy — Zarlardinge (BE)
 //
@@ -8,6 +8,9 @@
 // PARTITIETABEL: Compileer met "partitions.csv" in de schetsmap (Custom partition scheme):
 //   nvs (20 KB), otadata (8 KB), app0 (6 MB), app1 (6 MB), spiffs (~4 MB)
 //
+// v3.6.2 (25nov26): PAGINATITELS MET DE KAMERNAAM (browser-tab): landingspagina "<kamer>" (was "Zarlar"),
+//                 OTA "<kamer> - OTA" (was "OTA"), status "<kamer> - Status" (was zonder streepje).
+//                 Settings was al "<kamer> - Settings". Kamernaam veilig ge-escaped. Geen andere wijzigingen.
 // v3.6.1 (25nov26): OTA-VOORTGANGSPAGINA (overgenomen uit Vakantiehuizen v1.13, handleOtaPage()).
 //                 (1) Nieuwe route GET /ver → platte tekst "versie|uptime_s" (bv. "v3.6.1|12"). /json ongewijzigd.
 //                 (2) /update: upload via JavaScript (XMLHttpRequest + FormData, veldnaam "update") naar de
@@ -208,7 +211,7 @@ void releaseUsbPins() {
   usb_serial_jtag_ll_phy_enable_pad(false);
 }
 
-#define ROOM_VERSION "v3.6.1"  // v3.2: enige plaats met het versienummer
+#define ROOM_VERSION "v3.6.2"  // v3.2: enige plaats met het versienummer
 
 // v3.2: reden van de laatste herstart, leesbaar
 esp_reset_reason_t boot_reason = ESP_RST_UNKNOWN;
@@ -1595,6 +1598,8 @@ void setup() {
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
     crumbW(CW_LANDING);  // v3.3
       AsyncResponseStream *p = request->beginResponseStream("text/html; charset=utf-8");
+      p->print(FPSTR(LANDING_TITEL));   // v3.6.2: kamernaam als titel
+      printEsc(p, room_id);
       p->print(FPSTR(LANDING_KOP));
       p->print(room_id);
       p->print(FPSTR(LANDING_MIDDEN));
@@ -1635,8 +1640,8 @@ void setup() {
       "<meta charset=\"utf-8\">"
       "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
       "<title>"));
-    p->print(room_id);
-    p->print(F(" Status</title>"
+    printEsc(p, room_id);
+    p->print(F(" - Status</title>"
       "<style>"
       "body{font-family:Arial,sans-serif;background:#fff;margin:0;padding:0;}"
       ".header{display:flex;background:#ffcc00;color:#000;padding:10px 15px;font-size:18px;font-weight:bold;align-items:center;}"
@@ -2026,7 +2031,9 @@ void setup() {
     AsyncResponseStream *p = request->beginResponseStream("text/html; charset=utf-8");
     p->print(F("<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
       "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-      "<title>OTA</title>"
+      "<title>"));
+    printEsc(p, room_id);   // v3.6.2
+    p->print(F(" - OTA</title>"
       "<style>"
       "body{font-family:Arial,sans-serif;background:#fff;margin:0;padding:0;}"
       ".header{display:flex;background:#ffcc00;color:#000;padding:10px 15px;font-size:18px;font-weight:bold;}"

@@ -1,5 +1,5 @@
 // ============================================================================
-// landing.h — landingspagina "/" van de ROOM-sketch (hoort bij v3.2; v3.2: versie onderaan; v3.5.2: Generic ADC)
+// landing.h — landingspagina "/" van de ROOM-sketch (hoort bij v3.2; v3.2: versie onderaan; v3.5.2: Generic ADC; v3.6.2: kamernaam als titel)
 // Eenvoudige pagina voor huisgenoten en gasten: temperatuur + setpoint, lampen,
 // kleur, bed-modus, thuis/weg. Technische pagina: /advanced (⚙ onderaan).
 //
@@ -7,7 +7,7 @@
 // in JavaScript dat in een .ino staat. .h-bestanden laat de IDE ongemoeid.
 //
 // Opbouw (zie de "/"-handler in ESP32_C6_ROOM.ino):
-//   LANDING_KOP  + kamernaam + LANDING_MIDDEN + <script>var CFG={...}</script> + LANDING_SCRIPT
+//   LANDING_TITEL + kamernaam + LANDING_KOP + kamernaam + LANDING_MIDDEN + <script>var CFG={...}</script> + LANDING_SCRIPT
 //   CFG wordt door de ESP32 ingevuld: pixelnamen en of MOV2 actief is.
 // Gebruikt enkel bestaande adressen: /json, /set_setpoint, /toggle_pixel,
 // /toggle_pixel_mode, /setcolor, /toggle_bed, /toggle_home.
@@ -15,9 +15,11 @@
 #pragma once
 #include <Arduino.h>
 
-const char LANDING_KOP[] PROGMEM = R"HTML(<!DOCTYPE html><html><head>
+const char LANDING_TITEL[] PROGMEM = R"HTML(<!DOCTYPE html><html><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Zarlar</title><style>
+<title>)HTML";
+
+const char LANDING_KOP[] PROGMEM = R"HTML(</title><style>
 body{font-family:Arial,sans-serif;margin:0;background:#fff;color:#222}
 .hdr{background:#ffcc00;padding:12px 16px;font-weight:bold;font-size:20px}
 .box{padding:14px;max-width:520px;margin:auto}

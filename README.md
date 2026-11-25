@@ -11,7 +11,7 @@ Room-controllers van het Zarlar-thuisautomatiseringssysteem (Zarlardinge): een E
 
 | | |
 |---|---|
-| **Sketch** | **v3.6.1** — map `ESP32_C6_ROOM/`, klaar om te uploaden: `bin/ESP32_C6_ROOM_v3.6.1.ino.bin` (room80 draait nog v3.6) |
+| **Sketch** | **v3.6.2** — map `ESP32_C6_ROOM/`, klaar om te uploaden: `bin/ESP32_C6_ROOM_v3.6.2.ino.bin` |
 | **Draait op** | room80: `192.168.0.80` · `http://eetplaats.local/`. Testbord met alle sensoren, rij R-EETPL op de Dashboard-matrix |
 | **Board** | ESP32-C6-DevKitM-1, 16 MB, op het Zarlar shield |
 | **Apple Home** | Via de RPi-bridge (`server.js` + `matterbridge-zarlar`), toestel "Eetplaats". Geen Matter op de ESP32 |
@@ -49,7 +49,7 @@ Room-controllers van het Zarlar-thuisautomatiseringssysteem (Zarlardinge): een E
 
 **Van op afstand** (Mac via mobiele data + Tailscale, **niet** via de wifi in Nieuwpoort: zelfde 192.168.0.x-bereik):
 ```
-curl -L -o /tmp/room.bin https://raw.githubusercontent.com/FidelDworp/ESP32C6_ROOMS/main/bin/ESP32_C6_ROOM_v3.6.1.ino.bin
+curl -L -o /tmp/room.bin https://raw.githubusercontent.com/FidelDworp/ESP32C6_ROOMS/main/bin/ESP32_C6_ROOM_v3.6.2.ino.bin
 ls -l /tmp/room.bin
 curl -F "update=@/tmp/room.bin" http://192.168.0.80/update
 ```
@@ -92,7 +92,7 @@ Sheet "R-ROOMS Log", tabblad **"Data"**: 43 kolommen (A–AQ), één rij per roo
 
 | Versie | Doel | Voor |
 |---|---|---|
-| v3.6.1 | **OTA-voortgangspagina** zoals Vakantiehuizen v1.13: upload via JavaScript met voortgangsbalk (% en KB), daarna wachten tot de controller terug is ("✅ Terug online: ROOM vX") en automatisch naar `/advanced`; nieuwe route `/ver` (`versie\|uptime_s`). POST-handler en curl-upload ongewijzigd — 🔨 gebouwd 25/11 | alle rooms |
+| v3.6.1 | **OTA-voortgangspagina** zoals Vakantiehuizen v1.13: upload via JavaScript met voortgangsbalk (% en KB), daarna wachten tot de controller terug is ("✅ Terug online: ROOM vX") en automatisch naar `/advanced`; nieuwe route `/ver` (`versie\|uptime_s`). POST-handler en curl-upload ongewijzigd — ✅ 25/11 geflasht en getest | alle rooms |
 | — | **Kleine stap:** RPi-roompagina toont een ontbrekende temperatuur (`null`) nog als 0,0 °C → "–" | RPi |
 | — | **ASC-streefwaarde SCD41** instelbaar (standaard 420 ppm) | alle rooms |
 | v3.7 | **Temperatuurbewaking** zoals de Sjalay, max. **6 DS18B20's** (`an`, `ao`) | alle rooms |
@@ -136,7 +136,8 @@ Elke pagina in een eigen `.h`-bestand (zoals `landing.h`): de `.ino` bevat enkel
 
 | Versie | Datum | Wat |
 |---|---|---|
-| **v3.6.1** | 25/11 | **OTA-voortgangspagina** (uit Vakantiehuizen v1.13): voortgangsbalk, "Terug online", naar `/advanced`; route `/ver` |
+| **v3.6.2** | 25/11 | Paginatitels met de kamernaam: landingspagina "Eetplaats" (was "Zarlar"), "Eetplaats - OTA", "Eetplaats - Status" |
+| v3.6.1 | 25/11 | **OTA-voortgangspagina** (uit Vakantiehuizen v1.13): voortgangsbalk, "Terug online", naar `/advanced`; route `/ver` |
 | v3.6 | 22/11 | **WiFi robuuster + mDNS:** geen modem-slaap; elke 30 s herverbinden; herstart na 15 min zonder WiFi; AP-setupmodus enkel zonder ingestelde SSID, anders **nood-AP** met normale werking dat sluit zodra de router terug is (vroeger na een stroompanne voor altijd AP zonder verwarming); `<kamernaam>.local`; Diagnose WiFi en mDNS |
 | v3.5.3 | 22/11 | **LDR omgekeerd** (`m` 100 = licht), drempel eenmalig omgerekend, nacht volgt de drempel. Samen met Dashboard v6.5 en RPi `matrix.html` |
 | v3.5.2 | 22/11 | **Opruimen:** stof, zon, lichtstraal weg (`l`, `n`, `aa`, `ab`); IO2 = **Generic ADC** in volt (`ar`) met bijnaam en factor; echte oorzaak van een geplande herstart in de geschiedenis |
