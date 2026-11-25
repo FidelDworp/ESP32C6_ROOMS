@@ -97,7 +97,7 @@ Sheet "R-ROOMS Log", tabblad **"Data"**: 43 kolommen (A–AQ), één rij per roo
 | v3.6.3 | **CO2-referentie SCD41** instelbaar ("CO2 buitenlucht", standaard 420 ppm): ASC-streefwaarde én waarde voor "Kalibreren in buitenlucht" — ✅ geflasht 25/11 | alle rooms |
 | v3.7 | **Temperatuurbewaking** zoals de Sjalay, max. **6 DS18B20's** (`an`, `ao`), vocht valt terug op de SCD41 — ✅ 25/11 geflasht en getest met de RoomSense-kabel los (v3.7.1: SCD41-terugval ook op landingspagina, `/advanced`, RPi en Apple Home) | alle rooms |
 | v3.8 | **Verwarmingslogica** zoals de Sjalay (`ak`) — ✅ geflasht 25/11 | alle rooms |
-| v3.8a | **Pixelmodi:** per pixel manueel / beweging MOV1 / beweging MOV2 / nachtlampje, eigen kleur per pixel; `u` één teken per pixel — 🔨 gebouwd 25/11 | B&B (vloermat) |
+| v3.8a | **Pixelmodi:** per pixel manueel / beweging MOV1 / beweging MOV2 / nachtlampje, eigen kleur per pixel; `u` één teken per pixel — ✅ geflasht en getest 25/11 | B&B (vloermat) |
 | v3.8b | **Pixel-effecten** achter de Powerpixels | B&B, BADK, SLPK |
 | → | **B&B gaat live** | B&B |
 | v3.9 | **Generieke I/O** GP1, GP2, GP4 (`ap`, `aq`, `as`, `/set_gp`) | alle rooms |
