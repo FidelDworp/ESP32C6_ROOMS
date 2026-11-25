@@ -128,7 +128,7 @@ Elke pagina in een eigen `.h`-bestand (zoals `landing.h`): de `.ino` bevat enkel
 
 | Versie | Datum | Wat |
 |---|---|---|
-| **v3.7.1** | 25/11 | Terugval op de SCD41 ook op de landingspagina en in de melding op `/advanced` (+ RPi `index.html`, bridge v0.8.1) |
+| **v3.7.1** | 25/11 | ✅ Terugval op de SCD41 ook op de landingspagina en in de melding op `/advanced` (+ RPi `index.html`, bridge v0.8.1) |
 | v3.7 | 25/11 | **Temperatuurbewaking:** max. 6 DS18B20's (`an`, `ao`; `ah`–`ao` altijd aanwezig), fouten per sensor (3 op rij = ontbreekt), 85,0 °C genegeerd, DHT22 5 min geldig, vocht/dauwpunt terugval op de SCD41, overzicht "Alle temperatuursensoren" op `/advanced` |
 | v3.6.3 | 25/11 | CO2-referentie SCD41 instelbaar (ASC-doel + FRC, standaard 420 ppm; was 400/425) |
 | v3.6.2 | 25/11 | Paginatitels met de kamernaam: landingspagina "Eetplaats" (was "Zarlar"), "Eetplaats - OTA", "Eetplaats - Status" |

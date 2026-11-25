@@ -25,9 +25,9 @@ Start van een **nieuw gesprek met Claude** over de ROOM-sketch en de overstap va
 
 | Controller | Adres | Stand |
 |---|---|---|
-| **room80** (testbord, eetplaats) | 192.168.0.80 · `eetplaats.local` | **ROOM v3.7** (25/11), v3.7.1 klaar |
+| **room80** (testbord, eetplaats) | 192.168.0.80 · `eetplaats.local` | **ROOM v3.7.1** (25/11) |
 | Dashboard (matrix, logging) | 192.168.0.60 | v6.6 (wifi-herstel) |
-| RPi (portal + Apple Home-bridge) | 192.168.0.50:3000 | `update.sh` 25/11 (ff99359) |
+| RPi (portal + Apple Home-bridge) | 192.168.0.50:3000 | `update.sh` 25/11 (80854ba), bridge v0.8.1 |
 | HVAC · ECO-boiler · S-ENERGY | .70 · .71 · .73 | eigen repo's |
 | Photon-rooms | — | nog in productie, behalve de B&B (defect) |
 
@@ -45,7 +45,7 @@ Start van een **nieuw gesprek met Claude** over de ROOM-sketch en de overstap va
   2. `http://eetplaats.local/`.
   3. Router 2–3 min uit → room80 komt vanzelf terug, Diagnose "1 keer weggevallen" met reden. Optioneel: router en room80 samen herstarten → kort nood-AP, dan terug op het netwerk.
   4. Bewegingslamp 's avonds aan, overdag niet (LDR-drempel omgerekend).
-- **Volgende stappen:** zie het plan in de README. **v3.6.1 OTA-voortgangspagina** (uit Vakantiehuizen v1.13) geflasht en getest 25/11: voortgangsbalk, "Terug online" en sprong naar /advanced werken. **v3.6.2** (paginatitels met de kamernaam) geflasht 25/11 via de nieuwe OTA-pagina: in orde. **v3.6.3** (CO2-referentie SCD41, NVS `scd_ref`, standaard 420 ppm: ASC-doel + FRC) geflasht 25/11; effect pas zichtbaar na de volgende ASC-correctie (±7 dagen). **v3.7** (temperatuurbewaking, max. 6 DS18B20, vocht-terugval op SCD41) geflasht 25/11 en getest door de RoomSense-kabel (RJ45) los te trekken: DS18B20 "ontbreekt" na ±15 s, na 5 min temperatuur en vocht van de SCD41. Toen bleek de landingspagina "–°" te tonen → **v3.7.1** (SCD41-terugval ook in landingspagina, /advanced-melding, RPi index.html en bridge v0.8.1). Open vraag aan FiDel: **pixelmodi** vóór de B&B live gaat (per pixel manueel / beweging / nachtlampje — aan bij donker, uit in BED-modus — en een kleur per pixel; nodig voor de vloermat op pixel 1).
+- **Volgende stappen:** zie het plan in de README. **v3.6.1 OTA-voortgangspagina** (uit Vakantiehuizen v1.13) geflasht en getest 25/11: voortgangsbalk, "Terug online" en sprong naar /advanced werken. **v3.6.2** (paginatitels met de kamernaam) geflasht 25/11 via de nieuwe OTA-pagina: in orde. **v3.6.3** (CO2-referentie SCD41, NVS `scd_ref`, standaard 420 ppm: ASC-doel + FRC) geflasht 25/11; effect pas zichtbaar na de volgende ASC-correctie (±7 dagen). **v3.7** (temperatuurbewaking, max. 6 DS18B20, vocht-terugval op SCD41) geflasht 25/11 en getest door de RoomSense-kabel (RJ45) los te trekken: DS18B20 "ontbreekt" na ±15 s, na 5 min temperatuur en vocht van de SCD41. Toen bleek de landingspagina "–°" te tonen → **v3.7.1** (SCD41-terugval ook in landingspagina, /advanced-melding, RPi index.html en bridge v0.8.1) — geflasht en in orde 25/11. Daarbij ontdekt: de RPi-startpagina toonde de eetplaats altijd "offline" (las `s.room`, maar `/api/status` slaat de alias `room` over) → nu `s.room80`. Open vraag aan FiDel: **pixelmodi** vóór de B&B live gaat (per pixel manueel / beweging / nachtlampje — aan bij donker, uit in BED-modus — en een kleur per pixel; nodig voor de vloermat op pixel 1).
 
 **Technisch om te onthouden**
 - IO12/IO13 = USB D−/D+ van de C6: compileren met CDC uit + `releaseUsbPins()`; I2C (SCD41) op IO13/IO11.
