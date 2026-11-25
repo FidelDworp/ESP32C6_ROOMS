@@ -11,7 +11,7 @@ Room-controllers van het Zarlar-thuisautomatiseringssysteem (Zarlardinge): een E
 
 | | |
 |---|---|
-| **Sketch** | **v3.6.3** — map `ESP32_C6_ROOM/`, klaar om te uploaden: `bin/ESP32_C6_ROOM_v3.6.3.ino.bin` |
+| **Sketch** | **v3.7** — map `ESP32_C6_ROOM/`, klaar om te uploaden: `bin/ESP32_C6_ROOM_v3.7.ino.bin` |
 | **Draait op** | room80: `192.168.0.80` · `http://eetplaats.local/`. Testbord met alle sensoren, rij R-EETPL op de Dashboard-matrix |
 | **Board** | ESP32-C6-DevKitM-1, 16 MB, op het Zarlar shield |
 | **Apple Home** | Via de RPi-bridge (`server.js` + `matterbridge-zarlar`), toestel "Eetplaats". Geen Matter op de ESP32 |
@@ -49,7 +49,7 @@ Room-controllers van het Zarlar-thuisautomatiseringssysteem (Zarlardinge): een E
 
 **Van op afstand** (Mac via mobiele data + Tailscale, **niet** via de wifi in Nieuwpoort: zelfde 192.168.0.x-bereik):
 ```
-curl -L -o /tmp/room.bin https://raw.githubusercontent.com/FidelDworp/ESP32C6_ROOMS/main/bin/ESP32_C6_ROOM_v3.6.3.ino.bin
+curl -L -o /tmp/room.bin https://raw.githubusercontent.com/FidelDworp/ESP32C6_ROOMS/main/bin/ESP32_C6_ROOM_v3.7.ino.bin
 ls -l /tmp/room.bin
 curl -F "update=@/tmp/room.bin" http://192.168.0.80/update
 ```
@@ -70,13 +70,13 @@ Keys en bedieningsadressen wijzigen alleen met uitdrukkelijk akkoord: Dashboard,
 | `e` | DHT22-temp (°C of `null`) | `y`, `z` | MOV1/MOV2-lamp aan |
 | `f` | DS18B20 primair (°C of `null`) | `ac` | WiFi RSSI (dBm) |
 | `g` | ventilatie (%) | `ad` | vrij geheugen (%) |
-| `h` | vocht (%) | `ae`, `af` | grootste blok, laagste heap (KB) |
+| `h` | vocht (%, DHT22, anders SCD41) | `ae`, `af` | grootste blok, laagste heap (KB) |
 | `i` | dauwpunt (°C) | `ag` | aantal DS18B20 |
-| `j` | dauwpuntalarm | `ah`–`aj` | DS18B20 2–4 (°C of `null`) |
+| `j` | dauwpuntalarm | `ah`–`aj`, `an`, `ao` | DS18B20 2–6 (°C of `null`; altijd aanwezig sinds v3.7) |
 | `k` | CO2 (ppm, SCD41) | `al`, `am` | SCD41-temp (°C), -vocht (%) |
 | `m` | LDR: **100 = licht, 0 = donker** (sinds v3.5.3) | `ar` | Generic ADC GP3 (V of `null`) |
 | `o` | nacht (0/1) | | |
-| `p` | bed (0/1) | **gepland** | `an`, `ao` DS 5–6 (v3.7) · `ak` effectief setpoint (v3.8) · `ap`, `aq`, `as` GP1, GP2, GP4 (v3.9) |
+| `p` | bed (0/1) | **gepland** | `ak` effectief setpoint (v3.8) · `ap`, `aq`, `as` GP1, GP2, GP4 (v3.9) |
 | `q`, `r`, `s` | kamerkleur RGB | **vervallen** | `l`, `n`, `aa`, `ab` (v3.5.2) |
 
 ## Google Sheet (GAS v1.6)
@@ -94,8 +94,8 @@ Sheet "R-ROOMS Log", tabblad **"Data"**: 43 kolommen (A–AQ), één rij per roo
 |---|---|---|
 | v3.6.1 | **OTA-voortgangspagina** zoals Vakantiehuizen v1.13: upload via JavaScript met voortgangsbalk (% en KB), daarna wachten tot de controller terug is ("✅ Terug online: ROOM vX") en automatisch naar `/advanced`; nieuwe route `/ver` (`versie\|uptime_s`). POST-handler en curl-upload ongewijzigd — ✅ 25/11 geflasht en getest | alle rooms |
 | — | **RPi:** ontbrekende temperatuur (`null`) als "–" i.p.v. 0,0 °C (`room.html`, `index.html`) — ✅ 25/11 in de overkoepelende repo | RPi |
-| v3.6.3 | **CO2-referentie SCD41** instelbaar ("CO2 buitenlucht", standaard 420 ppm): ASC-streefwaarde én waarde voor "Kalibreren in buitenlucht" — 🔨 gebouwd 25/11 | alle rooms |
-| v3.7 | **Temperatuurbewaking** zoals de Sjalay, max. **6 DS18B20's** (`an`, `ao`) | alle rooms |
+| v3.6.3 | **CO2-referentie SCD41** instelbaar ("CO2 buitenlucht", standaard 420 ppm): ASC-streefwaarde én waarde voor "Kalibreren in buitenlucht" — ✅ geflasht 25/11 | alle rooms |
+| v3.7 | **Temperatuurbewaking** zoals de Sjalay, max. **6 DS18B20's** (`an`, `ao`), vocht valt terug op de SCD41 — 🔨 gebouwd 25/11 | alle rooms |
 | v3.8 | **Verwarmingslogica** zoals de Sjalay (`ak`) | alle rooms |
 | *open* | **Pixelmodi:** per pixel manueel / beweging / nachtlampje, kleur per pixel (vraag van 18/11, nog te beslissen) | B&B (vloermat) |
 | v3.8b | **Pixel-effecten** achter de Powerpixels | B&B, BADK, SLPK |
@@ -103,14 +103,6 @@ Sheet "R-ROOMS Log", tabblad **"Data"**: 43 kolommen (A–AQ), één rij per roo
 | v3.9 | **Generieke I/O** GP1, GP2, GP4 (`ap`, `aq`, `as`, `/set_gp`) | alle rooms |
 | v3.10–v3.12 | Pagina's naar eigen `.h`-bestanden: `/update` (voortgang al in v3.6.1), `/advanced`, `/settings` | alle rooms |
 | — | **Uitrol:** elke Photon-room krijgt een ESP32 met deze sketch (B&B eerst, dan BADK, INKOM, KEUKEN, WASPL, ZITPL) | |
-
-### v3.7 Temperatuurbewaking
-
-Al gedaan in v3.5: grens −10…40 °C, terugval DS18B20 → DHT22 → SCD41, `null` bij een ongeldige meting, vorstbeveiliging, losse DS18B20 na 3 min ongeldig. Nog te doen:
-- **DS18B20:** per sensor fouten op rij en totaal; na 3 fouten op rij "ontbreekt", terug bij de eerste goede lezing; de opstartwaarde **85,0 °C** negeren.
-- **DHT22:** fouten op rij, leeftijd van de laatste geldige meting; vocht en dauwpunt houden de laatste geldige waarde (max. 5 min) in plaats van te verdwijnen.
-- **Overzicht** op `/advanced`: alle DS18B20's met bijnaam, rol (primair), temperatuur, "ontbreekt".
-- **Maximum 6 sensoren:** `f` (primair), `ah`–`aj`, nieuw **`an`, `ao`**; bijnamen en primaire keuze ook voor 5 en 6.
 
 ### v3.8 Verwarmingslogica
 
@@ -136,7 +128,8 @@ Elke pagina in een eigen `.h`-bestand (zoals `landing.h`): de `.ino` bevat enkel
 
 | Versie | Datum | Wat |
 |---|---|---|
-| **v3.6.3** | 25/11 | CO2-referentie SCD41 instelbaar (ASC-doel + FRC, standaard 420 ppm; was 400/425) |
+| **v3.7** | 25/11 | **Temperatuurbewaking:** max. 6 DS18B20's (`an`, `ao`; `ah`–`ao` altijd aanwezig), fouten per sensor (3 op rij = ontbreekt), 85,0 °C genegeerd, DHT22 5 min geldig, vocht/dauwpunt terugval op de SCD41, overzicht "Alle temperatuursensoren" op `/advanced` |
+| v3.6.3 | 25/11 | CO2-referentie SCD41 instelbaar (ASC-doel + FRC, standaard 420 ppm; was 400/425) |
 | v3.6.2 | 25/11 | Paginatitels met de kamernaam: landingspagina "Eetplaats" (was "Zarlar"), "Eetplaats - OTA", "Eetplaats - Status" |
 | v3.6.1 | 25/11 | **OTA-voortgangspagina** (uit Vakantiehuizen v1.13): voortgangsbalk, "Terug online", naar `/advanced`; route `/ver` |
 | v3.6 | 22/11 | **WiFi robuuster + mDNS:** geen modem-slaap; elke 30 s herverbinden; herstart na 15 min zonder WiFi; AP-setupmodus enkel zonder ingestelde SSID, anders **nood-AP** met normale werking dat sluit zodra de router terug is (vroeger na een stroompanne voor altijd AP zonder verwarming); `<kamernaam>.local`; Diagnose WiFi en mDNS |

@@ -1,4 +1,4 @@
-// ESP32-C6 ROOM v3.6.3 — 25 nov 2026 — zonder Matter
+// ESP32-C6 ROOM v3.7 — 25 nov 2026 — zonder Matter
 // Zarlar thuisautomatisering — Room controller (Apple Home via de RPi-bridge, niet meer via Matter op de ESP32)
 // Filip Delannoy — Zarlardinge (BE)
 //
@@ -8,6 +8,16 @@
 // PARTITIETABEL: Compileer met "partitions.csv" in de schetsmap (Custom partition scheme):
 //   nvs (20 KB), otadata (8 KB), app0 (6 MB), app1 (6 MB), spiffs (~4 MB)
 //
+// v3.7 (25nov26): TEMPERATUURBEWAKING (zoals de Sjalay).
+//                 (1) Max. 6 DS18B20's (was 4). /json: ah, ai, aj (sensor 2–4) en NIEUW an, ao (sensor 5–6);
+//                 alle vijf altijd aanwezig, null als de sensor ontbreekt of geen geldige meting heeft
+//                 (vroeger weggelaten). Bijnamen en primaire keuze ook voor 5 en 6.
+//                 (2) Per DS18B20 fouten op rij en totaal (CRC of buiten bereik). 3 op rij → meteen "ontbreekt"
+//                 (naast de 3-min-regel van v3.5); eerste goede meting → terug. 85,0 °C (opstartwaarde) genegeerd.
+//                 (3) DHT22: laatste geldige meting blijft max. 5 min geldig (één mislukte lezing gaf vroeger
+//                 meteen vocht 0); fouten op rij en leeftijd in Diagnose. Vocht (h) en dauwpunt (i) vallen terug
+//                 op de SCD41 als de DHT22 weg is; bron van het vocht op /advanced.
+//                 (4) /advanced: tabel "Alle temperatuursensoren" (DS18B20's, DHT22, SCD41 met status).
 // v3.6.3 (25nov26): CO2-REFERENTIE SCD41 INSTELBAAR. Nieuwe instelling "CO2 buitenlucht" (NVS scd_ref, 380–500 ppm,
 //                 standaard 420; fabriekswaarde ASC was 400 → nachtwaarden room80 395–410 ppm). Wordt bij elke start
 //                 van de SCD41 als ASC-streefwaarde gezet (niet persistent in de sensor: geen slijtage) en gebruikt door
@@ -215,7 +225,7 @@ void releaseUsbPins() {
   usb_serial_jtag_ll_phy_enable_pad(false);
 }
 
-#define ROOM_VERSION "v3.6.3"  // v3.2: enige plaats met het versienummer
+#define ROOM_VERSION "v3.7"  // v3.2: enige plaats met het versienummer
 
 // v3.2: reden van de laatste herstart, leesbaar
 esp_reset_reason_t boot_reason = ESP_RST_UNKNOWN;
@@ -596,8 +606,8 @@ uint8_t neo_r = 255;       // Voor s: R waarde (hardcoded 255)
 uint8_t neo_g = 255;       // Voor t: G waarde (hardcoded 255)  
 uint8_t neo_b = 255;       // Voor u: B waarde (hardcoded 255)  
 
-// DS18B20 multi-sensor (v1.3) - max 4 sensors op 1 bus
-#define DS_MAX_SENSORS 4
+// DS18B20 multi-sensor (v1.3) - v3.7: max 6 sensors op 1 bus
+#define DS_MAX_SENSORS 6
 int ds_count = 0;                          // Aantal gevonden sensoren
 OneWireNg::Id ds_addrs[DS_MAX_SENSORS];    // 8-byte adressen
 float temp_ds_arr[DS_MAX_SENSORS];         // Temperaturen per sensor (v3.5: NAN = geen geldige meting)
@@ -605,6 +615,18 @@ unsigned long ds_last_ok_ms[DS_MAX_SENSORS];  // v3.5: tijdstip laatste geldige 
 #define DS_STALE_MS 180000UL                // v3.5: 3 min zonder geldige meting = ongeldig
 char ds_nicknames[DS_MAX_SENSORS][48];     // v2.10: char[4][48] i.p.v. String[4]
 int ds_primary = 0;                        // Index van primaire sensor → room_temp
+uint8_t  ds_err_run[DS_MAX_SENSORS];       // v3.7: fouten op rij per sensor
+uint32_t ds_err_total[DS_MAX_SENSORS];     // v3.7: fouten totaal sinds de opstart
+#define DS_ERR_MISSING 3                   // v3.7: 3 fouten op rij → "ontbreekt"
+// v3.7: /json-key per DS-index (0 = primair = "f")
+const char* const DS_JSON_KEY[DS_MAX_SENSORS] = { "f", "ah", "ai", "aj", "an", "ao" };
+// v3.7: DHT22 — laatste geldige meting blijft 5 min bruikbaar
+float dht_t_last = NAN, dht_h_last = NAN;
+unsigned long dht_last_ok_ms = 0;
+uint32_t dht_err_run = 0;
+#define DHT_STALE_MS 300000UL
+const char* humi_src = "";                 // v3.7: bron van het vocht (DHT22 / SCD41)
+bool humi_ok = false;
 
 
 // Pixel specifieke arrays
@@ -774,7 +796,7 @@ void printEsc(Print* p, const char* s) {
 void scanDS18B20() {
   Serial.println("DS18B20: scanning 1-Wire bus...");
   ds_count = 0;
-  for (int i = 0; i < DS_MAX_SENSORS; i++) { temp_ds_arr[i] = NAN; ds_last_ok_ms[i] = 0; }  // v3.5
+  for (int i = 0; i < DS_MAX_SENSORS; i++) { temp_ds_arr[i] = NAN; ds_last_ok_ms[i] = 0; ds_err_run[i] = 0; ds_err_total[i] = 0; }  // v3.5, v3.7
 
   OneWireNg::Id id;
   ow.searchReset();
@@ -819,6 +841,7 @@ void loadDS18B20fromNVS() {
     strlcpy(ds_nicknames[i], tmp.c_str(), sizeof(ds_nicknames[i]));
     temp_ds_arr[i] = NAN;   // v3.5
     ds_last_ok_ms[i] = 0;
+    ds_err_run[i] = 0; ds_err_total[i] = 0;   // v3.7
   }
 }
 
@@ -848,17 +871,22 @@ void readDS18B20temps() {
     uint8_t crc = OneWireNg::crc8(data, 8);
     if (crc != data[8]) {
       Serial.printf("[DS18B20] CRC fout sensor %d — gemeten waarde genegeerd\n", i);
+      if (ds_err_run[i] < 255) ds_err_run[i]++;   // v3.7
+      ds_err_total[i]++;
       continue;  // Bewaar vorige waarde — beter dan fout getal gebruiken
     }
 
     int16_t raw = (int16_t)((data[1] << 8) | data[0]);
+    if (raw == 0x0550) continue;   // v3.7: 85,0 °C = opstartwaarde na stroom → geen meting, geen fout
     float t = raw / 16.0f;
-    if (t >= -55.0f && t <= 125.0f) { temp_ds_arr[i] = t; ds_last_ok_ms[i] = millis(); }
+    if (t >= -55.0f && t <= 125.0f) { temp_ds_arr[i] = t; ds_last_ok_ms[i] = millis(); ds_err_run[i] = 0; }
+    else { if (ds_err_run[i] < 255) ds_err_run[i]++; ds_err_total[i]++; }   // v3.7
   }
   // v3.5: sensor zonder geldige meting gedurende 3 min → ongeldig (losgetrokken sensor gaf CRC-fouten
   // en behield eeuwig zijn laatste waarde)
   for (int i = 0; i < ds_count && i < DS_MAX_SENSORS; i++) {
     if (ds_last_ok_ms[i] == 0 || millis() - ds_last_ok_ms[i] > DS_STALE_MS) temp_ds_arr[i] = NAN;
+    if (ds_err_run[i] >= DS_ERR_MISSING) temp_ds_arr[i] = NAN;   // v3.7: 3 fouten op rij → ontbreekt
   }
   temp_ds = temp_ds_arr[ds_primary];
 }
@@ -1031,7 +1059,7 @@ const char* getJSON() {
   pixel_mode_str[0] = '0' + pixel_mode[0];
   pixel_mode_str[1] = mov2_enabled ? ('0' + pixel_mode[1]) : '0';
 
-  static char json[680];
+  static char json[760];   // v3.7: ruimte voor ah–ao (altijd aanwezig)
   char e_buf[12], f_buf[12];   // v3.5: temperaturen als tekst ("21.3" of "null")
   snprintf(json, sizeof(json),
     "{"
@@ -1085,11 +1113,11 @@ const char* getJSON() {
   );
 
   // Extra DS18B20 sensoren vanaf index 1 (index 0 = primair, zit al in "f")
-  // ah = Tds2 (sensor 1), ai = Tds3 (sensor 2), aj = Tds4 (sensor 3)
-  for (int i = 1; i < ds_count && i < DS_MAX_SENSORS; i++) {
+  // v3.7: ah, ai, aj, an, ao (sensor 2–6), altijd aanwezig; null als de sensor ontbreekt of ongeldig is
+  for (int i = 1; i < DS_MAX_SENSORS; i++) {
     char ds_entry[24];
     char t_buf[12];
-    snprintf(ds_entry, sizeof(ds_entry), ",\"a%c\":%s", (char)('g' + i), jsonTemp(temp_ds_arr[i], t_buf));  // v3.5: null als ongeldig
+    snprintf(ds_entry, sizeof(ds_entry), ",\"%s\":%s", DS_JSON_KEY[i], jsonTemp(i < ds_count ? temp_ds_arr[i] : NAN, t_buf));
     strncat(json, ds_entry, sizeof(json) - strlen(json) - 1);
   }
   // v3.4: SCD41 — al = temperatuur (°C), am = vocht (%); 0 = geen meting. Altijd achteraan.
@@ -1720,9 +1748,9 @@ void setup() {
     p->print(sensorWarn(!tempValid(temp_dht)));
     p->print(F("</td><td class=\"control\"></td></tr>"
       "<tr><td class=\"label\">Humidity</td><td class=\"value\">"));
-    p->printf("%.1f %%", humi);
+    if (humi_ok) p->printf("%.0f %%", humi); else p->print(F("&mdash;"));   // v3.7: bron in het sensoroverzicht
     // v2.8: warn als DHT22 vocht buiten bereik (ook 0 = was NaN)
-    p->print(sensorWarn(humi == 0 || (int)humi < SENSOR_HUMI_MIN || (int)humi > SENSOR_HUMI_MAX));
+    p->print(sensorWarn(!humi_ok || (int)humi < SENSOR_HUMI_MIN || (int)humi > SENSOR_HUMI_MAX));
     p->print(F("</td><td class=\"control\"></td></tr>"
       "<tr><td class=\"label\">Dauwpunt</td><td class=\"value\">"));
     p->printf("%.1f &deg;C", dew);
@@ -1767,8 +1795,34 @@ void setup() {
     // v2.12: dot — oranje als verwarming actief
     p->printf("<span class='dot' style='background:%s'></span>", heating_on ? "#e05c00" : "#bbb");
     p->print(F("</td><td class=\"control\"></td></tr>"
-      "</table>"
-      "<div class=\"group-title\">VERLICHTING</div>"
+      "</table>"));
+    // v3.7: overzicht van alle temperatuursensoren
+    p->print(F("<div class=\"group-title\">ALLE TEMPERATUURSENSOREN</div><table>"));
+    for (int i = 0; i < ds_count; i++) {
+      bool ok = tempValid(temp_ds_arr[i]);
+      p->print(F("<tr><td class=\"label\">"));
+      printEsc(p, ds_nicknames[i]);
+      p->printf("%s</td><td class=\"value\">", i == ds_primary ? " <small>(primair)</small>" : "");
+      if (ok) p->printf("%.1f &deg;C", temp_ds_arr[i]);
+      else p->print(F("<b style=\"color:#c00\">ontbreekt</b>"));
+      p->printf("<br><small>DS18B20 %d &middot; %s = %s &middot; fouten op rij %u, totaal %u</small></td><td class=\"control\"></td></tr>",
+        i + 1, DS_JSON_KEY[i], ok ? "ok" : "null", ds_err_run[i], (unsigned)ds_err_total[i]);
+    }
+    if (ds_count == 0) p->print(F("<tr><td class=\"label\">DS18B20</td><td class=\"value\"><b style=\"color:#c00\">geen gevonden</b></td><td class=\"control\"></td></tr>"));
+    p->print(F("<tr><td class=\"label\">DHT22</td><td class=\"value\">"));
+    if (tempValid(temp_dht)) p->printf("%.1f &deg;C &middot; %.0f %%", temp_dht, dht_h_last);
+    else p->print(F("<b style=\"color:#c00\">geen geldige meting</b>"));
+    p->printf("<br><small>fouten op rij %u &middot; laatste goede meting %s</small></td><td class=\"control\"></td></tr>",
+      (unsigned)dht_err_run, dht_last_ok_ms ? (String((millis() - dht_last_ok_ms) / 1000) + " s geleden").c_str() : "nooit");
+    if (co2_enabled) {
+      p->print(F("<tr><td class=\"label\">SCD41</td><td class=\"value\">"));
+      if (scd_ok && tempValid(scd_temp) && scd_temp != 0.0f) p->printf("%.1f &deg;C &middot; %d %%", scd_temp, scd_humi);
+      else p->print(F("<b style=\"color:#c00\">geen geldige meting</b>"));
+      p->print(F("<br><small>reserve voor temperatuur en vocht</small></td><td class=\"control\"></td></tr>"));
+    }
+    p->printf("<tr><td class=\"label\">Gebruikt</td><td class=\"value\">temperatuur: <b>%s</b> &middot; vocht: <b>%s</b></td><td class=\"control\"></td></tr></table>",
+      room_temp_src[0] ? room_temp_src : "geen (vorstbeveiliging)", humi_src[0] ? humi_src : "geen");
+    p->print(F("<div class=\"group-title\">VERLICHTING</div>"
       "<table>"));
     p->print(F("<tr><td class=\"label\">LDR (licht=100)</td><td class=\"value\">"));
     p->print(light_ldr);
@@ -2352,8 +2406,8 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     if (scd_frc_result[0]) p->printf("<br>Laatste kalibratie: %s", scd_frc_result);
     p->print(F("</td></tr>"));
     // v3.4.4: DHT22-uitlezing en NVS-bezetting
-    p->printf("<tr><td class=\"lbl\">DHT22</td><td class=\"inp\">%u mislukte metingen van %u sinds de opstart</td></tr>",
-              dht_fails, dht_reads);
+    p->printf("<tr><td class=\"lbl\">DHT22</td><td class=\"inp\">%u mislukte metingen van %u sinds de opstart &middot; %u op rij</td></tr>",
+              dht_fails, dht_reads, (unsigned)dht_err_run);   // v3.7: op rij
     // v3.5.1: OTA
     p->print(F("<tr><td class=\"lbl\">OTA</td><td class=\"inp\">"));
     if (ota_fail_count == 0) p->print(F("geen mislukte uploads sinds de opstart"));
@@ -3068,8 +3122,26 @@ void loop() {
 
   // Sensoren
   crumbL(CL_DHT);
-  dhtRead22(temp_dht, humi);   // v3.4.4: eigen uitlezing, interrupts hooguit ±5 ms uit; fout → NaN
-  dew = calculateDewPoint(temp_dht, humi);
+  // v3.7: DHT22 — laatste geldige meting blijft 5 min bruikbaar; vocht valt terug op de SCD41
+  {
+    float t, h;
+    if (dhtRead22(t, h) && tempValid(t) && h >= 0.0f && h <= 100.0f) {
+      dht_t_last = t; dht_h_last = h; dht_last_ok_ms = millis(); dht_err_run = 0;
+    } else {
+      dht_err_run++;
+    }
+    bool dht_fresh = dht_last_ok_ms && (millis() - dht_last_ok_ms <= DHT_STALE_MS);
+    temp_dht = dht_fresh ? dht_t_last : NAN;
+    if (dht_fresh) {
+      humi = dht_h_last; humi_src = "DHT22"; humi_ok = true;
+      dew = calculateDewPoint(temp_dht, humi);
+    } else if (co2_enabled && scd_ok && scd_humi > 0 && tempValid(scd_temp)) {
+      humi = scd_humi; humi_src = "SCD41"; humi_ok = true;
+      dew = calculateDewPoint(scd_temp, humi);
+    } else {
+      humi = NAN; humi_src = ""; humi_ok = false; dew = 0;
+    }
+  }
   crumbL(CL_DS);
   readDS18B20temps();  // Lees alle DS18B20 sensoren → temp_ds = primaire sensor
   
@@ -3099,7 +3171,7 @@ void loop() {
     strlcpy(temp_melding, "Geen geldige temperatuur - vorstbeveiliging", sizeof(temp_melding));
   }
   // v3.5: dauwpuntalarm met de kamertemperatuur (was enkel de DS18B20); dew = 0 als de DHT22 ongeldig is
-  dew_alert = (room_temp_ok && tempValid(temp_dht) && room_temp < dew) ? 1 : 0;
+  dew_alert = (room_temp_ok && humi_ok && room_temp < dew) ? 1 : 0;   // v3.7: vocht van DHT22 of SCD41
 
 
   // Ventilation logica — v2.21: CO2-gestuurd als sensor leest, anders slider-waarde bewaren
