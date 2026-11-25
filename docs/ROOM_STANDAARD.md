@@ -1,6 +1,6 @@
 # ROOM-standaard (Zarlar)
 
-*v1.5 — 22 nov 2026 — Filip Delannoy (FiDel). Status: **vastgelegd**.*
+*v1.6 — 25 nov 2026 — Filip Delannoy (FiDel). Status: **vastgelegd**.*
 
 Elke room in Zarlardinge gebruikt **dezelfde hardware en dezelfde sketch**. Dit document legt vast wat er in een room zit en wat er bewust níet in zit. Het is het antwoord op jaren "feature creep": telkens een nieuwe sensor op de Photon-rooms deed hard- en software steeds verder uit elkaar lopen.
 
@@ -19,7 +19,7 @@ Wat per room verschilt, is een **instelling** in `/settings` (opgeslagen in NVS)
 | I2C-bus | Bij de controller, SDA IO13 / SCL IO11, 3,3 V. Pull-ups 3,3 kΩ op het shield |
 | USB van de devkit | **Alleen de poort "UART"** (voeding, flashen, seriële monitor). IO12/IO13 zijn de ingebouwde USB (D−/D+); de ROOM-sketch schakelt die USB uit en gebruikt ze als gewone pinnen. Compileren met **USB CDC On Boot = Disabled** (sinds v3.4.2, 9/11) |
 
-**Gouden regel: een ESP32-pin ziet nooit meer dan 3,3 V.** De voeding van een sensor mag 5 V zijn, het signaal niet. Elke ader meten vóór aansluiten ([`aansluitingen.md`](aansluitingen.md) §4.3).
+**Gouden regel: een ESP32-pin ziet nooit meer dan 3,3 V.** De voeding van een sensor mag 5 V zijn, het signaal niet. Elke ader meten vóór aansluiten ([`aansluitingen.md`](aansluitingen.md) §2.3).
 
 ### 1.1 Kern: in elke room
 
@@ -99,6 +99,7 @@ De pinnen van RoomSense en Option die niet voor de kern of de opties gebruikt wo
 
 - **Eén sketch** `ESP32_C6_ROOM` voor alle rooms. Kamernaam, pixels, sensoren en opties stel je per controller in via `/settings`.
 - **Vast IP** per room, Apple Home via de RPi-bridge (geen Matter op de ESP32), logging via het Dashboard naar de Sheet (de room post zelf niets).
+- **Pixels:** elke pixel heeft een modus (manueel · beweging MOV1 · beweging MOV2 · nachtlampje) en optioneel een eigen kleur, in `/settings` (sinds v3.8a). Een Powerpixel met parallelle kanalen krijgt eigen kleur wit.
 - **WiFi:** blijft zelf herverbinden; zonder router een nood-AP `ROOM-<naam>` (192.168.4.1) met normale werking; bereikbaar als `<kamernaam>.local` (sinds v3.6).
 - **DHT22 met de eigen uitlezing** van de sketch (sinds v3.4.4), nooit met de Adafruit-DHT-bibliotheek (interrupt-watchdog-herstarts).
 - **Overstap van een oude sketch (met Matter):** na de eerste flash in `/settings` → Diagnose eenmaal "Ongebruikte NVS-gegevens wissen" (sinds v3.4.5).
@@ -116,6 +117,7 @@ De pinnen van RoomSense en Option die niet voor de kern of de opties gebruikt wo
 
 | Versie | Datum | Wat |
 |---|---|---|
+| v1.6 | 25 nov 2026 | Pixelmodi en eigen kleur per pixel (ROOM v3.8a) |
 | v1.5 | 22 nov 2026 | GP3 = Generic ADC in volt (`ar`); LDR-schaal 100 = licht; WiFi-gedrag en mDNS (ROOM v3.5.2–v3.6) |
 | v1.4 | 18 nov 2026 | Zekering per lichtkring op maat in plaats van vast 2 A (B&B: badkamer 4 A, spanlampen 3 A) |
 | v1.3 | 16 nov 2026 | Regels voor Powerpixels (§1.3): één TRIO per lichtkring met de kanalen parallel (geen R/G/B-verdeling), sketch ongewijzigd (vrije RGB per pixel blijft voor RGB-strips), fix-draadje naar +12V, externe schakelaar als override toegelaten |

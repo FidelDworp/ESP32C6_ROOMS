@@ -3,59 +3,57 @@
 Room-controllers van het Zarlar-thuisautomatiseringssysteem (Zarlardinge): een ESP32-C6 op het Zarlar shield, met **één sketch voor alle kamers**. Kamernaam, pixels en opties stel je per controller in via `/settings` (bewaard in NVS).
 
 - **Wat er in een room zit (en wat niet):** [`docs/ROOM_STANDAARD.md`](docs/ROOM_STANDAARD.md). Eerst lezen.
-- **Ombouw per room van Photon naar ESP32:** [`docs/aansluitingen.md`](docs/aansluitingen.md).
+- **Ombouw per room, B&B in detail:** [`docs/aansluitingen.md`](docs/aansluitingen.md).
 - **Nieuw gesprek met Claude:** [`docs/ROOMS_OVERDRACHT.md`](docs/ROOMS_OVERDRACHT.md).
 - **Systeembreed:** [Master-overnamedocument](https://github.com/FidelDworp/Zarlardinge-Home-Automation/blob/main/docs/Zarlar_Master_Overnamedocument.md) §7 (ROOM).
 
-## Status (22 november 2026)
+## Status (25 november 2026)
 
 | | |
 |---|---|
 | **Sketch** | **v3.8a** — map `ESP32_C6_ROOM/`, klaar om te uploaden: `bin/ESP32_C6_ROOM_v3.8a.ino.bin` |
-| **Draait op** | room80: `192.168.0.80` · `http://eetplaats.local/`. Testbord met alle sensoren, rij R-EETPL op de Dashboard-matrix |
-| **Board** | ESP32-C6-DevKitM-1, 16 MB, op het Zarlar shield |
-| **Apple Home** | Via de RPi-bridge (`server.js` + `matterbridge-zarlar`), toestel "Eetplaats". Geen Matter op de ESP32 |
-| **Logging** | Het Dashboard (`.60`) haalt `/json` op en post **elke 5 min** naar de Sheet "R-ROOMS Log" (GAS v1.6). De room post zelf niets. Een room verschijnt pas in de Sheet als hij op het Dashboard → `/settings` op **actief** staat |
+| **Draait op** | room80: `192.168.0.80` · `http://eetplaats.local/` — testbord met alle sensoren, rij R-EETPL op de Dashboard-matrix |
+| **Volgende room** | B&B (`.75`, R-BandB), in montage |
+| **Apple Home** | Via de RPi-bridge (`matterbridge-zarlar`), toestel "Eetplaats". Geen Matter op de ESP32 |
+| **Logging** | Het Dashboard (`.60`) haalt `/json` op en post **elke 5 min** naar de Sheet "R-ROOMS Log". De room post zelf niets. Een nieuwe room verschijnt pas in de Sheet als hij op het Dashboard → `/settings` op **actief** staat |
 | **Portal (RPi)** | `192.168.0.50:3000` gebruikt `/json`, `/capabilities`, `/toggle_pixel_mode`, `/toggle_pixel`, `/setcolor`, `/set_home` |
+
+## Wat de sketch doet
+
+- **Temperatuur:** DS18B20 (max. 6, één primair), terugval op DHT22 en daarna SCD41; zonder geldige meting vorstbeveiliging (15 min per uur verwarmen). Geldig bereik −10…40 °C.
+- **Verwarming:** effectief setpoint = max(setpoint, dauwpunt + marge) als de dauwpuntbeveiliging aan staat; hysterese (standaard 1,0 °C); altijd uit vanaf 30 °C; bij Thuis + thermostaatcontact volgt hij de thermostaat of de dauwpuntbeveiliging.
+- **Ventilatie:** volgens CO2 van de SCD41 (0 % bij 600, 100 % bij 1200 ppm, instelbaar).
+- **Pixels:** per pixel manueel, beweging MOV1/MOV2 of nachtlampje, eigen kleur optioneel; bed-modus houdt beweging- en nachtlampjes uit.
+- **Generic ADC** op GP3 (IO2), in volt, met bijnaam en factor.
+- **Betrouwbaarheid:** zelf herverbinden met WiFi, nood-AP zonder router (normale werking blijft), veilige OTA, herstartgeschiedenis met de laatste stap.
 
 ## Pagina's
 
 | Adres | Voor wie | Inhoud |
 |---|---|---|
-| `/` | iedereen | **Landingspagina:** kamertemperatuur met setpoint en schuifbalk, 🔥 = verwarming vraagt warmte, een tegel per lamp (bewegingslampen: tik = *automatisch* ↔ *altijd aan*), kleur, 🛏️ bed-modus, 🏠 thuis/weg, Generic ADC met bijnaam (als hij aan staat), ⚙️ naar de technische pagina |
-| `/advanced` | FiDel | Alle metingen |
+| `/` | iedereen | **Landingspagina:** temperatuur met het echte doel en schuifbalk, 🔥 = verwarming vraagt warmte, een tegel per lamp (beweging: tik = automatisch ↔ altijd aan; nachtlampje: tik = handmatig), kleur, 🛏️ bed-modus, 🏠 thuis/weg |
+| `/advanced` | FiDel | Alle metingen, overzicht van alle temperatuursensoren |
 | `/settings` | FiDel | Instellingen + **Diagnose** (versie, herstarts met laatste stap, geheugen, WiFi, mDNS, SCD41, DHT22, OTA, NVS) |
-| `/update` | FiDel | OTA met voortgangsbalk; meldt "Terug online" en gaat dan naar `/advanced` (sinds v3.6.1) |
-| `/ver` | OTA-pagina | `versie\|uptime_s` in platte tekst (sinds v3.6.1) |
+| `/update` | FiDel | OTA met voortgangsbalk; meldt "Terug online" en gaat naar `/advanced` |
+| `/ver` | OTA-pagina | `versie\|uptime_s` |
 | `/json` | Dashboard, Portal, RPi-bridge | Live-gegevens (zie hieronder) |
-
-## Bestanden
-
-| Pad | Inhoud |
-|---|---|
-| `ESP32_C6_ROOM/` | De sketch (`.ino`, `landing.h`, `partitions.csv`). Open deze map in de Arduino IDE |
-| `bin/` | Laatste gecompileerde `.bin` (alleen de laatste versie) |
-| `GoogleScript/ROOM_GoogleScript.gs` | Google Apps Script v1.6 voor de Sheet |
-| `docs/` | Standaard, overdracht, aansluitingen, Photon-inventaris |
-| `old/` | v2.8, laatste versie vóór Matter (referentie) |
 
 ## Compileren en uploaden
 
 **Arduino IDE:** ESP32C6 Dev Module · Flash Size **16 MB** · Partition: `partitions.csv` in de schetsmap (automatisch) · **USB CDC On Boot = Disabled** (anders foutmelding) · Core Debug Level None. Bibliotheken: ESPAsyncWebServer, AsyncTCP, OneWireNg, Adafruit NeoPixel, Sensirion I2C SCD4x (+ Sensirion Core). Geen DHT-bibliotheek (eigen uitlezing).
 
-**USB:** voeding, eerste flash en seriële monitor (115200) via de poort **"UART"** van de devkit. De poort "USB" niet gebruiken (IO12/IO13 zijn shield-pinnen).
+**USB:** voeding, eerste flash en seriële monitor (115200) via de poort **"UART"** van de devkit, nooit via "USB" (IO12/IO13 zijn shield-pinnen).
 
-**Uploaden (OTA):** upload enkel `ESP32_C6_ROOM.ino.bin` (niet `.bootloader`, `.partitions` of `.merged`) op `http://<ip>/update`. Of zonder compileren de `.bin` uit `bin/`.
+**Uploaden (OTA):** enkel `ESP32_C6_ROOM.ino.bin` (niet `.bootloader`, `.partitions` of `.merged`) op `http://<ip>/update`, of de `.bin` uit `bin/`.
 
-**Van op afstand** (Mac via mobiele data + Tailscale, **niet** via de wifi in Nieuwpoort: zelfde 192.168.0.x-bereik):
+**Van op afstand** (Mac via mobiele data + Tailscale; **niet** via de wifi in Nieuwpoort, die gebruikt ook 192.168.0.x). Download naar Downloads en upload via de OTA-pagina, of rechtstreeks met curl:
 ```
-curl -L -o /tmp/room.bin https://raw.githubusercontent.com/FidelDworp/ESP32C6_ROOMS/main/bin/ESP32_C6_ROOM_v3.8a.ino.bin
-ls -l /tmp/room.bin
-curl -F "update=@/tmp/room.bin" http://192.168.0.80/update
+curl -L -o ~/Downloads/room.bin https://raw.githubusercontent.com/FidelDworp/ESP32C6_ROOMS/main/bin/ESP32_C6_ROOM_v3.8a.ino.bin
+ls -l ~/Downloads/room.bin
+curl -F "update=@$HOME/Downloads/room.bin" http://192.168.0.80/update
 ```
-Sinds v3.5.1 is dat veilig: het antwoord is "Update succesvol!" of "Update mislukt!" met de reden; een afgebroken upload blokkeert de volgende niet.
 
-**Na de overstap van een oude sketch met Matter:** `/settings` → Diagnose → eenmaal "Ongebruikte NVS-gegevens wissen".
+**Nieuwe room of overstap van een oude sketch:** `/settings` → Diagnose → eenmaal "Ongebruikte NVS-gegevens wissen".
 
 ## `/json` (contract)
 
@@ -63,8 +61,8 @@ Keys en bedieningsadressen wijzigen alleen met uitdrukkelijk akkoord: Dashboard,
 
 | Key | Inhoud | Key | Inhoud |
 |---|---|---|---|
-| `a` | uptime (s) | `t` | pixels aan (`P=0101…`) |
-| `b` | verwarming vraagt (0/1) | `u` | per pixel: 1 = altijd aan / handmatig (sinds v3.8a één teken per pixel) |
+| `a` | uptime (s) | `t` | stand per pixel (`P=0101…`) |
+| `b` | verwarming vraagt (0/1) | `u` | per pixel: 1 = altijd aan / handmatig |
 | `c` | ingesteld setpoint (°C) | `v` | thuis (0/1) |
 | `d` | thermostaatcontact (0/1) | `w`, `x` | MOV1/MOV2 triggers per min |
 | `e` | DHT22-temp (°C of `null`) | `y`, `z` | een MOV1-/MOV2-pixel brandt |
@@ -72,17 +70,16 @@ Keys en bedieningsadressen wijzigen alleen met uitdrukkelijk akkoord: Dashboard,
 | `g` | ventilatie (%) | `ad` | vrij geheugen (%) |
 | `h` | vocht (%, DHT22, anders SCD41) | `ae`, `af` | grootste blok, laagste heap (KB) |
 | `i` | dauwpunt (°C) | `ag` | aantal DS18B20 |
-| `j` | dauwpuntalarm | `ah`–`aj`, `an`, `ao` | DS18B20 2–6 (°C of `null`; altijd aanwezig sinds v3.7) |
-| `k` | CO2 (ppm, SCD41) | `al`, `am` | SCD41-temp (°C), -vocht (%) |
-| `m` | LDR: **100 = licht, 0 = donker** (sinds v3.5.3) | `ar` | Generic ADC GP3 (V of `null`) |
-| `o` | nacht (0/1) | `ak` | effectief setpoint (°C, sinds v3.8) |
-| `p` | bed (0/1) | **gepland** | `ap`, `aq`, `as` GP1, GP2, GP4 (v3.9) |
-| `q`, `r`, `s` | kamerkleur RGB | **vervallen** | `l`, `n`, `aa`, `ab` (v3.5.2) |
+| `j` | dauwpuntalarm | `ah`–`aj`, `an`, `ao` | DS18B20 2–6 (°C of `null`) |
+| `k` | CO2 (ppm, SCD41) | `ak` | effectief setpoint (°C) |
+| `m` | LDR: 100 = licht, 0 = donker | `al`, `am` | SCD41-temp (°C), -vocht (%) |
+| `o` | nacht (0/1) | `ar` | Generic ADC GP3 (V of `null`) |
+| `p` | bed (0/1) | *gepland* | `ap`, `aq`, `as` = GP1, GP2, GP4 (v3.9) |
+| `q`, `r`, `s` | kamerkleur RGB | | |
 
-## Google Sheet (GAS v1.6)
+## Google Sheet
 
-Sheet "R-ROOMS Log", tabblad **"Data"**: 43 kolommen (A–AQ), één rij per room per 5 min, kamerfilter in **C1** (ALL of één room). Ontbrekende meting of `null` = lege cel. Oude rijen (v1.5) staan in tabblad "Archief v1.5".
-
+Sheet "R-ROOMS Log", tabblad **"Data"** (GAS v1.6, `GoogleScript/ROOM_GoogleScript.gs`): één rij per room per 5 min, kamerfilter in **C1**. Ontbrekende meting of `null` = lege cel.
 - **Kolom N "Licht LDR":** vóór 22/11 21:07 = 100 donker, erna = 100 licht.
 - **Script wijzigen:** Apps Script → Implementeren → Implementaties beheren → potlood → **Nieuwe versie** (nooit "Nieuwe implementatie": dan verandert de URL). Na een kolomwijziging `archiveerEnNieuweKoppen()` of `setupHeaders()` uitvoeren.
 
@@ -90,56 +87,25 @@ Sheet "R-ROOMS Log", tabblad **"Data"**: 43 kolommen (A–AQ), één rij per roo
 
 **Spelregels:** één versie per stap · plan, dan code na GO · na elke flash testen (Sheet: geheugen en herstarts) · `/json` is een contract · README en versiekop bij elke stap bijwerken.
 
-| Versie | Doel | Voor |
-|---|---|---|
-| v3.6.1 | **OTA-voortgangspagina** zoals Vakantiehuizen v1.13: upload via JavaScript met voortgangsbalk (% en KB), daarna wachten tot de controller terug is ("✅ Terug online: ROOM vX") en automatisch naar `/advanced`; nieuwe route `/ver` (`versie\|uptime_s`). POST-handler en curl-upload ongewijzigd — ✅ 25/11 geflasht en getest | alle rooms |
-| — | **RPi:** ontbrekende temperatuur (`null`) als "–" i.p.v. 0,0 °C (`room.html`, `index.html`) — ✅ 25/11 in de overkoepelende repo | RPi |
-| v3.6.3 | **CO2-referentie SCD41** instelbaar ("CO2 buitenlucht", standaard 420 ppm): ASC-streefwaarde én waarde voor "Kalibreren in buitenlucht" — ✅ geflasht 25/11 | alle rooms |
-| v3.7 | **Temperatuurbewaking** zoals de Sjalay, max. **6 DS18B20's** (`an`, `ao`), vocht valt terug op de SCD41 — ✅ 25/11 geflasht en getest met de RoomSense-kabel los (v3.7.1: SCD41-terugval ook op landingspagina, `/advanced`, RPi en Apple Home) | alle rooms |
-| v3.8 | **Verwarmingslogica** zoals de Sjalay (`ak`) — ✅ geflasht 25/11 | alle rooms |
-| v3.8a | **Pixelmodi:** per pixel manueel / beweging MOV1 / beweging MOV2 / nachtlampje, eigen kleur per pixel; `u` één teken per pixel — ✅ geflasht en getest 25/11 | B&B (vloermat) |
-| — | **Kleine stap:** vorstbeveiliging pas na een wachttijd na de opstart (nu kort verwarmingsvraag tot de eerste meting, gezien in de Sheet 25/11) | alle rooms |
-| v3.8b | **Pixel-effecten** achter de Powerpixels | B&B, BADK, SLPK |
-| → | **B&B gaat live** | B&B |
-| v3.9 | **Generieke I/O** GP1, GP2, GP4 (`ap`, `aq`, `as`, `/set_gp`) | alle rooms |
-| v3.10–v3.12 | Pagina's naar eigen `.h`-bestanden: `/update` (voortgang al in v3.6.1), `/advanced`, `/settings` | alle rooms |
-| — | **Uitrol:** elke Photon-room krijgt een ESP32 met deze sketch (B&B eerst, dan BADK, INKOM, KEUKEN, WASPL, ZITPL) | |
-
-### v3.8b Pixel-effecten (idee 18/11)
-
-Effectstrook "pixel X tot Y" achter de Powerpixels: volg kamerkleur, kleurgolf, ademen, regenboog, nachtlampje bij beweging 's nachts. Eén update-lus (±40 beelden/s), max. ±500 pixels, optioneel eigen datalijn op GP4 (IO18). Detailplan later (striptype en aantallen per room; B&B: treden 3 + 9).
-
-### v3.9 Generieke I/O
-
-GP1 = IO12, GP2 = IO7, GP4 = IO18 (GP3 = IO2 is sinds v3.5.2 de Generic ADC, `ar`). Per pin in `/settings`: modus (uit · digitale ingang · digitale uitgang · PWM), bijnaam, pull-up; standaard uit (ingang zonder pull-up). Op `/advanced` met knop of schuifbalk; in `/json` als `ap`, `aq`, `as` (0/1 of 0–100 %, leeg als uit). Bediening: `/set_gp?n=1..4&v=0..100` (beslist 7/11).
-
-### v3.10–v3.12 Pagina's apart
-
-Elke pagina in een eigen `.h`-bestand (zoals `landing.h`): de `.ino` bevat enkel logica en de Arduino IDE kan het JavaScript niet beschadigen. Meteen live en vaste gegevens scheiden (vaste `id` per veld), statuscirkels zoals de landingspagina, korte Nederlandse labels. Volgorde: `/update` (klein, eerste test; de voortgangsbalk komt al in v3.6.1), `/advanced`, `/settings`.
+| # | Versie | Doel | Voor |
+|---|---|---|---|
+| 1 | **v3.8.1** | **Vorstbeveiliging na de opstart.** Nu: vóór de eerste meting geldt "geen geldige temperatuur", en de vorstbeveiliging begint meteen met haar kwartier "aan" → na elke herstart kort een verwarmingsvraag (`b` = 1, gezien in de Sheet 25/11 22:10). Oplossing: de vorstbeveiliging pas laten ingrijpen als er **3 min na de opstart** nog geen geldige temperatuur is | alle rooms |
+| 2 | → | **B&B gaat live** (montage door FiDel; opstarten volgens `aansluitingen.md` §2.4) | B&B |
+| 3 | v3.8b | **Pixel-effecten** op een strook "pixel X tot Y": volg kamerkleur, kleurgolf, ademen, regenboog. Eén update-lus (±40 beelden/s), max. ±500 pixels, optioneel eigen datalijn op GP4 (IO18). Detailplan als striptype en aantallen per room gekend zijn (B&B: treden 3 + 9) | B&B, BADK, SLPK |
+| 4 | v3.9 | **Generieke I/O** op GP1 (IO12), GP2 (IO7), GP4 (IO18): per pin uit · digitale ingang · digitale uitgang · PWM, met bijnaam; `/json` `ap`, `aq`, `as`; bediening `/set_gp?n=1..4&v=0..100`. Pas als er een toepassing is | alle rooms |
+| 5 | v3.10–v3.12 | **Pagina's apart** in `.h`-bestanden (`/update`, `/advanced`, `/settings`), met vaste `id` per veld i.p.v. zoeken op labeltekst. Onderhoud, geen zichtbaar nut | alle rooms |
+| 6 | — | **Uitrol:** elke Photon-room krijgt een ESP32 met deze sketch (na de B&B: BADK, INKOM, KEUKEN, WASPL, ZITPL) | |
 
 ## Versiegeschiedenis
 
 | Versie | Datum | Wat |
 |---|---|---|
-| **v3.8a** | 25/11 | **Pixelmodi:** per pixel manueel / beweging MOV1 / MOV2 / nachtlampje (aan bij donker, uit in bed-modus, tik = handmatig tot de volgende dag/nacht-overgang), eigen kleur per pixel; `u` één teken per pixel |
-| v3.8 | 25/11 | **Verwarmingslogica zoals de Sjalay:** effectief setpoint `ak` (dauwpuntbeveiliging aan/uit, marge −10…+10), echte hysterese (standaard 1,0), Thuis + thermostaat óf dauwpunt, altijd uit vanaf 30 °C, minimum setpoint = onderkant schuifbalk, landingspagina toont het echte doel |
-| v3.7.1 | 25/11 | ✅ Terugval op de SCD41 ook op de landingspagina en in de melding op `/advanced` (+ RPi `index.html`, bridge v0.8.1) |
-| v3.7 | 25/11 | **Temperatuurbewaking:** max. 6 DS18B20's (`an`, `ao`; `ah`–`ao` altijd aanwezig), fouten per sensor (3 op rij = ontbreekt), 85,0 °C genegeerd, DHT22 5 min geldig, vocht/dauwpunt terugval op de SCD41, overzicht "Alle temperatuursensoren" op `/advanced` |
-| v3.6.3 | 25/11 | CO2-referentie SCD41 instelbaar (ASC-doel + FRC, standaard 420 ppm; was 400/425) |
-| v3.6.2 | 25/11 | Paginatitels met de kamernaam: landingspagina "Eetplaats" (was "Zarlar"), "Eetplaats - OTA", "Eetplaats - Status" |
-| v3.6.1 | 25/11 | **OTA-voortgangspagina** (uit Vakantiehuizen v1.13): voortgangsbalk, "Terug online", naar `/advanced`; route `/ver` |
-| v3.6 | 22/11 | **WiFi robuuster + mDNS:** geen modem-slaap; elke 30 s herverbinden; herstart na 15 min zonder WiFi; AP-setupmodus enkel zonder ingestelde SSID, anders **nood-AP** met normale werking dat sluit zodra de router terug is (vroeger na een stroompanne voor altijd AP zonder verwarming); `<kamernaam>.local`; Diagnose WiFi en mDNS |
-| v3.5.3 | 22/11 | **LDR omgekeerd** (`m` 100 = licht), drempel eenmalig omgerekend, nacht volgt de drempel. Samen met Dashboard v6.5 en RPi `matrix.html` |
-| v3.5.2 | 22/11 | **Opruimen:** stof, zon, lichtstraal weg (`l`, `n`, `aa`, `ab`); IO2 = **Generic ADC** in volt (`ar`) met bijnaam en factor; echte oorzaak van een geplande herstart in de geschiedenis |
-| v3.5.1 | 22/11 | **Veilige OTA:** afgebroken upload opgeruimd, succes alleen na een volledige upload, reden bij mislukking, herstart vanuit `loop()` |
-| v3.5 | 20/11 | **Temperatuurveiligheid:** −10…40 °C, terugval DS18B20 → DHT22 → SCD41, `null` i.p.v. 0,0, vorstbeveiliging 15 min/uur |
-| v3.4.5 | 11/11 | NVS opruimen (Matter-resten), knop in Diagnose |
-| v3.4.4 | 11/11 | Eigen DHT22-uitlezing: einde van de interrupt-watchdog-herstarts |
-| v3.4.3 | 9/11 | Ventilatie op CO2 instelbaar (600/1200 ppm) |
-| v3.4.2 | 9/11 | I2C op IO13 werkt: USB CDC uit, USB-functie van IO12/IO13 uitgeschakeld |
-| v3.4–v3.4.1 | 9/11 | SCD41 via I2C (`al`, `am`), CO2-PWM weg, I2C-diagnose |
-| v3.3 | 7/11 | TSL2561 weg, "laatste stap vóór herstart" in Diagnose |
-| v3.2 | 5/11 | Versie en Diagnose zichtbaar |
-| v3.1 | 3/11 | Landingspagina `/`, technische pagina naar `/advanced` |
-| v3.0 | 3/11 | Matter weg (grootste vrije blok van ±30 KB naar ±245 KB; geen dagelijkse herstarts meer) |
-| v2.8 | mrt 2026 | Laatste versie vóór Matter (`old/`) |
+| **v3.8a** | 25/11 | **Pixelmodi** per pixel (manueel, beweging MOV1/MOV2, nachtlampje), eigen kleur per pixel; `u` één teken per pixel |
+| v3.8 | 25/11 | **Verwarmingslogica zoals de Sjalay:** effectief setpoint `ak`, hysterese, dauwpuntbeveiliging aan/uit, minimum setpoint, 30 °C-veiligheid |
+| v3.7–v3.7.1 | 25/11 | **Temperatuurbewaking:** max. 6 DS18B20's (`an`, `ao`), fouten per sensor, DHT22 5 min geldig, vocht valt terug op de SCD41, sensoroverzicht; SCD41-terugval ook op de landingspagina |
+| v3.6–v3.6.3 | 22–25/11 | **WiFi robuuster + mDNS** (nood-AP met normale werking), OTA-voortgangspagina + `/ver`, paginatitels met de kamernaam, CO2-referentie SCD41 instelbaar (420 ppm) |
+| v3.5–v3.5.3 | 20–22/11 | **Temperatuurveiligheid** (−10 °C, terugval, `null`, vorstbeveiliging), veilige OTA, opruimen (stof, zon, lichtstraal weg; Generic ADC `ar`), LDR omgekeerd (100 = licht) |
+| v3.4–v3.4.5 | 9–11/11 | SCD41 via I2C (`al`, `am`), I2C op IO13 (USB CDC uit), ventilatie op CO2 instelbaar, eigen DHT22-uitlezing (einde van de watchdog-herstarts), NVS opruimen |
+| v3.0–v3.3 | 3–7/11 | Matter weg (grootste vrije blok van ±30 naar ±245 KB), landingspagina, versie + diagnose, TSL2561 weg |
+
+Details per versie staan in de kop van `ESP32_C6_ROOM.ino`.

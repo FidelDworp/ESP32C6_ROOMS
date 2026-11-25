@@ -1,17 +1,15 @@
-# Zarlar ROOM en ACCESS: aansluitingen bij de overstap van Photon naar ESP32-C6
+# Zarlar ROOM: aansluitingen bij de overstap van Photon naar ESP32-C6
 
-*v0.4 — 16 nov 2026 — Filip Delannoy (FiDel). Status: plan, nog niets omgebouwd.*
-> **De standaard staat in [`ROOM_STANDAARD.md`](ROOM_STANDAARD.md)** (6 nov 2026). Waar dit document afwijkt (buitenlicht oost in de B&B, pixelklok, TSL2561), geldt de standaard: die gaan naar eigen controllers of vervallen.
+*v0.5 — 25 nov 2026 — Filip Delannoy (FiDel). Status: plan; B&B in montage.*
+> **De standaard staat in [`ROOM_STANDAARD.md`](ROOM_STANDAARD.md).** Bij twijfel geldt de standaard.
 
 *Bron: inventaris `Zarlar_Photon_inventaris_v3.xlsx` (Photon-sketches R1–R8, tekening "ACCESS-WASPL bedrading").*
 
 **Historiek**
-- v0.4 (16 nov 2026): B&B-verlichting via 4 Powerpixels (§4.4).
-- v0.3 (5 nov 2026): **geen eigen printje meer** voor de rooms. Per room een actielijst (§4); alleen ACCESS en de B&B (PWM-E) krijgen een kleine schakeling met de hand (§5).
-- v0.2 (5 nov 2026): CO2 via de Sensirion SCD41 op I2C in plaats van PWM.
-- v0.1 (4 nov 2026): eerste voorstel met een universeel I/O-bordje (vervallen).
+- v0.5 (25 nov 2026): opgeruimd: sketch-eisen (allemaal uitgevoerd in ROOM v3.4–v3.8a), ACCESS-buffer (hoort in `ESP32C6_ACCESS`) en afgehandelde open punten weg; B&B op 5 Powerpixels + pixelmodi.
+- v0.1–v0.4 (4–16 nov 2026): eerste voorstellen, geen eigen printje voor de rooms, CO2 via de SCD41, B&B-verlichting via Powerpixels.
 
-De Photons in de rooms en de ACCESS-controller worden vervangen door een ESP32-C6 op het Zarlar shield. **Een ESP32-pin mag nooit meer dan 3,3 V zien.** Dit document beschrijft wat er per room en voor ACCESS aangesloten wordt (§1, §2), de eisen voor de sketches (§3), wat er per room aan de bestaande sensoren moet gebeuren (§4) en de kleine schakeling voor ACCESS en de B&B (§5).
+De Photons in de rooms worden vervangen door een ESP32-C6 op het Zarlar shield. **Een ESP32-pin mag nooit meer dan 3,3 V zien.** Dit document beschrijft wat er per room aangesloten wordt (§1), wat er per room aan de bestaande sensoren moet gebeuren (§2), de B&B in detail (§2.4) en wat er bij een nieuwe SCD41 te doen is (§3). ACCESS (buitenlicht) staat in de repo `ESP32C6_ACCESS`.
 
 ---
 
@@ -25,67 +23,37 @@ Photon-pinnen nagekeken in de productiesketches; ESP32-IO volgens de shield-mapp
 | DHT22 | D6 | RoomSense | IO6 | 3,3 V | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | PIR MOV1 | D5 | RoomSense | IO5 | AM312, 3,3 V | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | LDR kamerlicht | A3 | RoomSense | IO1 | 3,3 V (analoog) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Pixels / Powerpixels | D4 | Pixel-line | IO4 | 5 V-strip, data 3,3 V | ✅ 4 Powerpixels + 12 pixels | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ 2 Powerpixels + 12 klokpixels |
+| Pixels / Powerpixels | D4 | Pixel-line | IO4 | 5 V-strip, data 3,3 V | ✅ 5 Powerpixels + 12 pixels | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ 2 Powerpixels + 12 klokpixels |
 | **SCD41** CO2 + temp + vocht | — | I2C bij de controller | IO13 SDA / IO11 SCL | 3,3 V | ✅ | ✅ | — | — | — | — | ✅ tv-wand |
-| ~~TSL2561 zonlicht~~ | — | — | — | — | **vervalt in de rooms** (7/11): komt op een ACCESS- of OUTSIDE-controller |||||||
 | Thermostaatcontact | A6 | Option pin 2 | IO10 | contact naar GND | ✅ | ✅ | ✅ | via HVAC | ✅ | via HVAC | via HVAC |
-| (vrij) | A4 | Option pin 4 | IO18 | — | reserve |||||||
+| (vrij) | A4 | Option pin 4 | IO18 | — | reserve (GP4) |||||||
 | PIR MOV2 | A5 | Option pin 5 | IO19 | HC-SR501 op 5 V (uitgang 3,3 V), alleen of via PIReX-diodebordje | ✅ trap | — | ✅ toilet + vestiaire | — | ✅ 2× plafond | — | — |
 
 **Vervalt:**
 - CO2 via PWM (CM1106 / MH-Z19), want de SCD41 meet via I2C;
-- de stofsensor Sharp (D7/A2);
-- de alert-LDR (A7);
+- de stofsensor Sharp (D7/A2) en de alert-LDR (A7);
+- de TSL2561 (zonlicht hoort op ACCESS of OUTSIDE);
 - de 2 relais van R7 (D2/A0), want die worden Powerpixels;
 - de vaste DS18B20-adressen.
 
-**SCD41:** 4× GY-SCD41 besteld (5 nov). De sensor komt bij de controller op de I2C-bus (IO13/IO11): minstens 10–20 cm van de controller en de pixels, en niet erboven. Hij vervangt de CM1106 in de B&B en op de TESTROOM; de keukensensor verhuist naar de tv-wand in de ZITPL. De DHT22 blijft.
+**SCD41:** 4× GY-SCD41 (5 nov). De sensor komt bij de controller op de I2C-bus (IO13/IO11): minstens 10–20 cm van de controller en de pixels, en niet erboven. Hij vervangt de CM1106 in de B&B en op de TESTROOM; de keukensensor verhuist naar de tv-wand in de ZITPL. De DHT22 blijft.
 
 **Thermostaat:** KEUK, EETPL en ZITPL zijn rechtstreeks bedraad naar de HVAC. B&B, BADK, INKOM en WASPL sturen een bericht naar de HVAC.
 
-**Oostkant buiten:** ~~MOV-E en PWM-E naar de B&B-controller~~ — **vervallen** volgens de ROOM-standaard (6/11): het buitenlicht oost komt op een eigen controller **ACCESS3**, zie [`ESP32C6_ACCESS/docs/ACCESS_STANDAARD.md`](https://github.com/FidelDworp/ESP32C6_ACCESS/blob/main/docs/ACCESS_STANDAARD.md).
-
 **HC-SR501:** voeding 5 V, maar de uitgang is 3,3 V (er zit een 3,3 V-regelaar op het moduletje). Een serieweerstand met klemdiodes volstaat dus als bescherming.
 
-## 2. ACCESS (buitenlicht)
+## 2. Per room: wat doen met de bestaande sensoren
 
-Verhuisd naar de repo **`ESP32C6_ACCESS`** (7/11): klemmen, zoneslots, LED-drivers en eisen staan in [`docs/ACCESS_STANDAARD.md`](https://github.com/FidelDworp/ESP32C6_ACCESS/blob/main/docs/ACCESS_STANDAARD.md).
-
-## 3. Eisen voor de sketches
-
-**Werkwijze:** code pas na GO en een duidelijk plan, één stap per versie, telkens een 48 u-test.
-
-### 3.1 ROOM-sketch (bestaande ROOM v3.x)
-
-| # | Eis | Status |
-|---|---|---|
-| R1 | DS18B20 zelf zoeken op de bus (geen vaste adressen) | ✅ al zo |
-| R2 | MOV2 per room aan/uit + eigen lichtgroep | ✅ bestaat (`mov2`) |
-| R3 | **SCD41 via I2C, niet-blokkerend** (vervangt CO2-PWM en `pulseIn()`); CO2 vult `/json`-key `k` en stuurt de ventilatie zoals nu; temp en vocht van de SCD41 alleen als extra regels in de UI; geen sensormetingen in AP-mode | gepland v3.4 |
-| R4 | Thermostaat: per room instelbaar "lokaal contact" of "via HVAC" | nakijken |
-| R5 | **Nachtdrempel (lux) als instelling** per room (Photon: 150–1200) | nieuw |
-| R6 | ~~Dag/nacht uit één TSL2561~~: **vervallen** (7/11). Dag/nacht uit de eigen LDR; de TSL2561 komt op ACCESS of OUTSIDE | — |
-| R7 | **Powerpixels** als lichtgroepen; R7: 2 Powerpixels (muurspots, tv-achtergrond) | nakijken |
-| R8 | ~~Pixelklok voor R7~~ | **vervallen** → eigen ESP32 in de zitplaats (ROOM-standaard 6/11) |
-| R9 | ~~B&B: buitenlicht oost via de room~~ | **vervallen** → ACCESS3 (ROOM-standaard 6/11) |
-| R10 | Stofsensor, alert-LDR en CO2-PWM uit de code | opruimen |
-
-### 3.2 ACCESS-sketch
-
-Verhuisd naar [`ESP32C6_ACCESS/docs/ACCESS_STANDAARD.md`](https://github.com/FidelDworp/ESP32C6_ACCESS/blob/main/docs/ACCESS_STANDAARD.md) (7/11).
-
-## 4. Per room: wat doen met de bestaande sensoren
-
-### 4.1 Twee regels voor alle rooms
+### 2.1 Twee regels voor alle rooms
 
 1. **RoomSense-kant op 3,3 V.** Shield-jumper Sense pin 8 op **3V3** en elke RoomSense-box ombouwen zoals de B&B: PIR → **AM312**, DHT22 en LDR op 3V3. De oude boxen hangen vermoedelijk op 5 V (de Photon-sketch waarschuwt: LDR "not 5V tolerant, 22k series resistor"). Dan zouden DHT22 (IO6) en LDR (IO1) boven 3,3 V uitkomen.
-2. **Option-kant: voeding mag 5 V blijven, de signalen niet.** De Option-kabel levert zowel 5 V (pin 1) als 3V3 (pin 8). De MOV2-PIR's (HC-SR501) blijven op 5 V, alleen of samengevoegd via een PIReX-diodebordje. Hun uitgang is 3,3 V. Controle: **meten** (§4.3).
+2. **Option-kant: voeding mag 5 V blijven, de signalen niet.** De Option-kabel levert zowel 5 V (pin 1) als 3V3 (pin 8). De MOV2-PIR's (HC-SR501) blijven op 5 V, alleen of samengevoegd via een PIReX-diodebordje. Hun uitgang is 3,3 V. Controle: **meten** (§2.3).
 
-### 4.2 Per room
+### 2.2 Per room
 
 | Room | RoomSense-kant | Option-kant | Nieuw |
 |---|---|---|---|
-| **R1 B&B** | ✅ al op 3V3 | TSTAT: blijft. MOV2 (HC-SR501, trap): blijft op 5 V, signaal meten. CM1106: **verwijderd**. | SCD41 bij de controller. 4 Powerpixels (TRIO) + 12 pixels, zie §4.4. (Buitenlicht oost: niet meer via de room, maar via ACCESS3.) |
+| **R1 B&B** | ✅ al op 3V3 | TSTAT: blijft. MOV2 (HC-SR501, trap): blijft op 5 V, signaal meten. CM1106: **verwijderd**. | SCD41 bij de controller. 5 Powerpixels (TRIO) + 12 pixels, zie §2.4. |
 | **R2 BADK** | ombouwen naar 3V3 | TSTAT: blijft. | SCD41 bij de controller. |
 | **R3 INKOM** | ombouwen naar 3V3; **stofsensor (Sharp) loskoppelen** | TSTAT: blijft. MOV2 (toilet + vestiaire, 2 PIR's): blijft op 5 V, signaal meten. **Alert-LDR loskoppelen.** | — |
 | **R4 KEUK** | ombouwen naar 3V3 | niets (TSTAT via HVAC); Option-kabel niet nodig | — (CO2 verhuist naar ZITPL) |
@@ -93,7 +61,7 @@ Verhuisd naar [`ESP32C6_ACCESS/docs/ACCESS_STANDAARD.md`](https://github.com/Fid
 | **R6 EETPL** | ombouwen naar 3V3 | niets (TSTAT via HVAC) | — |
 | **R7 ZITPL** | **nieuwe RoomSense-box** (heeft er nu geen) | niets (TSTAT via HVAC) | SCD41 bij de controller (tv-wand, naast de tv); 2 Powerpixels + 12 klokpixels in de plaats van de 2 relais. |
 
-### 4.3 Meten vóór je de ESP32 aansluit
+### 2.3 Meten vóór je de ESP32 aansluit
 
 Per room, met de kabels aangesloten op de sensoren maar **nog niet op het shield**:
 
@@ -104,13 +72,13 @@ Per room, met de kabels aangesloten op de sensoren maar **nog niet op het shield
 
 Tip: een **1 kΩ in serie** op de MOV2-ader (bv. in het klemmenbordje) beschermt de ESP32 als er toch eens iets misloopt, en hindert de werking niet.
 
-### 4.4 B&B: verlichting via Powerpixels (16 nov 2026)
+### 2.4 B&B: verlichting via Powerpixels (16 nov 2026)
 
 Regels: [`ROOM_STANDAARD.md`](ROOM_STANDAARD.md) §1.3. Bron: tekening "ACCESS1-BB bedrading" (16/11).
 
 | Pixel | Powerpixel | Lichtkring (12 V) | Stroom (tekening 18/11) | Zekering | Externe schakelaar (override) |
 |---|---|---|---|---|---|
-| 0 | TRIO, 3 kanalen parallel | **Spanlampen** — **MOV1-lichtgroep** (AUTO: beweging + donker) | ±3 A | 4 A | ✅ ingangsdeur |
+| 0 | TRIO, 3 kanalen parallel | **Spanlampen** — modus beweging MOV1 | ±3 A | 4 A | ✅ ingangsdeur |
 | 1 | TRIO, 3 kanalen parallel | Bedlampjes (bolletjes 0,1 A) + **ledstrip vloermat ingang** (0,5 A) | ±0,6 A | 2 A (1 A volstaat) | — |
 | 2 | TRIO, 3 kanalen parallel | Tafelspot (lamp nog te kiezen) | ≤ 2 A | 2 A | ✅ ingangsdeur |
 | 3 | TRIO, 3 kanalen parallel | Badkamer: glasdallen 3 A + WC 1 A | 4 A | 5 A | ✅ badkamer |
@@ -120,14 +88,13 @@ Regels: [`ROOM_STANDAARD.md`](ROOM_STANDAARD.md) §1.3. Bron: tekening "ACCESS1-
 Volgorde op de pixel-line volgens de tekening "ACCESS3-BB bedrading" van 18/11 (versie 22:26): ESP32 (IO4) → Powerpixel 0 → 1 → 2 → 3 → 4 → 12 pixels = **17 pixels** in `/settings`.
 
 **Metingen 18/11 (FiDel):**
-- **Zekeringen op maat** (tekening 18/11): sloten 2 A, leeslampjes 2 A, badkamer 5 A, tafelspot 2 A, bedlampjes + mat 2 A, spanlampen 4 A, fix-draadjes 2 A; 24 V 2 A, 5 V 2 A. De ROOM-standaard ("2 A per kring") wordt: zekering op maat, ±1,25–1,5× de stroom. De NCE30H12K kan dat ruim aan.
+- **Zekeringen op maat** (tekening 18/11): sloten 2 A, leeslampjes 2 A, badkamer 5 A, tafelspot 2 A, bedlampjes + mat 2 A, spanlampen 4 A, fix-draadjes 2 A; 24 V 2 A, 5 V 2 A. Regel: zekering op maat, ±1,25–1,5× de stroom (ROOM-standaard §1.3).
 - **Ongebruikte lijnen** vanaf de Powerpixels (nog te beslissen met Mireille, Maarten en Céline): **Douche rechts**, **Douche links** (strips of niet) en **Leeslampje mansarde** (kleinste bed op de halve verdieping). Elk zou een eigen Powerpixel krijgen (één per lichtkring).
-- **Ledstrip vloermat ingang:** ±1 m strip op het trapje aan de ingangsdeur, op Powerpixel 1 samen met de bedlampjes; moet **automatisch branden als het donker is** (LDR) en in **BED-modus uit** gaan → voorstel "nachtlicht per pixel" in de ROOM-sketch (zie README, gepland).
+- **Ledstrip vloermat ingang:** ±1 m strip op het trapje aan de ingangsdeur, op Powerpixel 1 samen met de bedlampjes; brandt automatisch als het donker is en gaat uit in BED-modus → pixel 1 in `/settings` op **nachtlampje** (sinds ROOM v3.8a).
 - **Constante-stroom-drivers:** overal **300 mA**, telkens **2 LED's in serie**: buitenlampen op 24 V (ACCESS), en de leeslampjes in de slaapkamer van het huis (schuur) op 12 V. In de B&B zijn de leeslampjes nog te kiezen.
 - **Voedingen (centraal, in metalen kastjes in de kelder):** 5 V (opschrift 70 A, maar vermoedelijk nu een **5V/20A**-voeding; weinig verbruik op 5 V), 12 V / 13 A, 24 V / 6,5 A, voor het hele huis. **Bij het plaatsen van langere pixelstrings:** 5 V meten aan het einde onder last; lange strings eventueel een eigen 5V-voeding dichtbij. Gevoed via een 230V/16A-lijn met **hoofdschakelaar in de zekeringkast aan de keldertrap** (zet alles tegelijk af; eerst daar afzetten vóór je een kastje opent, want 230 V zit er op open verdeelstrips). Vanuit de kastjes lopen **stijgleidingen van 6 mm²** naar de **DC-zekeringkast in de badkamer** (FiDel 18/11). Aandachtspunten: spanningsval op 5 V over de lange stijgleiding (meten onder last), 110/220V-schakelaar van de Chinese voeding op 220V, aarding van kast en voedingen, stof uit de verluchting. Alle B&B-kringen samen aan (±3 + 4 + 2 + 0,6 + 2 A + sloten) kan de 12V-voeding al dicht bij 13 A brengen; in de praktijk branden ze zelden allemaal tegelijk. Bij stap 13 van het opstartplan ook **12 V meten op het B&B-bord met alle lampen aan** (spanningsval over de lange kabel uit de kelder).
 
-- Volgorde op de pixel-line: ESP32 (IO4) → Powerpixel 0 → 1 → 2 → 3 → 12 pixels. Volgorde nakijken bij het bedraden.
-- **Fix-draadjes** van de vier Powerpixels naar **+12V**, via een eigen zekering van 2 A in het 12V-blok (tekening "ACCESS3-BB bedrading", 16/11).
+- **Fix-draadjes** van de vijf Powerpixels naar **+12V**, via een eigen zekering van 2 A in het 12V-blok (tekening "ACCESS3-BB bedrading", 16/11).
 - De drie schakelaars zijn van Maarten (twee aan de ingangsdeur, één in de badkamer). Ze blijven, parallel over OUT–GND: bewust compromis, faalveilig zonder domotica. De controller ziet niet dat een lamp via de schakelaar brandt.
 - Bewust **niet** gedaan: de R/G/B-kanalen van één Powerpixel over drie kringen verdelen (zou 2 printjes besparen, maar maakt de sketch complexer).
 - Hetzelfde bord draagt ook **ACCESS3**: buitenlicht N2, E1, E2 via **drie 24V-drivers van 300 mA** (één per LED-paar; tekening aan te passen, 18/11). Getest 18/11: **N2 geeft niets** en **E1 is defect** (meestal ±20 mA, af en toe 300 mA); E2 werkt. Herstel met Maarten (ladder). Zie `ACCESS_STANDAARD.md` in `ESP32C6_ACCESS`.
@@ -148,61 +115,21 @@ Volgorde op de pixel-line volgens de tekening "ACCESS3-BB bedrading" van 18/11 (
 8. **Zekering van het fix-draadje** plaatsen: 12V meten op het fix-draadje van elke Powerpixel. Er mag geen lamp branden.
 9. **Lampzekeringen één voor één** plaatsen: geen lamp mag vanzelf aangaan. Per kring Maartens schakelaar testen (aan/uit).
 10. **24V-zekering** plaatsen: kijken hoe de drivers reageren zonder PWM-signaal (uit, of volledig aan?).
-11. **Eerst de B&B-ESP32** insteken, `/json` nakijken. In `/settings` het aantal pixels op **17**, elke Powerpixel apart testen in wit: 0 Spanlampen, 1 Bedlampjes + vloermat, 2 Tafelspot, 3 Badkamer, 4 Leeslampjes.
+11. **Eerst de B&B-ESP32** insteken (geflasht met de laatste ROOM-sketch), `/json` nakijken. In `/settings`: kamernaam, IP .75, aantal pixels **17**, en per pixel de naam en modus: 0 Spanlampen (beweging MOV1), 1 Bedlampjes + vloermat (nachtlampje), 2 Tafelspot, 3 Badkamer, 4 Leeslampjes (manueel), Powerpixels met eigen kleur wit. Elke Powerpixel apart testen. Diagnose → eenmaal "Ongebruikte NVS-gegevens wissen". Op het Dashboard R-BandB op **actief** zetten (logging).
 12. Dan de **ACCESS3-ESP32** insteken: PWM E, PWM N2, PIR E, PIR N2 en de reeds testen.
 13. Na **een uur** branden: Powerpixels, drivers en zekeringhouders voelen, schroefklemmen natrekken.
 
-## 5. ACCESS: buffer 3,3 → 5 V voor de LED-modules
+## 3. Bij elke nieuwe SCD41
 
-> **7/11:** de Photon stuurt dezelfde drivers vandaag met 3,3 V en dat werkt. De ACCESS-controllers starten daarom **zonder** buffer; deze buffer komt er alleen als een test toont dat het licht niet volledig uit gaat of niet goed dimt (zie `ACCESS_STANDAARD.md` §1.2).
+1. **Draadkleuren doormeten** van het meegeleverde kabeltje (op de print: SDA – SCL – GND – VCC). Niet vertrouwen op rood = VCC. VCC op **3,3 V**. Extra pull-ups zijn niet nodig (3,3 kΩ op het shield).
+2. **Een kwartier in buitenlucht**: hij hoort rond de ingestelde "CO2 buitenlucht" (standaard 420 ppm) te lezen. Zo niet: knop **"Kalibreren in buitenlucht"** in `/settings`.
+3. **ASC** (automatische kalibratie): **aan** in kamers die regelmatig gelucht worden, **uit** in afgesloten ruimtes; daar af en toe in buitenlucht kalibreren.
 
-De LED-modules buiten (24 V / 300 mA) hebben een stuuringang van 0–5 V. Met 3,3 V uit de ESP32 halen ze hun volle bereik niet, en bij "0 V = aan" gaat het licht dan ook niet volledig uit. Per uitgang een kleine buffer, met de hand op een gaatjesprint of op het bestaande klemmenbordje:
+## 4. Uitrol
 
-```
-                 +3V3                      +5V
-                   │                        │ VCC
-                  R3 10k        ┌───────────┴──────┐
-                   │            │ 74AHCT1G125      │
- ESP32-pin ────────┴────────────┤ A              Y ├──── 47 Ω ────► stuuringang LED-module
-                                │ OE aan GND       │
-                                └──────────────────┘     100 nF tussen VCC en GND
-```
+1. B&B als eerste room: MOV2 meten (§2.3), SCD41 plaatsen, opstarten volgens §2.4.
+2. De andere rooms één per één: RoomSense ombouwen naar 3V3, meten, ESP32 in de plaats van de Photon, zelfde sketch.
 
-- **R3 (10k naar 3V3)** houdt de uitgang op 5 V zolang de ESP32 opstart: **lichten uit** (bij 0 V = aan).
-- Alternatief zonder SMD: een **74HCT125** (DIP-14, 4 buffers in één IC) voor de 4 uitgangen van ACCESS.
+## 5. Open punt
 
-| Waar | Uitgang | ESP32 | Aantal buffers |
-|---|---|---|---|
-| ACCESS Sense 6 | PWM-N1 | IO1 (op het shield al 10k pull-up naar 3V3) | 1 |
-| ACCESS Option 2, 4, 5 | PWM-S, PWM-W2, PWM-W1 | IO10, IO18, IO19 | 3 |
-
-**ACCESS-ingangen** (HC-SR501, uitgang 3,3 V): **1 kΩ in serie**, verder niets. Op Sense 1 (IO3) zeker niet groter dan 1 kΩ: IO3 heeft op het shield een 4,7 kΩ pull-up voor de T-BUS. Met 1 kΩ blijft "laag" ±0,6 V, onder de drempel van 0,8 V. Shield-jumper Sense pin 8 voor ACCESS op **5 V** (HC-SR501's en buffer).
-
-## 6. Volgende stappen
-
-### 6.1 Te doen bij ontvangst van de SCD41's (4× GY-SCD41)
-
-| # | Taak | Status |
-|---|---|---|
-| S00 | **IO13 (SDA) is ook USB D+** van de ESP32-C6 (IO12 = D−). De ROOM-sketch schakelt de ingebouwde USB uit (v3.4.2); devkit voeden, flashen en serieel lezen via de USB-C-poort **"UART"**, nooit via "USB". | ✅ 9/11 |
-| S0 | **Pull-ups:** het Zarlar shield v2.0 heeft al **3,3 kΩ** pull-ups van SDA en SCL naar 3V3 (FiDel, 9/11). Samen met de pull-ups op het GY-SCD41-printje is dat ruim voldoende bij 100 kHz; geen extra weerstanden nodig. | ✅ |
-| S1 | **Draadkleuren doormeten** van het meegeleverde kabeltje (op de print: SDA – SCL – GND – VCC). Niet vertrouwen op rood = VCC. VCC op **3,3 V**. | |
-| S2 | **Elke sensor een kwartier in buitenlucht.** Hij hoort rond **420–430 ppm** te lezen. Zo niet: **geforceerde kalibratie (FRC)** in buitenlucht. | |
-| S3 | **ASC per kamer:** automatische kalibratie **aan** in kamers die regelmatig gelucht worden; **uit** in afgesloten ruimtes (slaapkamer), en daar af en toe in buitenlucht kalibreren. Wordt een instelling in `/settings` (ROOM v3.4). | |
-| S4 | **CM1106 in de B&B:** zolang die nog via PWM met de formule `5000 × …` uitgelezen wordt, nakijken of het een **2000- of 5000 ppm-versie** is. Een 2000 ppm-versie leest **2,5× te hoog**: oude CO2-waarden en de ventilatiesturing zijn dan te hoog geweest. Vervalt zodra de SCD41 de CM1106 vervangt. | |
-
-### 6.2 Uitrol
-
-1. B&B als eerste room: MOV2 meten (§4.3), SCD41 plaatsen. (Buitenlicht oost: later via ACCESS3.)
-2. ROOM-sketch: telkens een plan per versie volgens het Verbeterplan in de README, code pas na GO.
-3. De andere rooms één per één: RoomSense ombouwen, meten, ESP32 in de plaats van de Photon.
-4. ACCESS: buffers maken, ACCESS-sketch (§3.2) eerst op het testbord.
-
-## 7. Open punten
-
-| # | Vraag |
-|---|---|
-| 1 | Is de pinvolgorde van de RJ45 op het shield (pin 1–8) dezelfde als de klemvolgorde op de tekening? |
-| 2 | Kabel van de LED-modules oost (E1/E2) naar de B&B-controller: welke weg? |
-| 3 | B&B buitenlicht oost: alleen bij MOV2 (buiten), of ook bij MOV1 (binnen)? |
-| 4 | ~~Welke room krijgt de TSL2561?~~ Vervallen: geen enkele (7/11) |
+- Is de pinvolgorde van de RJ45 op het shield (pin 1–8) dezelfde als de klemvolgorde op de tekening?
