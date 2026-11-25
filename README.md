@@ -91,6 +91,7 @@ Sheet "R-ROOMS Log", tabblad **"Data"**: 43 kolommen (A–AQ), één rij per roo
 
 | Versie | Doel | Voor |
 |---|---|---|
+| v3.6.1 | **OTA-voortgangspagina** zoals Vakantiehuizen v1.13: upload via JavaScript met voortgangsbalk (% en KB), daarna wachten tot de controller terug is ("✅ Terug online: ROOM vX") en automatisch naar `/advanced`; nieuwe route `/ver` (`versie\|uptime_s`). POST-handler en curl-upload ongewijzigd | alle rooms |
 | — | **Kleine stap:** RPi-roompagina toont een ontbrekende temperatuur (`null`) nog als 0,0 °C → "–" | RPi |
 | — | **ASC-streefwaarde SCD41** instelbaar (standaard 420 ppm) | alle rooms |
 | v3.7 | **Temperatuurbewaking** zoals de Sjalay, max. **6 DS18B20's** (`an`, `ao`) | alle rooms |
@@ -99,7 +100,7 @@ Sheet "R-ROOMS Log", tabblad **"Data"**: 43 kolommen (A–AQ), één rij per roo
 | v3.8b | **Pixel-effecten** achter de Powerpixels | B&B, BADK, SLPK |
 | → | **B&B gaat live** | B&B |
 | v3.9 | **Generieke I/O** GP1, GP2, GP4 (`ap`, `aq`, `as`, `/set_gp`) | alle rooms |
-| v3.10–v3.12 | Pagina's naar eigen `.h`-bestanden: `/update` (met voortgangsbalk), `/advanced`, `/settings` | alle rooms |
+| v3.10–v3.12 | Pagina's naar eigen `.h`-bestanden: `/update` (voortgang al in v3.6.1), `/advanced`, `/settings` | alle rooms |
 | — | **Uitrol:** elke Photon-room krijgt een ESP32 met deze sketch (B&B eerst, dan BADK, INKOM, KEUKEN, WASPL, ZITPL) | |
 
 ### v3.7 Temperatuurbewaking
@@ -128,7 +129,7 @@ GP1 = IO12, GP2 = IO7, GP4 = IO18 (GP3 = IO2 is sinds v3.5.2 de Generic ADC, `ar
 
 ### v3.10–v3.12 Pagina's apart
 
-Elke pagina in een eigen `.h`-bestand (zoals `landing.h`): de `.ino` bevat enkel logica en de Arduino IDE kan het JavaScript niet beschadigen. Meteen live en vaste gegevens scheiden (vaste `id` per veld), statuscirkels zoals de landingspagina, korte Nederlandse labels. Volgorde: `/update` (klein, eerste test), `/advanced`, `/settings`.
+Elke pagina in een eigen `.h`-bestand (zoals `landing.h`): de `.ino` bevat enkel logica en de Arduino IDE kan het JavaScript niet beschadigen. Meteen live en vaste gegevens scheiden (vaste `id` per veld), statuscirkels zoals de landingspagina, korte Nederlandse labels. Volgorde: `/update` (klein, eerste test; de voortgangsbalk komt al in v3.6.1), `/advanced`, `/settings`.
 
 ## Versiegeschiedenis
 
