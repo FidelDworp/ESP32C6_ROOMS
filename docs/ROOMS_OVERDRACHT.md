@@ -19,17 +19,17 @@ Start van een **nieuw gesprek met Claude** over de ROOM-sketch en de overstap va
 
 | Controller | Adres | Stand |
 |---|---|---|
-| **room80** (testbord, eetplaats) | 192.168.0.80 · `eetplaats.local` | **ROOM v3.9** (26/11), v3.10 klaar |
+| **room80** (testbord, eetplaats) | 192.168.0.80 · `eetplaats.local` | **ROOM v3.10** (26/11), v3.11 klaar |
 | B&B | 192.168.0.75 · R-BandB | in montage (Trespa-plaat), opstarten volgens `aansluitingen.md` §2.4 |
 | Dashboard (matrix, logging) | 192.168.0.60 | v6.6 |
-| RPi (portal + Apple Home-bridge) | 192.168.0.50:3000 | bijgewerkt 25/11 (bridge v0.8.1) |
+| RPi (portal + Apple Home-bridge) | 192.168.0.50:3000 | bijgewerkt 26/11 (bridge v0.8.1, tab Lichten met namen) |
 | Photon-rooms | — | nog in productie, behalve de B&B |
 
 **IP-plan:** .50 RPi · .60 Dashboard · .70 HVAC · .71 ECO · .73 S-ENERGY · .75 B&B · .76 Badkamer · .77 Inkom · .78 Keuken · .79 Wasplaats · .80 Eetplaats · .81 Zitplaats · .82/.83/.84 ACCESS1/2/3. Vaste IP's staan in de controller zelf (Telenet laat geen DHCP-reservering toe).
 
 **Sheet** R-ROOMS Log: `1UiaexdpgpL3XjPWHNdMEbJ18_H9yp1w_VN8VBdVCpY0`, tab `Data` (nieuwste onderaan; uptime met punt als duizendtal). Lezen via de Google Sheets-koppeling.
 
-**v3.8.1** (vorstbeveiliging pas 3 min na de opstart, `FROST_GRACE_MS`, `frost_since`) geflasht 26/11 ±21:04 (eerste rij uptime 120 s: HEAT 0). **v3.8b** (effectstrook: `FxCfg fx` = NVS-blob "fx", `updateEffect()` ±40 beelden/s, `inFx()`; DS18B20 niet-blokkerend `dsStartConversion()`/`dsReadResults()`) gebouwd 26/11. Strookvelden kwamen via het lange GET-formulier nooit aan → **v3.8b.1**: eigen formulier + `/set_fx` (live, `fx_apply_req` in loop), groot formulier via POST (getest, werkt). **v3.9** (LDR elke 2 s, `updateLdr()`, `is_dark` met hysterese + 10 s) gebouwd 26/11. v3.9 geflasht en goed bevonden. **v3.10** lange effectstrook gebouwd 26/11: `FxCfg.len` (0–300) na de gewone pixels (`MAX_PIXELS` 20), strook = lamp-index `FXI` = `pixels_num` in t/u/tegels/tik, effecten 4 regenboog en 5 kleurwissel, stroomgrens `maxA`, migratie van de v3.8b-blob (`FxCfgV38`). Daarna: B&B live (zie plan in de README).
+**v3.8.1** (vorstbeveiliging pas 3 min na de opstart, `FROST_GRACE_MS`, `frost_since`) geflasht 26/11 ±21:04 (eerste rij uptime 120 s: HEAT 0). **v3.8b** (effectstrook: `FxCfg fx` = NVS-blob "fx", `updateEffect()` ±40 beelden/s, `inFx()`; DS18B20 niet-blokkerend `dsStartConversion()`/`dsReadResults()`) gebouwd 26/11. Strookvelden kwamen via het lange GET-formulier nooit aan → **v3.8b.1**: eigen formulier + `/set_fx` (live, `fx_apply_req` in loop), groot formulier via POST (getest, werkt). **v3.9** (LDR elke 2 s, `updateLdr()`, `is_dark` met hysterese + 10 s) gebouwd 26/11. v3.9 geflasht en goed bevonden. **v3.10** lange effectstrook gebouwd 26/11: `FxCfg.len` (0–300) na de gewone pixels (`MAX_PIXELS` 20), strook = lamp-index `FXI` = `pixels_num` in t/u/tegels/tik, effecten 4 regenboog en 5 kleurwissel, stroomgrens `maxA`, migratie van de v3.8b-blob (`FxCfgV38`); geflasht, werkt. **v3.11** gebouwd 26/11: /advanced-pixelrij `data-m` (1 = beweging → schakelaar uit `u`, anders echte stand uit `t`), live strookformulier `fxa` onder de strookrij (zelfde `/set_fx`, pagina herlaadt na Toepassen), snelheid 2–60, `/capabilities` + `fx.name` op index `FXI`; RPi index.html tab Lichten haalt namen uit `/api/capabilities/room80?refresh=1`. Daarna: B&B live (zie plan in de README).
 
 **Nog thuis te testen (FiDel):** IO2 aan GND → Generic ADC ±0,00 V · `http://eetplaats.local/` · router 2–3 min uit → room80 komt vanzelf terug, Diagnose "1 keer weggevallen" · bewegingslamp 's avonds aan, overdag niet.
 

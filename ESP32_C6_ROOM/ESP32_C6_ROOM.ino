@@ -1,4 +1,4 @@
-// ESP32-C6 ROOM v3.10 — 26 nov 2026 — zonder Matter
+// ESP32-C6 ROOM v3.11 — 26 nov 2026 — zonder Matter
 // Zarlar thuisautomatisering — Room controller (Apple Home via de RPi-bridge, niet meer via Matter op de ESP32)
 // Filip Delannoy — Zarlardinge (BE)
 //
@@ -8,6 +8,13 @@
 // PARTITIETABEL: Compileer met "partitions.csv" in de schetsmap (Custom partition scheme):
 //   nvs (20 KB), otadata (8 KB), app0 (6 MB), app1 (6 MB), spiffs (~4 MB)
 //
+// v3.11 (26nov26): /ADVANCED + STROOKNAAM (FiDel 26/11). (1) Schakelaar van nachtlampjes en manuele pixels toont of
+//                 de lamp echt brandt (t); bij bewegingslampen blijft het "altijd aan" (u). Ook bij verversen. (Was:
+//                 nachtlampje toonde "handmatig omgeschakeld" → leek omgekeerd.) (2) Onder de rij van de strook: modus,
+//                 effect, eigen kleur, snelheid, helderheid, max. stroom + "Toepassen" (/set_fx, geen herstart).
+//                 Aantal pixels en naam blijven in /settings. (3) Snelheid 2–60 s per golf (was 2–20).
+//                 (4) /capabilities: naam van de strook achteraan (index = aantal gewone pixels, zoals in t).
+//                 Geen /json-wijziging.
 // v3.10 (26nov26): LANGE EFFECTSTROOK (beslist door FiDel 26/11). Twee soorten pixels: gewone pixels/Powerpixels
 //                 (max. 20, naam/modus/kleur per pixel) en daarna op dezelfde datalijn één effectstrook van N pixels
 //                 (0–300, geen instellingen per pixel). Effecten: vast, samen ademen, één voor één ademen, looplicht,
@@ -266,7 +273,7 @@ struct FxCfg {             // v3.10: strook = N pixels na de gewone pixels
   uint8_t mode;            // 0 manueel, 1 MOV1, 2 MOV2, 3 nachtlampje
   uint8_t eff;             // 0 vast, 1 samen ademen, 2 één voor één ademen, 3 looplicht, 4 regenboog, 5 kleurwissel
   uint8_t col_en, r, g, b; // eigen kleur
-  uint8_t speed;           // seconden per golf (2–20)
+  uint8_t speed;           // seconden per golf (2–60, v3.11)
   uint8_t bri;             // max. helderheid % (5–100)
   uint8_t maxA;            // v3.10: max. stroom in A (1–20)
   char    name[21];
@@ -301,7 +308,7 @@ void releaseUsbPins() {
   usb_serial_jtag_ll_phy_enable_pad(false);
 }
 
-#define ROOM_VERSION "v3.10"  // v3.2: enige plaats met het versienummer
+#define ROOM_VERSION "v3.11"  // v3.2: enige plaats met het versienummer
 
 // v3.2: reden van de laatste herstart, leesbaar
 esp_reset_reason_t boot_reason = ESP_RST_UNKNOWN;
@@ -984,7 +991,7 @@ void loadFx() {
     char pokey[24]; snprintf(pokey, sizeof(pokey), "%s%d", NVS_PIXEL_ON_BASE, FXI);
     pixel_on[FXI] = preferences.getBool(pokey, false);
   }
-  fx.speed = constrain(fx.speed, 2, 20); fx.bri = constrain(fx.bri, 5, 100);
+  fx.speed = constrain(fx.speed, 2, 60); fx.bri = constrain(fx.bri, 5, 100);
 }
 // ±40 beelden/s: enkel de strookpixels; aan/uit zacht met de dimtijd
 void updateEffect() {
@@ -2203,10 +2210,26 @@ void setup() {
         snprintf(pxh, sizeof(pxh), "#%02x%02x%02x", cr, cg, cb); }   // v3.8a, v3.8b
       snprintf(dotSpan, sizeof(dotSpan), "<span class='dot' style='background:%s'></span>",
                pixel_on[i] ? pxh : "#bbb");
-      p->printf("<tr data-px=\"%d\" data-c=\"%s\"><td class=\"label\">%s <small style=\"font-weight:normal;color:#888\">(%s)</small></td><td class=\"value\">%s</td>"
+      p->printf("<tr data-px=\"%d\" data-c=\"%s\" data-m=\"%s\"><td class=\"label\">%s <small style=\"font-weight:normal;color:#888\">(%s)</small></td><td class=\"value\">%s</td>"
         "<td class=\"control\"><form action=\"%s\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\"><label class=\"switch\">"
         "<input type=\"checkbox\" %s onchange=\"submitAjax(this.form);\"><span class=\"slider-switch\"></span></label></form></td></tr>",
-        i, pxh, label, mtxt, dotSpan, action, (em == PXM_MAN) ? chkd : (eo ? "checked" : ""));
+        i, pxh, (em == PXM_MOV1 || em == PXM_MOV2) ? "1" : "0", label, mtxt, dotSpan, action,
+        (em == PXM_MOV1 || em == PXM_MOV2) ? (eo ? "checked" : "") : chkd);   // v3.11: nachtlampje/manueel = echte stand
+      if (isfx) {   // v3.11: live strookinstellingen onder de strookrij (aantal en naam: /settings)
+        p->print(F("<tr><td colspan=\"3\" style=\"padding:6px 10px 12px 24px;font-size:13px;\"><form id=\"fxa\" onsubmit=\"return fxApply(this);\">"
+          "Modus <select name=\"fx_mode\">"));
+        for (uint8_t m = 0; m <= 3; m++) p->printf("<option value=\"%u\"%s>%s</option>", m, fx.mode == m ? " selected" : "", pxModeName(m));
+        p->print(F("</select> Effect <select name=\"fx_eff\">"));
+        for (uint8_t e = 0; e <= 5; e++) p->printf("<option value=\"%u\"%s>%s</option>", e, fx.eff == e ? " selected" : "", fxEffName(e));
+        p->printf("</select><br><label><input type=\"checkbox\" name=\"fx_col_en\"%s> eigen kleur</label> "
+          "<input type=\"color\" name=\"fx_col\" value=\"#%02x%02x%02x\" style=\"width:40px;padding:0;vertical-align:middle;\"> "
+          "Snelheid <input type=\"number\" name=\"fx_speed\" min=\"2\" max=\"60\" value=\"%u\" style=\"width:52px;\"> s "
+          "Helderheid <input type=\"number\" name=\"fx_bri\" min=\"5\" max=\"100\" value=\"%u\" style=\"width:52px;\"> %% "
+          "Max. stroom <input type=\"number\" name=\"fx_maxa\" min=\"1\" max=\"20\" value=\"%u\" style=\"width:46px;\"> A "
+          "<button type=\"submit\">Toepassen</button> <span id=\"fxok\" style=\"color:#080;font-weight:bold;\"></span>"
+          "</form></td></tr>",
+          fx.col_en ? " checked" : "", fx.r, fx.g, fx.b, fx.speed, fx.bri, fx.maxA);
+      }
     }
 
     p->print(F("</table>"
@@ -2292,7 +2315,9 @@ void setup() {
       "const row=td.parentElement;"
       "if(row&&row.dataset&&row.dataset.px!==undefined){"
         "const pstr=(data.t||'').replace('P=','');"
-        "const sp=td.querySelector('.dot');if(sp)sp.style.background=pstr.charAt(+row.dataset.px)==='1'?row.dataset.c:'#bbb';return;}"
+        "const sp=td.querySelector('.dot');if(sp)sp.style.background=pstr.charAt(+row.dataset.px)==='1'?row.dataset.c:'#bbb';"
+        "const cb=row.querySelector('td.control input');"   // v3.11: beweging = altijd aan (u), anders echte stand (t)
+        "if(cb){const s=row.dataset.m==='1'?(data.u||''):pstr;cb.checked=s.charAt(+row.dataset.px)==='1';}return;}"
       // v3.5: e/f kunnen null zijn; kamertemperatuur = DS, anders DHT, anders SCD41 (al)
       "if(lbl.includes('Room temp')){"
         "var ok=function(v){return v!==null&&v!==undefined&&v>=-10&&v<=40;};"
@@ -2352,11 +2377,12 @@ void setup() {
       "});"
       "const homeT=document.querySelector('td.control form[action=\"/toggle_home\"] input');"
       "if(homeT) homeT.checked=(data.v==1);"
-      "document.querySelectorAll('td.control form[action^=\"/toggle_pixel_mode\"] input').forEach(cb=>{"   // v3.8a: per idx
-        "const m=(cb.form.getAttribute('action')||'').match(/idx=(\\d+)/);if(m)cb.checked=(data.u&&data.u.charAt(+m[1])==='1');});"
       // v2.16: uptime opslaan voor updateClock(), header update zit in updateClock()
       "lastUptime=data.a;"
       "}).catch(e=>console.error(e));}"
+      "function fxApply(f){var q=new URLSearchParams(new FormData(f)).toString();"   // v3.11: strook live
+        "fetch('/set_fx?'+q,{cache:'no-store'}).then(function(r){return r.text();}).then(function(t){"
+        "document.getElementById('fxok').textContent=(t=='OK'?'\u2713':t);if(t=='OK')setTimeout(function(){location.reload();},1200);});return false;}"
       "function submitAjax(form){"
       "const p=new URLSearchParams();let px=null;"
       "for(const el of form.elements){"
@@ -2408,6 +2434,11 @@ void setup() {
         if (pixel_nicknames[i][j] == '"') p->print("\\\"");
         else p->print(pixel_nicknames[i][j]);
       }
+      p->print('"');
+    }
+    if (hasFx()) {   // v3.11: strooknaam op index FXI (zoals in t)
+      p->print(pixels_num > 0 ? ",\"" : "\"");
+      for (int j = 0; fx.name[j] != '\0'; j++) { if (fx.name[j] == '"') p->print("\\\""); else p->print(fx.name[j]); }
       p->print('"');
     }
     p->print(F("]}"));
@@ -2948,7 +2979,7 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
   for (uint8_t e = 0; e <= 5; e++) p->printf("<option value=\"%u\"%s>%s</option>", e, fx.eff == e ? " selected" : "", fxEffName(e));
   p->printf("</select> &nbsp; <label><input type=\"checkbox\" name=\"fx_col_en\"%s> eigen kleur</label> "
     "<input type=\"color\" name=\"fx_col\" value=\"#%02x%02x%02x\" style=\"width:44px;padding:0;vertical-align:middle;\"><br>"
-    "Snelheid: <input type=\"number\" name=\"fx_speed\" min=\"2\" max=\"20\" value=\"%u\" style=\"width:60px;\"> s per golf &nbsp; "
+    "Snelheid: <input type=\"number\" name=\"fx_speed\" min=\"2\" max=\"60\" value=\"%u\" style=\"width:60px;\"> s per golf &nbsp; "
     "Helderheid: <input type=\"number\" name=\"fx_bri\" min=\"5\" max=\"100\" value=\"%u\" style=\"width:60px;\"> %% &nbsp; "
     "Max. stroom: <input type=\"number\" name=\"fx_maxa\" min=\"1\" max=\"20\" value=\"%u\" style=\"width:55px;\"> A"
     "<br><span style=\"font-size:12px;color:#666;\">De strook krijgt één tegel. Max. stroom: de strook wordt afgezwakt als de geschatte stroom (60 mA per pixel bij vol wit) hoger zou zijn. "
@@ -2977,7 +3008,7 @@ server.on("/set_fx", HTTP_GET, [](AsyncWebServerRequest *request) {
     uint32_t c = strtoul(request->arg("fx_col").c_str() + 1, nullptr, 16);
     t.r = (c >> 16) & 0xFF; t.g = (c >> 8) & 0xFF; t.b = c & 0xFF;
   }
-  if (request->hasArg("fx_speed")) t.speed = constrain(request->arg("fx_speed").toInt(), 2, 20);
+  if (request->hasArg("fx_speed")) t.speed = constrain(request->arg("fx_speed").toInt(), 2, 60);
   if (request->hasArg("fx_bri"))   t.bri   = constrain(request->arg("fx_bri").toInt(), 5, 100);
   if (request->hasArg("fx_name")) {
     String nm = request->arg("fx_name"); nm.trim();
