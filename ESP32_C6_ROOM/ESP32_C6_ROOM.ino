@@ -1,4 +1,4 @@
-// ESP32-C6 ROOM v3.8a — 25 nov 2026 — zonder Matter
+// ESP32-C6 ROOM v3.8.1 — 26 nov 2026 — zonder Matter
 // Zarlar thuisautomatisering — Room controller (Apple Home via de RPi-bridge, niet meer via Matter op de ESP32)
 // Filip Delannoy — Zarlardinge (BE)
 //
@@ -8,6 +8,11 @@
 // PARTITIETABEL: Compileer met "partitions.csv" in de schetsmap (Custom partition scheme):
 //   nvs (20 KB), otadata (8 KB), app0 (6 MB), app1 (6 MB), spiffs (~4 MB)
 //
+// v3.8.1 (26nov26): VORSTBEVEILIGING NA DE OPSTART. Vóór de eerste meting gold "geen geldige temperatuur" en de
+//                 vorstbeveiliging rekende haar kwartier "aan" vanaf millis() = 0 → na elke herstart kort b = 1 (Sheet
+//                 25/11 22:10). Nu: de eerste 3 min na de opstart zonder geldige temperatuur geen verwarming (melding
+//                 "Wacht op eerste meting"); daarna telt de vorstbeveiliging (15 min aan / 45 min uit) vanaf het moment
+//                 dat er geen geldige temperatuur is. Geen /json-wijziging.
 // v3.8a (25nov26): PIXELMODI (beslist door FiDel 25/11).
 //                 (1) Per pixel een modus in /settings: manueel · beweging MOV1 · beweging MOV2 · nachtlampje.
 //                 Standaard (geen NVS): pixel 0 = MOV1, pixel 1 = MOV2 (als MOV2 aan), rest manueel = gedrag van
@@ -252,7 +257,7 @@ void releaseUsbPins() {
   usb_serial_jtag_ll_phy_enable_pad(false);
 }
 
-#define ROOM_VERSION "v3.8a"  // v3.2: enige plaats met het versienummer
+#define ROOM_VERSION "v3.8.1"  // v3.2: enige plaats met het versienummer
 
 // v3.2: reden van de laatste herstart, leesbaar
 esp_reset_reason_t boot_reason = ESP_RST_UNKNOWN;
@@ -620,6 +625,8 @@ float room_temp = NAN;      // Berekende kamertemp: DS18B20 → DHT22 → SCD41 
 bool  room_temp_ok = false; // v3.5: er is een geldige kamertemperatuur
 const char* room_temp_src = "";  // v3.5: bron (DS18B20, DHT22, SCD41)
 #define FROST_ON_MIN 15     // v3.5: vorstbeveiliging — minuten per uur verwarming aan
+#define FROST_GRACE_MS 180000UL      // v3.8.1: eerste 3 min na de opstart geen vorstbeveiliging
+unsigned long frost_since = 0;       // v3.8.1: begin van de huidige periode zonder geldige temperatuur (0 = er is er één)
 char temp_melding[48] = ""; // v2.7: char[] i.p.v. String — geen heap-alloc in 60s-gate
 int heating_setpoint = 20;  // aa: Gewenste temp (integer, default 20)
 int heating_on = 0;         // b: Verwarming aan (0/1)
@@ -2089,7 +2096,7 @@ void setup() {
         "var fx=function(v){return ok(v)?v.toFixed(1):'\u2014';};"
         "var rt=ok(data.f)?data.f:ok(data.e)?data.e:(ok(data.al)&&data.al!=0)?data.al:null;"
         "var src=ok(data.f)?'DS18B20':ok(data.e)?'DHT22':rt!==null?'SCD41':'';"
-        "var mel=ok(data.f)?'':ok(data.e)?'DS18B20 defect - DHT22 gebruikt':rt!==null?'DS18B20 en DHT22 defect - SCD41 gebruikt':'Geen geldige temperatuur - vorstbeveiliging';"
+        "var mel=ok(data.f)?'':ok(data.e)?'DS18B20 defect - DHT22 gebruikt':rt!==null?'DS18B20 en DHT22 defect - SCD41 gebruikt':(data.a<180?'Wacht op eerste meting':'Geen geldige temperatuur - vorstbeveiliging');"
         "td.innerHTML=(rt!==null?rt.toFixed(1)+' \u00b0C':'\u2014')+'<br><small>(DHT '+fx(data.e)+', DS '+fx(data.f)+')'+(src?' \u00b7 bron '+src:'')+'</small>'"
         "+(mel?'<br><small style=\"color:'+(rt!==null?'#c60':'#c00')+';font-weight:bold;\">'+mel+'</small>':'')"
         "+sw(!ok(data.f))+sw(!ok(data.e));}"
@@ -3174,10 +3181,17 @@ void loop() {
       heating_on = heat_state ? 1 : 0;
     } else {
       // v3.5: VORSTBEVEILIGING — geen geldige temperatuur → FROST_ON_MIN minuten per uur aan
-      heating_on = ((millis() / 60000UL) % 60UL < FROST_ON_MIN) ? 1 : 0;
+      // v3.8.1: niet in de eerste 3 min na de opstart; ritme telt vanaf het begin van de storing
+      if (millis() < FROST_GRACE_MS) {
+        heating_on = 0;
+      } else {
+        if (frost_since == 0) frost_since = millis();
+        heating_on = (((millis() - frost_since) / 60000UL) % 60UL < FROST_ON_MIN) ? 1 : 0;
+      }
     }
   }
   if (room_temp_ok && room_temp >= 30.0f) heating_on = 0;   // v3.8: veiligheid, altijd voorrang
+  if (room_temp_ok) frost_since = 0;                          // v3.8.1: storing voorbij
   if (ap_mode_active) heating_on = 0;   // v3.4: in AP-mode geen metingen → ook geen verwarmingsvraag
 
   // v2.4 FIX 5: Rescan DS18B20 vanuit loop() (async-safe — delay(750) is hier WDT-safe)
@@ -3296,7 +3310,8 @@ void loop() {
     strlcpy(temp_melding, "DS18B20 en DHT22 defect - SCD41 gebruikt", sizeof(temp_melding));
   } else {
     room_temp = NAN; room_temp_ok = false; room_temp_src = "";
-    strlcpy(temp_melding, "Geen geldige temperatuur - vorstbeveiliging", sizeof(temp_melding));
+    if (millis() < FROST_GRACE_MS) strlcpy(temp_melding, "Wacht op eerste meting", sizeof(temp_melding));   // v3.8.1
+    else strlcpy(temp_melding, "Geen geldige temperatuur - vorstbeveiliging", sizeof(temp_melding));
   }
   // v3.5: dauwpuntalarm met de kamertemperatuur (was enkel de DS18B20); dew = 0 als de DHT22 ongeldig is
   dew_alert = (room_temp_ok && humi_ok && room_temp < dew) ? 1 : 0;   // v3.7: vocht van DHT22 of SCD41

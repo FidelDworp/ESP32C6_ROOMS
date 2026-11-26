@@ -11,7 +11,7 @@ Room-controllers van het Zarlar-thuisautomatiseringssysteem (Zarlardinge): een E
 
 | | |
 |---|---|
-| **Sketch** | **v3.8a** — map `ESP32_C6_ROOM/`, klaar om te uploaden: `bin/ESP32_C6_ROOM_v3.8a.ino.bin` |
+| **Sketch** | **v3.8.1** — map `ESP32_C6_ROOM/`, klaar om te uploaden: `bin/ESP32_C6_ROOM_v3.8.1.ino.bin` |
 | **Draait op** | room80: `192.168.0.80` · `http://eetplaats.local/` — testbord met alle sensoren, rij R-EETPL op de Dashboard-matrix |
 | **Volgende room** | B&B (`.75`, R-BandB), in montage |
 | **Apple Home** | Via de RPi-bridge (`matterbridge-zarlar`), toestel "Eetplaats". Geen Matter op de ESP32 |
@@ -48,7 +48,7 @@ Room-controllers van het Zarlar-thuisautomatiseringssysteem (Zarlardinge): een E
 
 **Van op afstand** (Mac via mobiele data + Tailscale; **niet** via de wifi in Nieuwpoort, die gebruikt ook 192.168.0.x). Download naar Downloads en upload via de OTA-pagina, of rechtstreeks met curl:
 ```
-curl -L -o ~/Downloads/room.bin https://raw.githubusercontent.com/FidelDworp/ESP32C6_ROOMS/main/bin/ESP32_C6_ROOM_v3.8a.ino.bin
+curl -L -o ~/Downloads/room.bin https://raw.githubusercontent.com/FidelDworp/ESP32C6_ROOMS/main/bin/ESP32_C6_ROOM_v3.8.1.ino.bin
 ls -l ~/Downloads/room.bin
 curl -F "update=@$HOME/Downloads/room.bin" http://192.168.0.80/update
 ```
@@ -89,7 +89,7 @@ Sheet "R-ROOMS Log", tabblad **"Data"** (GAS v1.6, `GoogleScript/ROOM_GoogleScri
 
 | # | Versie | Doel | Voor |
 |---|---|---|---|
-| 1 | **v3.8.1** | **Vorstbeveiliging na de opstart.** Nu: vóór de eerste meting geldt "geen geldige temperatuur", en de vorstbeveiliging begint meteen met haar kwartier "aan" → na elke herstart kort een verwarmingsvraag (`b` = 1, gezien in de Sheet 25/11 22:10). Oplossing: de vorstbeveiliging pas laten ingrijpen als er **3 min na de opstart** nog geen geldige temperatuur is | alle rooms |
+| 1 | **v3.8.1** | **Vorstbeveiliging na de opstart.** Nu: vóór de eerste meting geldt "geen geldige temperatuur", en de vorstbeveiliging begint meteen met haar kwartier "aan" → na elke herstart kort een verwarmingsvraag (`b` = 1, gezien in de Sheet 25/11 22:10). Oplossing: de vorstbeveiliging pas laten ingrijpen als er **3 min na de opstart** nog geen geldige temperatuur is; daarna telt haar ritme vanaf het begin van de storing — 🔨 gebouwd 26/11 | alle rooms |
 | — | *(geschrapt 26/11)* | **Lessen uit het Vakantiehuizen-gesprek (26/11) die voor de ROOM-sketch NIET nodig zijn.** Het Ysermonde-bord herstartte thuis elke ±5 min en postte niet. Achteraf bleek de echte oorzaak het netwerk: vast IP **.212 lag in de DHCP-reeks** (ook aan een Apple Watch gegeven) en de DNS van de router antwoordde dat bord niet. De tussenstappen daar waren voorbarig en worden in ROOM **niet** overgenomen: (1) **SNTP weghalen** (v1.14c): de crash zat wel in SNTP, maar enkel omdat de naamopzoeking misliep; room80 (vast IP .80, onder .100) heeft daar nooit last van gehad; (2) **8.8.8.8 als reserve-DNS** (v1.14d): ROOM zoekt enkel `pool.ntp.org` op en dat werkt; (3) **setup-/nood-AP als "enkel AP"** (v1.14b): het wegvallen van het AP viel samen met die herstartlus en is dus niet bewezen een kanaalprobleem; (4) **Async TCP-versie** en **spanningsdip van het relais**: niet de oorzaak. **Wel overgenomen:** geen verwarmingsvraag bij de opstart (= v3.8.1) en de huisregel **vaste IP's onder .100, buiten de DHCP-reeks**. Het nood-AP van ROOM eerst thuis testen (router uit); pas aanpassen als het daar echt wegvalt | — |
 | 2 | → | **B&B gaat live** (montage door FiDel; opstarten volgens `aansluitingen.md` §2.4) | B&B |
 | 3 | v3.8b | **Pixel-effecten** op een strook "pixel X tot Y": volg kamerkleur, kleurgolf, ademen, regenboog. Eén update-lus (±40 beelden/s), max. ±500 pixels, optioneel eigen datalijn op GP4 (IO18). Detailplan als striptype en aantallen per room gekend zijn (B&B: treden 3 + 9) | B&B, BADK, SLPK |
@@ -101,7 +101,8 @@ Sheet "R-ROOMS Log", tabblad **"Data"** (GAS v1.6, `GoogleScript/ROOM_GoogleScri
 
 | Versie | Datum | Wat |
 |---|---|---|
-| **v3.8a** | 25/11 | **Pixelmodi** per pixel (manueel, beweging MOV1/MOV2, nachtlampje), eigen kleur per pixel; `u` één teken per pixel |
+| **v3.8.1** | 26/11 | Vorstbeveiliging pas 3 min na de opstart (geen verwarmingsvraag meer bij een herstart), ritme telt vanaf het begin van de storing |
+| v3.8a | 25/11 | **Pixelmodi** per pixel (manueel, beweging MOV1/MOV2, nachtlampje), eigen kleur per pixel; `u` één teken per pixel |
 | v3.8 | 25/11 | **Verwarmingslogica zoals de Sjalay:** effectief setpoint `ak`, hysterese, dauwpuntbeveiliging aan/uit, minimum setpoint, 30 °C-veiligheid |
 | v3.7–v3.7.1 | 25/11 | **Temperatuurbewaking:** max. 6 DS18B20's (`an`, `ao`), fouten per sensor, DHT22 5 min geldig, vocht valt terug op de SCD41, sensoroverzicht; SCD41-terugval ook op de landingspagina |
 | v3.6–v3.6.3 | 22–25/11 | **WiFi robuuster + mDNS** (nood-AP met normale werking), OTA-voortgangspagina + `/ver`, paginatitels met de kamernaam, CO2-referentie SCD41 instelbaar (420 ppm) |
