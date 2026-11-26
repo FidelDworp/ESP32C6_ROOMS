@@ -115,7 +115,7 @@ Volgorde op de pixel-line volgens de tekening "ACCESS3-BB bedrading" van 18/11 (
 8. **Zekering van het fix-draadje** plaatsen: 12V meten op het fix-draadje van elke Powerpixel. Er mag geen lamp branden.
 9. **Lampzekeringen één voor één** plaatsen: geen lamp mag vanzelf aangaan. Per kring Maartens schakelaar testen (aan/uit).
 10. **24V-zekering** plaatsen: kijken hoe de drivers reageren zonder PWM-signaal (uit, of volledig aan?).
-11. **Eerst de B&B-ESP32** insteken (geflasht met de laatste ROOM-sketch), `/json` nakijken. In `/settings`: kamernaam, IP .75, aantal pixels **17**, en per pixel de naam en modus: 0 Spanlampen (beweging MOV1), 1 Bedlampjes + vloermat (nachtlampje), 2 Tafelspot, 3 Badkamer, 4 Leeslampjes (manueel), Powerpixels met eigen kleur wit; effectstrook pixel 5 tot 16 "Treden" (effect één voor één ademen). Elke Powerpixel apart testen. Diagnose → eenmaal "Ongebruikte NVS-gegevens wissen". Op het Dashboard R-BandB op **actief** zetten (logging).
+11. **Eerst de B&B-ESP32** insteken (geflasht met de laatste ROOM-sketch), `/json` nakijken. In `/settings`: kamernaam, IP .75, en per pixel de naam en modus: 0 Spanlampen (beweging MOV1), 1 Bedlampjes + vloermat (nachtlampje), 2 Tafelspot, 3 Badkamer, 4 Leeslampjes (manueel), Powerpixels met eigen kleur wit; aantal gewone pixels **5**, effectstrook **12** pixels "Treden" (effect één voor één ademen). Elke Powerpixel apart testen. Diagnose → eenmaal "Ongebruikte NVS-gegevens wissen". Op het Dashboard R-BandB op **actief** zetten (logging).
 12. Dan de **ACCESS3-ESP32** insteken: PWM E, PWM N2, PIR E, PIR N2 en de reeds testen.
 13. Na **een uur** branden: Powerpixels, drivers en zekeringhouders voelen, schroefklemmen natrekken.
 

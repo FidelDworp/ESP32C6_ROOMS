@@ -11,7 +11,7 @@ Room-controllers van het Zarlar-thuisautomatiseringssysteem (Zarlardinge): een E
 
 | | |
 |---|---|
-| **Sketch** | **v3.9** — map `ESP32_C6_ROOM/`, klaar om te uploaden: `bin/ESP32_C6_ROOM_v3.9.ino.bin` |
+| **Sketch** | **v3.10** — map `ESP32_C6_ROOM/`, klaar om te uploaden: `bin/ESP32_C6_ROOM_v3.10.ino.bin` |
 | **Draait op** | room80: `192.168.0.80` · `http://eetplaats.local/` — testbord met alle sensoren, rij R-EETPL op de Dashboard-matrix |
 | **Volgende room** | B&B (`.75`, R-BandB), in montage |
 | **Apple Home** | Via de RPi-bridge (`matterbridge-zarlar`), toestel "Eetplaats". Geen Matter op de ESP32 |
@@ -23,7 +23,7 @@ Room-controllers van het Zarlar-thuisautomatiseringssysteem (Zarlardinge): een E
 - **Temperatuur:** DS18B20 (max. 6, één primair), terugval op DHT22 en daarna SCD41; zonder geldige meting vorstbeveiliging (15 min per uur verwarmen). Geldig bereik −10…40 °C.
 - **Verwarming:** effectief setpoint = max(setpoint, dauwpunt + marge) als de dauwpuntbeveiliging aan staat; hysterese (standaard 1,0 °C); altijd uit vanaf 30 °C; bij Thuis + thermostaatcontact volgt hij de thermostaat of de dauwpuntbeveiliging.
 - **Ventilatie:** volgens CO2 van de SCD41 (0 % bij 600, 100 % bij 1200 ppm, instelbaar).
-- **Pixels:** per pixel manueel, beweging MOV1/MOV2 of nachtlampje, eigen kleur optioneel; bed-modus houdt beweging- en nachtlampjes uit. Eén **effectstrook** (bv. treden) met effect vast, samen ademen, één voor één ademen of looplicht.
+- **Pixels:** per pixel manueel, beweging MOV1/MOV2 of nachtlampje, eigen kleur optioneel; bed-modus houdt beweging- en nachtlampjes uit. Max. 20 gewone pixels, daarna één **effectstrook** van 0–300 pixels (vast, samen ademen, één voor één ademen, looplicht, regenboog, kleurwissel) met stroomgrens.
 - **Generic ADC** op GP3 (IO2), in volt, met bijnaam en factor.
 - **Betrouwbaarheid:** zelf herverbinden met WiFi, nood-AP zonder router (normale werking blijft), veilige OTA, herstartgeschiedenis met de laatste stap.
 
@@ -49,7 +49,7 @@ Room-controllers van het Zarlar-thuisautomatiseringssysteem (Zarlardinge): een E
 
 **Van op afstand** (Mac via mobiele data + Tailscale; **niet** via de wifi in Nieuwpoort, die gebruikt ook 192.168.0.x). Download naar Downloads en upload via de OTA-pagina, of rechtstreeks met curl:
 ```
-curl -L -o ~/Downloads/room.bin https://raw.githubusercontent.com/FidelDworp/ESP32C6_ROOMS/main/bin/ESP32_C6_ROOM_v3.9.ino.bin
+curl -L -o ~/Downloads/room.bin https://raw.githubusercontent.com/FidelDworp/ESP32C6_ROOMS/main/bin/ESP32_C6_ROOM_v3.10.ino.bin
 ls -l ~/Downloads/room.bin
 curl -F "update=@$HOME/Downloads/room.bin" http://192.168.0.80/update
 ```
@@ -62,7 +62,7 @@ Keys en bedieningsadressen wijzigen alleen met uitdrukkelijk akkoord: Dashboard,
 
 | Key | Inhoud | Key | Inhoud |
 |---|---|---|---|
-| `a` | uptime (s) | `t` | stand per pixel (`P=0101…`) |
+| `a` | uptime (s) | `t` | stand per pixel (`P=0101…`), laatste teken = effectstrook (als die er is) |
 | `b` | verwarming vraagt (0/1) | `u` | per pixel: 1 = altijd aan / handmatig |
 | `c` | ingesteld setpoint (°C) | `v` | thuis (0/1) |
 | `d` | thermostaatcontact (0/1) | `w`, `x` | MOV1/MOV2 triggers per min |
@@ -92,8 +92,8 @@ Versienummers lopen vanaf v3.9 gewoon door (v3.10, v3.11, …).
 
 | # | Versie | Doel | Voor |
 |---|---|---|---|
-| 1 | **v3.9** | **LDR sneller:** elke 2 s lezen, uitgevlakt, donker met hysterese (+5) en 10 s stabiliteit → nachtlampjes en bewegingslampen reageren binnen ±10 s (was tot een minuut) — 🔨 gebouwd 26/11 | alle rooms |
-| 2 | **v3.10** | **Lange effectstrook:** twee soorten pixels: **gewone pixels/Powerpixels (max. 20)**, met naam, modus en kleur, en daarna op dezelfde datalijn **één effectstrook van N pixels (0–300)**, zonder instellingen per pixel. Effecten: vast, samen ademen, één voor één ademen, looplicht, **regenboog**, **kleurwissel**; één kleur voor de strook, snelheid, helderheid, **max. stroom (A, standaard 4)** met automatische afzwakking; ±25 beelden/s bij lange stroken. `/json`: `t` en `u` krijgen één teken extra voor de strook (akkoord 26/11). room80 wordt omgezet naar 5 gewone pixels + strook van 3 | B&B, BADK |
+| 1 | **v3.9** | **LDR sneller:** elke 2 s lezen, uitgevlakt, donker met hysterese (+5) en 10 s stabiliteit → nachtlampjes en bewegingslampen reageren binnen ±10 s (was tot een minuut) — ✅ geflasht 26/11 | alle rooms |
+| 2 | **v3.10** | **Lange effectstrook:** twee soorten pixels: **gewone pixels/Powerpixels (max. 20)**, met naam, modus en kleur, en daarna op dezelfde datalijn **één effectstrook van N pixels (0–300)**, zonder instellingen per pixel. Effecten: vast, samen ademen, één voor één ademen, looplicht, **regenboog**, **kleurwissel**; één kleur voor de strook, snelheid, helderheid, **max. stroom (A, standaard 4)** met automatische afzwakking; ±25 beelden/s bij lange stroken. `/json`: `t` en `u` krijgen één teken extra voor de strook (akkoord 26/11). room80 wordt omgezet naar 5 gewone pixels + strook van 3 — 🔨 gebouwd 26/11 | B&B, BADK |
 | 3 | → | **B&B gaat live** (5 Powerpixels + strook van 12 treden; opstarten volgens `aansluitingen.md` §2.4) | B&B |
 | 4 | later | **Generieke I/O** op GP1 (IO12), GP2 (IO7), GP4 (IO18): per pin uit · digitale ingang · digitale uitgang · PWM, met bijnaam; `/json` `ap`, `aq`, `as`. Pas als er een toepassing is | alle rooms |
 | 5 | later | **Pagina's apart** in `.h`-bestanden (`/update`, `/advanced`, `/settings`), met vaste `id` per veld i.p.v. zoeken op labeltekst. Onderhoud | alle rooms |
@@ -103,7 +103,8 @@ Versienummers lopen vanaf v3.9 gewoon door (v3.10, v3.11, …).
 
 | Versie | Datum | Wat |
 |---|---|---|
-| **v3.9** | 26/11 | LDR elke 2 s, donker met hysterese en 10 s stabiliteit (nachtlampjes reageren binnen ±10 s) |
+| **v3.10** | 26/11 | **Lange effectstrook:** max. 20 gewone pixels + strook 0–300 op dezelfde lijn, regenboog en kleurwissel, stroomgrens, lengte live; `t`/`u` één teken extra |
+| v3.9 | 26/11 | LDR elke 2 s, donker met hysterese en 10 s stabiliteit (nachtlampjes reageren binnen ±10 s) |
 | v3.8b.1 | 26/11 | Effectstrook live instellen (eigen formulier, `/set_fx`, geen herstart); instellingen via POST (strookvelden kwamen via GET nooit aan) |
 | v3.8b | 26/11 | **Pixel-effecten:** effectstrook met 4 effecten, één tegel; DS18B20 niet-blokkerend (geen 0,75 s stilstand van de lus meer) |
 | v3.8.1 | 26/11 | Vorstbeveiliging pas 3 min na de opstart (geen verwarmingsvraag meer bij een herstart), ritme telt vanaf het begin van de storing |

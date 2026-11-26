@@ -1,4 +1,4 @@
-// ESP32-C6 ROOM v3.9 — 26 nov 2026 — zonder Matter
+// ESP32-C6 ROOM v3.10 — 26 nov 2026 — zonder Matter
 // Zarlar thuisautomatisering — Room controller (Apple Home via de RPi-bridge, niet meer via Matter op de ESP32)
 // Filip Delannoy — Zarlardinge (BE)
 //
@@ -8,6 +8,13 @@
 // PARTITIETABEL: Compileer met "partitions.csv" in de schetsmap (Custom partition scheme):
 //   nvs (20 KB), otadata (8 KB), app0 (6 MB), app1 (6 MB), spiffs (~4 MB)
 //
+// v3.10 (26nov26): LANGE EFFECTSTROOK (beslist door FiDel 26/11). Twee soorten pixels: gewone pixels/Powerpixels
+//                 (max. 20, naam/modus/kleur per pixel) en daarna op dezelfde datalijn één effectstrook van N pixels
+//                 (0–300, geen instellingen per pixel). Effecten: vast, samen ademen, één voor één ademen, looplicht,
+//                 regenboog, kleurwissel. Max. stroom (A, standaard 4): afzwakking op basis van de geschatte stroom
+//                 (60 mA per pixel bij vol wit). >100 pixels: 25 beelden/s (anders 40). Lengte ook live via
+//                 "Toepassen". /json: t en u één teken extra voor de strook (index = aantal gewone pixels).
+//                 Migratie: oude strook "van X tot Y" achteraan → gewone pixels = X, strook = Y−X+1.
 // v3.9 (26nov26): LDR SNELLER. De LDR werd maar één keer per minuut gelezen (trage metingen) → nachtlampjes en
 //                 bewegingslampen reageerden tot een minuut te laat op dag/nacht. Nu: elke 2 s lezen, uitgevlakt;
 //                 "donker" met hysterese (donker onder de drempel, licht pas boven drempel + 5) en een wissel pas na
@@ -251,15 +258,21 @@
 #include "nvs.h"             // v3.4.4: NVS-bezetting in Diagnose
 struct NvsNs { char name[16]; size_t used; };   // v3.4.5: hier bovenaan (vóór de automatische prototypes)
 // v3.8b: effectstrook (één NVS-blob "fx"); hier bovenaan vóór de automatische prototypes
-struct FxCfg {
-  int8_t  from, to;        // eerste en laatste pixel (from < 0 = uit)
+struct FxCfgV38 {          // v3.8b-indeling (31 bytes), enkel voor de migratie
+  int8_t from, to; uint8_t mode, eff, col_en, r, g, b, speed, bri; char name[21];
+};
+struct FxCfg {             // v3.10: strook = N pixels na de gewone pixels
+  uint16_t len;            // aantal strookpixels (0 = geen strook, max. 300)
   uint8_t mode;            // 0 manueel, 1 MOV1, 2 MOV2, 3 nachtlampje
-  uint8_t eff;             // 0 vast, 1 samen ademen, 2 één voor één ademen, 3 looplicht
+  uint8_t eff;             // 0 vast, 1 samen ademen, 2 één voor één ademen, 3 looplicht, 4 regenboog, 5 kleurwissel
   uint8_t col_en, r, g, b; // eigen kleur
   uint8_t speed;           // seconden per golf (2–20)
   uint8_t bri;             // max. helderheid % (5–100)
+  uint8_t maxA;            // v3.10: max. stroom in A (1–20)
   char    name[21];
 };
+#define MAX_PIXELS 20      // v3.10: gewone pixels/Powerpixels
+#define FX_MAX_LEN 300     // v3.10: max. strookpixels
 #include <OneWireNg_CurrentPlatform.h>  // C6 compatibel (vervangt OneWire + DallasTemperature)
 
 #include <Adafruit_NeoPixel.h>
@@ -288,7 +301,7 @@ void releaseUsbPins() {
   usb_serial_jtag_ll_phy_enable_pad(false);
 }
 
-#define ROOM_VERSION "v3.9"  // v3.2: enige plaats met het versienummer
+#define ROOM_VERSION "v3.10"  // v3.2: enige plaats met het versienummer
 
 // v3.2: reden van de laatste herstart, leesbaar
 esp_reset_reason_t boot_reason = ESP_RST_UNKNOWN;
@@ -718,12 +731,14 @@ bool    px_col_en[30];        // eigen kleur aan
 uint8_t px_col[30][3];        // eigen kleur RGB
 int     last_dark_state = -1; // nachtlampje: overgang dag/nacht wist de handmatige omschakeling
 // v3.8b: effectstrook
-FxCfg   fx = { -1, -1, 0, 2, 0, 255, 255, 255, 6, 100, "Effectstrook" };
-uint8_t fx_ovr = 0;           // zoals px_ovr (beweging: altijd aan, persistent in de blob niet nodig → in px_ovr van fx.from)
+FxCfg   fx = { 0, 0, 2, 0, 255, 255, 255, 6, 100, 4, "Effectstrook" };
+uint8_t fx_ovr = 0;           // nachtlampje: handmatig omgeschakeld (beweging "altijd aan" staat in px_ovr[FXI])
 bool    fx_ovr_on = false;    // nachtlampje: gewenste stand tijdens handmatige omschakeling
 bool    fx_on = false;        // strook hoort te branden
 float   fx_level = 0.0f;      // 0..1, zacht aan/uit
 FxCfg   fx_new;               // v3.8b.1: nieuwe instellingen uit /set_fx, toegepast in loop()
+// v3.10: de strook is één "lamp" met index FXI (= aantal gewone pixels) in t, u, tegels en tik
+#define FXI pixels_num
 volatile bool fx_apply_req = false;
 // v3.8b: DS18B20 niet-blokkerend
 bool    ds_conv_pending = false;
@@ -882,7 +897,7 @@ void pxRGB(int i, uint8_t &r, uint8_t &g, uint8_t &b) {
 void savePxOvr() {   // enkel de "altijd aan" van bewegingspixels is persistent
   char o[31];
   for (int i = 0; i < 30; i++) {
-    uint8_t m = (fx.from >= 0 && i == fx.from) ? fx.mode : px_mode[i];   // v3.8b: strook bewaart in pixel fx.from
+    uint8_t m = inFx(i) ? fx.mode : px_mode[i];   // v3.8b/v3.10: strook bewaart in index FXI
     o[i] = ((m == PXM_MOV1 || m == PXM_MOV2) && px_ovr[i]) ? '1' : '0';
   }
   o[30] = 0;
@@ -915,11 +930,11 @@ void loadPixelModes() {
 void pxTap(int i) {
   if (inFx(i)) {   // v3.8b: tik op de strook
     uint8_t m = fxEff();
-    if (m == PXM_MOV1 || m == PXM_MOV2) { px_ovr[fx.from] = !px_ovr[fx.from]; savePxOvr(); }
+    if (m == PXM_MOV1 || m == PXM_MOV2) { px_ovr[FXI] = !px_ovr[FXI]; savePxOvr(); }
     else if (m == PXM_NIGHT) { if (fx_ovr) fx_ovr = 0; else { fx_ovr = 1; fx_ovr_on = !fx_on; } }
-    else { pixel_on[fx.from] = !pixel_on[fx.from];
-           char pokey[24]; snprintf(pokey, sizeof(pokey), "%s%d", NVS_PIXEL_ON_BASE, fx.from);
-           preferences.putBool(pokey, pixel_on[fx.from]); }
+    else { pixel_on[FXI] = !pixel_on[FXI];
+           char pokey[24]; snprintf(pokey, sizeof(pokey), "%s%d", NVS_PIXEL_ON_BASE, FXI);
+           preferences.putBool(pokey, pixel_on[FXI]); }
     return;
   }
   uint8_t m = pxEff(i);
@@ -936,45 +951,74 @@ void pxTap(int i) {
   }
 }
 // v3.8b: effectstrook
-bool inFx(int i) { return fx.from >= 0 && i >= fx.from && i <= fx.to && i < pixels_num; }
+bool hasFx() { return fx.len > 0; }
+bool inFx(int i) { return hasFx() && i == FXI; }   // index van de strook als lamp
 uint8_t fxEff() { return (fx.mode == PXM_MOV2 && !mov2_enabled) ? PXM_MAN : fx.mode; }
 const char* fxEffName(uint8_t e) {
-  switch (e) { case 1: return "samen ademen"; case 2: return "één voor één ademen"; case 3: return "looplicht"; default: return "vast"; }
+  switch (e) { case 1: return "samen ademen"; case 2: return "één voor één ademen"; case 3: return "looplicht";
+               case 4: return "regenboog"; case 5: return "kleurwissel"; default: return "vast"; }
 }
 void loadFx() {
   FxCfg t;
-  if (preferences.getBytesLength("fx") == sizeof(t) && preferences.getBytes("fx", &t, sizeof(t)) == sizeof(t)) fx = t;
+  size_t L = preferences.getBytesLength("fx");
+  if (L == sizeof(t) && preferences.getBytes("fx", &t, sizeof(t)) == sizeof(t)) fx = t;
+  else if (L == sizeof(FxCfgV38)) {   // migratie van v3.8b/v3.9
+    FxCfgV38 o;
+    preferences.getBytes("fx", &o, sizeof(o));
+    fx.len = (o.from >= 0 && o.to >= o.from) ? (o.to - o.from + 1) : 0;
+    fx.mode = o.mode; fx.eff = o.eff; fx.col_en = o.col_en; fx.r = o.r; fx.g = o.g; fx.b = o.b;
+    fx.speed = o.speed; fx.bri = o.bri; fx.maxA = 4;
+    memcpy(fx.name, o.name, sizeof(fx.name));
+    if (fx.len > 0 && o.from < pixels_num) {   // strook stond achteraan de gewone pixels
+      pixels_num = max(1, (int)o.from);
+      preferences.putInt(NVS_PIXELS_NUM, pixels_num);
+    }
+    preferences.putBytes("fx", &fx, sizeof(fx));
+    Serial.printf("[FX] omgezet: %d gewone pixels + strook van %u\n", pixels_num, fx.len);
+  }
   fx.name[sizeof(fx.name) - 1] = 0;
-  if (fx.from >= pixels_num || fx.to < fx.from) fx.from = -1;
-  if (fx.to >= pixels_num) fx.to = pixels_num - 1;
-  fx.mode = min<uint8_t>(fx.mode, 3); fx.eff = min<uint8_t>(fx.eff, 3);
+  if (fx.len > FX_MAX_LEN) fx.len = FX_MAX_LEN;
+  fx.mode = min<uint8_t>(fx.mode, 3); fx.eff = min<uint8_t>(fx.eff, 5);
+  fx.maxA = constrain(fx.maxA, 1, 20);
+  if (hasFx()) {   // v3.10: manuele stand van de strook (index FXI) herstellen
+    char pokey[24]; snprintf(pokey, sizeof(pokey), "%s%d", NVS_PIXEL_ON_BASE, FXI);
+    pixel_on[FXI] = preferences.getBool(pokey, false);
+  }
   fx.speed = constrain(fx.speed, 2, 20); fx.bri = constrain(fx.bri, 5, 100);
 }
 // ±40 beelden/s: enkel de strookpixels; aan/uit zacht met de dimtijd
 void updateEffect() {
   static unsigned long last = 0;
   static bool dark_drawn = false;
-  if (fx.from < 0) return;
+  if (!hasFx()) return;
   unsigned long now = millis();
-  if (now - last < 25) return;
+  if (now - last < (fx.len > 100 ? 40UL : 25UL)) return;   // v3.10: lange strook 25 beelden/s
   float dt = (now - last) / 1000.0f;
   last = now;
   float step = dt / (float)max(fade_duration, 1);
   if (fx_on) fx_level = min(1.0f, fx_level + step); else fx_level = max(0.0f, fx_level - step);
-  int n = fx.to - fx.from + 1;
-  if (n <= 0) return;
+  int n = fx.len;
+  int first = pixels_num;   // v3.10: strook begint na de gewone pixels
   if (fx_level <= 0.0f) {
-    if (!dark_drawn) { for (int i = fx.from; i <= fx.to && i < pixels_num; i++) pixels.setPixelColor(i, 0); pixels.show(); dark_drawn = true; }
+    if (!dark_drawn) { for (int k = 0; k < n; k++) pixels.setPixelColor(first + k, 0); pixels.show(); dark_drawn = true; }
     return;
   }
   dark_drawn = false;
   uint8_t r = fx.col_en ? fx.r : neo_r, g = fx.col_en ? fx.g : neo_g, b = fx.col_en ? fx.b : neo_b;
-  float base = fx_level * fx.bri / 100.0f;
+  static float iscale = 1.0f;   // v3.10: stroomgrens (geschat op het vorige beeld)
+  float base = fx_level * fx.bri / 100.0f * iscale;
+  float sum_ma = 0.0f;
   float phase = (float)(now % (fx.speed * 1000UL)) / (fx.speed * 1000.0f);   // 0..1
   for (int k = 0; k < n; k++) {
-    int i = fx.from + k;
-    if (i >= pixels_num) break;
+    int i = first + k;
     float f = 1.0f;
+    if (fx.eff == 4 || fx.eff == 5) {        // v3.10: regenboog (loopt over de strook) / kleurwissel (hele strook)
+      float h = (fx.eff == 4) ? fmodf((float)k / n + phase, 1.0f) : phase;
+      uint32_t c = pixels.gamma32(pixels.ColorHSV((uint16_t)(h * 65535.0f), 255, (uint8_t)(255.0f * base)));
+      pixels.setPixelColor(i, c);
+      sum_ma += (((c >> 16) & 0xFF) + ((c >> 8) & 0xFF) + (c & 0xFF)) * (20.0f / 255.0f);
+      continue;
+    }
     if (fx.eff == 1) {                       // samen ademen
       f = 0.05f + 0.95f * (0.5f - 0.5f * cosf(2.0f * PI * phase));
     } else if (fx.eff == 2 || fx.eff == 3) { // één voor één ademen (breed, overlappend) / looplicht (smal)
@@ -984,9 +1028,15 @@ void updateEffect() {
       f = (d < w) ? 0.5f + 0.5f * cosf(PI * d / w) : 0.0f;
     }
     f = f * f;                               // eenvoudige gammacorrectie: zachter ademen
-    pixels.setPixelColor(i, (uint8_t)(r * base * f), (uint8_t)(g * base * f), (uint8_t)(b * base * f));
+    uint8_t cr = (uint8_t)(r * base * f), cg = (uint8_t)(g * base * f), cb = (uint8_t)(b * base * f);
+    pixels.setPixelColor(i, cr, cg, cb);
+    sum_ma += (cr + cg + cb) * (20.0f / 255.0f);   // ±20 mA per kanaal bij vol
   }
   pixels.show();
+  // v3.10: stroomgrens — volgend beeld afzwakken als de geschatte stroom boven max. stroom ligt
+  float unscaled = (iscale > 0.001f) ? sum_ma / iscale : sum_ma;
+  float limit = fx.maxA * 1000.0f;
+  iscale = (unscaled > limit) ? limit / unscaled : 1.0f;
 }
 
 const char* pxModeName(uint8_t m) {
@@ -1304,12 +1354,12 @@ const char* getJSON() {
   // ds_primary index weggelaten uit JSON — niet nuttig voor dashboard/GAS
 
   char pixel_on_str[32] = {0};
-  for (int i = 0; i < pixels_num && i < 30; i++) {
+  for (int i = 0; i < pixels_num + (hasFx() ? 1 : 0) && i < 30; i++) {   // v3.10: + strook
     pixel_on_str[i] = pixel_on[i] ? '1' : '0';
   }
   char pixel_mode_str[32] = {0};   // v3.8a: één teken per pixel (1 = altijd aan / handmatig)
-  for (int i = 0; i < pixels_num && i < 30; i++) {
-    bool o = inFx(i) ? (fxEff() == PXM_NIGHT ? fx_ovr : px_ovr[fx.from]) : px_ovr[i];   // v3.8b: strook
+  for (int i = 0; i < pixels_num + (hasFx() ? 1 : 0) && i < 30; i++) {   // v3.10: + strook
+    bool o = inFx(i) ? (fxEff() == PXM_NIGHT ? fx_ovr : px_ovr[FXI]) : px_ovr[i];
     pixel_mode_str[i] = o ? '1' : '0';
   }
   if (pixels_num < 2) { pixel_mode_str[0] = pixel_mode_str[0] ? pixel_mode_str[0] : '0'; pixel_mode_str[1] = '0'; }
@@ -1613,7 +1663,7 @@ void setup() {
   neo_g = preferences.getUChar(NVS_NEO_G, 255);
   neo_b = preferences.getUChar(NVS_NEO_B, 255);
   pixels_num = preferences.getInt(NVS_PIXELS_NUM, 8);
-  pixels_num = constrain(pixels_num, 1, 30);          // Laad aantal pixels uit NVS. (limiet)
+  pixels_num = constrain(pixels_num, 1, MAX_PIXELS);   // v3.10: max. 20 gewone pixels          // Laad aantal pixels uit NVS. (limiet)
 
 
   // === PIXEL NICKNAMES INITIALISEREN ===
@@ -1727,10 +1777,10 @@ void setup() {
 
 
   pixels.begin();
-    pixels.updateLength(30);   // Tijdelijk max → stuurt zwart naar ALLE fysieke LEDs
+    pixels.updateLength(MAX_PIXELS + FX_MAX_LEN);   // Tijdelijk max → stuurt zwart naar ALLE fysieke LEDs (v3.10: incl. strook)
     pixels.clear();
     pixels.show();             // Zet LEDs 6+ ook uit (anders blijven ze hangen)
-    pixels.updateLength(pixels_num);  // Terugzetten naar geconfigureerd aantal
+    pixels.updateLength(pixels_num + fx.len);  // v3.10: gewone pixels + strook
     pixels.clear();
     pixels.show();
     initFadeEngine();
@@ -1895,9 +1945,8 @@ void setup() {
       p->print(F("ver:\"ROOM " ROOM_VERSION "\",mov2:"));
       p->print(mov2_enabled ? 1 : 0);
       p->print(F(",px:["));
-      for (int i = 0; i < pixels_num; i++) {
+      for (int i = 0; i < pixels_num + (hasFx() ? 1 : 0); i++) {   // v3.10: strook = één extra tegel
         if (i) p->print(',');
-        if (inFx(i) && i != fx.from) { p->print(F("null")); continue; }   // v3.8b: strook = één tegel
         const char* nm = (inFx(i)) ? fx.name : pixel_nicknames[i];
         p->print('"');
         for (int j = 0; j < 32 && nm[j] != '\0'; j++) {   // veilig voor JS én HTML
@@ -1911,9 +1960,9 @@ void setup() {
         p->print('"');
       }
       p->print(F("],md:\""));          // v3.8a: modus per pixel (0 manueel, 1 MOV1, 2 MOV2, 3 nachtlampje)
-      for (int i = 0; i < pixels_num; i++) p->print((char)('0' + (inFx(i) ? fxEff() : pxEff(i))));
+      for (int i = 0; i < pixels_num + (hasFx() ? 1 : 0); i++) p->print((char)('0' + (inFx(i) ? fxEff() : pxEff(i))));
       p->print(F("\",cl:["));          // v3.8a: eigen kleur per pixel ("" = kamerkleur)
-      for (int i = 0; i < pixels_num; i++) {
+      for (int i = 0; i < pixels_num + (hasFx() ? 1 : 0); i++) {
         if (i) p->print(',');
         if (inFx(i) && fx.col_en) p->printf("\"#%02x%02x%02x\"", fx.r, fx.g, fx.b);   // v3.8b
         else if (!inFx(i) && px_col_en[i]) p->printf("\"#%02x%02x%02x\"", px_col[i][0], px_col[i][1], px_col[i][2]);
@@ -2129,17 +2178,16 @@ void setup() {
       fade_duration);
 
     // Dynamische pixels loop — v2.7: char[] i.p.v. String label/action (geen heap-alloc per pixel)
-    for (int i = 0; i < pixels_num; i++) {
-      if (inFx(i) && i != fx.from) continue;   // v3.8b: strook = één rij
+    for (int i = 0; i < pixels_num + (hasFx() ? 1 : 0); i++) {   // v3.10: strook = één extra rij
       bool isfx = inFx(i);
       char label[48];
       if (isfx) snprintf(label, sizeof(label), "%s", fx.name);
       else if (pixel_nicknames[i][0] == '\0') snprintf(label, sizeof(label), "Pixel %d", i);
       else snprintf(label, sizeof(label), "%s", pixel_nicknames[i]);
       uint8_t em = isfx ? fxEff() : pxEff(i);
-      bool eo = isfx ? (em == PXM_NIGHT ? fx_ovr : px_ovr[fx.from]) : px_ovr[i];
+      bool eo = isfx ? (em == PXM_NIGHT ? fx_ovr : px_ovr[FXI]) : px_ovr[i];
       char mtxt[64];
-      if (isfx) snprintf(mtxt, sizeof(mtxt), "strook %d&ndash;%d &middot; %s &middot; %s", fx.from, fx.to, pxModeName(em), fxEffName(fx.eff));
+      if (isfx) snprintf(mtxt, sizeof(mtxt), "strook %u px &middot; %s &middot; %s", fx.len, pxModeName(em), fxEffName(fx.eff));
       else snprintf(mtxt, sizeof(mtxt), "%s", pxModeName(em));
       const char* val  = pixel_on[i] ? "On" : "Off";
       const char* chkd = pixel_on[i] ? "checked" : "";
@@ -2540,7 +2588,7 @@ function wacht(){
 server.on("/toggle_pixel_mode", HTTP_GET, [](AsyncWebServerRequest *request) {
     crumbW(CW_PIXEL);  // v3.3
   if (!request->hasParam("idx")) { request->send(400, "text/plain", "idx?"); return; }
-  int i = constrain(request->getParam("idx")->value().toInt(), 0, pixels_num - 1);
+  int i = constrain(request->getParam("idx")->value().toInt(), 0, pixels_num - (hasFx() ? 0 : 1));   // v3.10: + strook
   pxTap(i);   // v3.8a: gedrag volgens de modus van de pixel
   request->send(200, "text/plain", "OK");
 });
@@ -2548,7 +2596,7 @@ server.on("/toggle_pixel_mode", HTTP_GET, [](AsyncWebServerRequest *request) {
 server.on("/toggle_pixel", HTTP_GET, [](AsyncWebServerRequest *request) {
     crumbW(CW_PIXEL);  // v3.3
   if (!request->hasParam("idx")) { request->send(400, "text/plain", "idx?"); return; }
-  int i = constrain(request->getParam("idx")->value().toInt(), 0, pixels_num - 1);
+  int i = constrain(request->getParam("idx")->value().toInt(), 0, pixels_num - (hasFx() ? 0 : 1));   // v3.10: + strook
   pxTap(i);   // v3.8a: gedrag volgens de modus van de pixel
   request->send(200, "text/plain", "OK");
 });
@@ -2782,7 +2830,7 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     home_mode_default == 1 ? "selected" : "");
   p->printf("<tr><td class=\"lbl\">LDR dark threshold</td><td class=\"inp\"><input type=\"number\" name=\"ldr_dark\" min=\"0\" max=\"100\" value=\"%d\">"
     " <span style=\"font-size:12px;color:#666;\">donker = LDR onder deze waarde (100 = licht, 0 = donker)</span></td></tr>"
-    "<tr><td class=\"lbl\">Aantal NeoPixels</td><td class=\"inp\"><input type=\"number\" name=\"pixels\" min=\"1\" max=\"30\" value=\"%d\"></td></tr>",
+    "<tr><td class=\"lbl\">Aantal gewone pixels</td><td class=\"inp\"><input type=\"number\" name=\"pixels\" min=\"1\" max=\"20\" value=\"%d\"> <span style=\"font-size:12px;color:#666;\">(1&ndash;20, Powerpixels inbegrepen; de effectstrook staat onderaan)</span></td></tr>",
     ldr_dark_threshold, pixels_num);
   p->printf("<tr><td class=\"lbl\">Standaard RGB</td><td class=\"inp\">"
     "R:<input type=\"number\" name=\"neo_r\" min=\"0\" max=\"255\" value=\"%d\" style=\"width:70px;\">"
@@ -2890,27 +2938,27 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     ""));
   // v3.8b: effectstrook
   p->printf("<h3 style=\"color:#369;margin-top:24px;\">Effectstrook</h3><form id=\"fxf\" onsubmit=\"return fxApply(this);\"><table><tr><td class=\"lbl\">Strook</td><td class=\"inp\">"
-    "Pixel <input type=\"number\" name=\"fx_from\" min=\"-1\" max=\"29\" value=\"%d\" style=\"width:60px;\"> tot "
-    "<input type=\"number\" name=\"fx_to\" min=\"0\" max=\"29\" value=\"%d\" style=\"width:60px;\"> "
-    "<span style=\"font-size:12px;color:#666;\">(van = &minus;1: geen strook)</span><br>"
-    "Naam: <input type=\"text\" name=\"fx_name\" maxlength=\"20\" style=\"width:160px;\" value=\"", fx.from, fx.to < 0 ? 0 : fx.to);
+    "Aantal pixels: <input type=\"number\" name=\"fx_len\" min=\"0\" max=\"300\" value=\"%u\" style=\"width:70px;\"> "
+    "<span style=\"font-size:12px;color:#666;\">(0 = geen strook; de strook volgt op de %d gewone pixels, zelfde datalijn)</span><br>"
+    "Naam: <input type=\"text\" name=\"fx_name\" maxlength=\"20\" style=\"width:160px;\" value=\"", fx.len, pixels_num);
   printEsc(p, fx.name);
   p->print(F("\"> Modus: <select name=\"fx_mode\" style=\"width:auto;padding:4px;\">"));
   for (uint8_t m = 0; m <= 3; m++) p->printf("<option value=\"%u\"%s>%s</option>", m, fx.mode == m ? " selected" : "", pxModeName(m));
   p->print(F("</select><br>Effect: <select name=\"fx_eff\" style=\"width:auto;padding:4px;\">"));
-  for (uint8_t e = 0; e <= 3; e++) p->printf("<option value=\"%u\"%s>%s</option>", e, fx.eff == e ? " selected" : "", fxEffName(e));
+  for (uint8_t e = 0; e <= 5; e++) p->printf("<option value=\"%u\"%s>%s</option>", e, fx.eff == e ? " selected" : "", fxEffName(e));
   p->printf("</select> &nbsp; <label><input type=\"checkbox\" name=\"fx_col_en\"%s> eigen kleur</label> "
     "<input type=\"color\" name=\"fx_col\" value=\"#%02x%02x%02x\" style=\"width:44px;padding:0;vertical-align:middle;\"><br>"
     "Snelheid: <input type=\"number\" name=\"fx_speed\" min=\"2\" max=\"20\" value=\"%u\" style=\"width:60px;\"> s per golf &nbsp; "
-    "Helderheid: <input type=\"number\" name=\"fx_bri\" min=\"5\" max=\"100\" value=\"%u\" style=\"width:60px;\"> %%"
-    "<br><span style=\"font-size:12px;color:#666;\">De pixels van de strook krijgen samen één tegel; hun eigen modus en kleur hierboven worden dan niet gebruikt. "
+    "Helderheid: <input type=\"number\" name=\"fx_bri\" min=\"5\" max=\"100\" value=\"%u\" style=\"width:60px;\"> %% &nbsp; "
+    "Max. stroom: <input type=\"number\" name=\"fx_maxa\" min=\"1\" max=\"20\" value=\"%u\" style=\"width:55px;\"> A"
+    "<br><span style=\"font-size:12px;color:#666;\">De strook krijgt één tegel. Max. stroom: de strook wordt afgezwakt als de geschatte stroom (60 mA per pixel bij vol wit) hoger zou zijn. "
     "Toepassen werkt meteen, zonder herstart (landingspagina daarna herladen).</span></td></tr></table>"
     "<div style=\"text-align:center;margin-top:10px;\"><button type=\"submit\" class=\"btn\">Toepassen</button> <span id=\"fxok\" style=\"color:#080;font-weight:bold;\"></span></div></form>"
     "<script>function fxApply(f){var q=new URLSearchParams(new FormData(f)).toString();"
     "fetch('/set_fx?'+q,{cache:'no-store'}).then(function(r){return r.text();}).then(function(t){"
     "document.getElementById('fxok').textContent=(t=='OK'?'\u2713 toegepast':t);"
     "setTimeout(function(){document.getElementById('fxok').textContent='';},3000);});return false;}</script>",
-    fx.col_en ? " checked" : "", fx.r, fx.g, fx.b, fx.speed, fx.bri);
+    fx.col_en ? " checked" : "", fx.r, fx.g, fx.b, fx.speed, fx.bri, fx.maxA);
   p->print(F("</div></div></body></html>"));
 
   request->send(p);
@@ -2920,13 +2968,10 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
 server.on("/set_fx", HTTP_GET, [](AsyncWebServerRequest *request) {
   crumbW(CW_SAVE);
   FxCfg t = fx;
-  if (request->hasArg("fx_from")) t.from = constrain(request->arg("fx_from").toInt(), -1, 29);
-  if (request->hasArg("fx_to"))   t.to   = constrain(request->arg("fx_to").toInt(), 0, 29);
-  if (t.from >= pixels_num) t.from = -1;
-  if (t.to >= pixels_num) t.to = pixels_num - 1;
-  if (t.to < t.from) t.from = -1;
+  if (request->hasArg("fx_len"))  t.len  = constrain(request->arg("fx_len").toInt(), 0, FX_MAX_LEN);   // v3.10
+  if (request->hasArg("fx_maxa")) t.maxA = constrain(request->arg("fx_maxa").toInt(), 1, 20);
   if (request->hasArg("fx_mode"))  t.mode  = constrain(request->arg("fx_mode").toInt(), 0, 3);
-  if (request->hasArg("fx_eff"))   t.eff   = constrain(request->arg("fx_eff").toInt(), 0, 3);
+  if (request->hasArg("fx_eff"))   t.eff   = constrain(request->arg("fx_eff").toInt(), 0, 5);
   t.col_en = request->hasArg("fx_col_en") ? 1 : 0;
   if (request->hasArg("fx_col") && request->arg("fx_col").length() == 7) {
     uint32_t c = strtoul(request->arg("fx_col").c_str() + 1, nullptr, 16);
@@ -2987,7 +3032,7 @@ server.on("/save_settings", HTTP_ANY, [](AsyncWebServerRequest *request) {   // 
   serial_interval = new_interval;
 
   // NeoPixels
-  int new_pixels = constrain(request->hasArg("pixels") ? request->arg("pixels").toInt() : 8, 1, 30);
+  int new_pixels = constrain(request->hasArg("pixels") ? request->arg("pixels").toInt() : 8, 1, MAX_PIXELS);   // v3.10: max. 20
   int old_pixels = pixels_num;
   preferences.putInt(NVS_PIXELS_NUM, new_pixels);
   if (new_pixels > old_pixels) {
@@ -3302,17 +3347,16 @@ void loop() {
     fx_apply_req = false;
     FxCfg old = fx;
     fx = fx_new;
-    if (old.from >= 0) {
-      for (int i = old.from; i <= old.to && i < pixels_num; i++) {
-        if (inFx(i)) continue;   // blijft in de strook
-        currR[i] = currG[i] = currB[i] = 0; startR[i] = startG[i] = startB[i] = 0;
-        fade_progress[i] = 0.0f;   // fade-engine neemt de pixel terug over
-        pixels.setPixelColor(i, 0);
-        pixel_on[i] = false;
-      }
+    if (fx.len != old.len) {   // v3.10: lengte live aanpassen; overschot zwart
+      int oldTotal = pixels_num + old.len, newTotal = pixels_num + fx.len;
+      if (oldTotal > newTotal) { for (int i = newTotal; i < oldTotal; i++) pixels.setPixelColor(i, 0); pixels.show(); }
+      pixels.updateLength(newTotal);
+      pixels.clear();   // alles opnieuw tekenen: gewone pixels via de fade-engine
+      for (int i = 0; i < pixels_num; i++) { currR[i] = currG[i] = currB[i] = 0; startR[i] = startG[i] = startB[i] = 0; fade_progress[i] = 0.0f; }
       pixels.show();
+      fx_level = 0.0f;
     }
-    Serial.printf("[FX] strook %d-%d, effect %s\n", fx.from, fx.to, fxEffName(fx.eff));
+    Serial.printf("[FX] strook %u px, effect %s\n", fx.len, fxEffName(fx.eff));
   }
   crumbL(CL_LDR);
   updateLdr();      // v3.9: LDR elke 2 s
@@ -3355,20 +3399,20 @@ void loop() {
       last_dark_state = dark;
     }
     int m1 = 0, m2 = 0;
-    if (fx.from >= 0) {   // v3.8b: effectstrook als één lamp
+    if (hasFx()) {   // v3.8b/v3.10: effectstrook als één lamp (index FXI)
       uint8_t m = fxEff();
       bool on;
       if (m == PXM_MOV1 || m == PXM_MOV2) {
         unsigned long off = (m == PXM_MOV1) ? mov1_off_time : mov2_off_time;
-        if (bed == 1) on = false; else if (px_ovr[fx.from]) on = true; else on = dark && (millis() < off);
+        if (bed == 1) on = false; else if (px_ovr[FXI]) on = true; else on = dark && (millis() < off);
         if (on) { if (m == PXM_MOV1) m1 = 1; else m2 = 1; }
       } else if (m == PXM_NIGHT) {
         on = fx_ovr ? fx_ovr_on : (dark && bed != 1);
       } else {
-        on = pixel_on[fx.from];
+        on = pixel_on[FXI];
       }
       fx_on = on;
-      for (int i = fx.from; i <= fx.to && i < pixels_num; i++) pixel_on[i] = on;   // t toont de strook
+      pixel_on[FXI] = on;   // t toont de strook
     }
     for (int i = 0; i < pixels_num; i++) {
       if (inFx(i)) continue;   // v3.8b: strook via updateEffect()
