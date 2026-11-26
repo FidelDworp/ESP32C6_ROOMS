@@ -29,7 +29,7 @@ Start van een **nieuw gesprek met Claude** over de ROOM-sketch en de overstap va
 
 **Sheet** R-ROOMS Log: `1UiaexdpgpL3XjPWHNdMEbJ18_H9yp1w_VN8VBdVCpY0`, tab `Data` (nieuwste onderaan; uptime met punt als duizendtal). Lezen via de Google Sheets-koppeling.
 
-**Volgende stap:** v3.8.1 (vorstbeveiliging pas 3 min na de opstart), daarna v3.8.2 (stabiel setup-/nood-AP: de client mag niet zoeken terwijl er iemand op het AP zit; les uit VAKANTIEHUIZEN v1.14b van 26/11), zie het plan in de README. Code pas na GO.
+**Volgende stap:** v3.8.1 (vorstbeveiliging pas 3 min na de opstart), zie het plan in de README. Code pas na GO.
 
 **Nog thuis te testen (FiDel):** IO2 aan GND → Generic ADC ±0,00 V · `http://eetplaats.local/` · router 2–3 min uit → room80 komt vanzelf terug, Diagnose "1 keer weggevallen" · bewegingslamp 's avonds aan, overdag niet.
 
@@ -46,7 +46,7 @@ Om later mee te vergelijken:
 - **IO12/IO13 = USB D−/D+** van de C6: compileren met CDC uit + `releaseUsbPins()`; I2C (SCD41) op IO13/IO11.
 - **DHT22** alleen met de eigen uitlezing (`dhtRead22`), nooit de Adafruit-bibliotheek (interrupt-watchdog).
 - **Geplande herstarts** (OTA, /reboot, instellingen) via `restart_at` in `loop()`, met `restart_cause` voor de herstartgeschiedenis. Nooit `delay()` of `ESP.restart()` in een webserver-callback.
-- **SNTP (les 26/11, VAKANTIEHUIZEN v1.14c):** `configTzTime` (pool.ntp.org) liet het Ysermonde-bord thuis elke ±5 min crashen (assert *Required to lock TCPIP core functionality* in `udp_new`, via `sntp_request` → `dns_gethostbyname`). De ROOM-sketch heeft dezelfde aanroep maar liep tot nu stabiel. Plan-item 1c (v3.8.3) in de README: enkel bij problemen of preventief SNTP weg en de klok in de kop via de browser.
+- **Lessen Vakantiehuizen 26/11:** de herstarts en mislukte POSTs van het Ysermonde-bord kwamen door het netwerk (vast IP in de DHCP-reeks, DNS van de router antwoordde niet). SNTP weghalen, reserve-DNS 8.8.8.8, "enkel AP" en een andere Async TCP-versie zijn daar voorbarig toegepast en zijn voor ROOM **niet** nodig (zie README, geschrapt item). Huisregel: vaste IP's onder .100.
 - **WiFi:** `ap_mode_active` = setupmodus (geen SSID, geen metingen/verwarming); `ap_rescue` = nood-AP met normale werking. mDNS-naam komt uit de kamernaam (room80 "Eetplaats").
 - **Pixels:** `px_mode[]` (0 manueel, 1 MOV1, 2 MOV2, 3 nachtlampje), `px_ovr[]`, `px_col[]`; NVS `px_modes`, `px_ovr`, `px_cols`; `pxTap()` achter `/toggle_pixel` en `/toggle_pixel_mode`.
 - **/advanced-JavaScript** zoekt rijen op labeltekst (behalve pixelrijen: `data-px`). Een nieuw label mag geen bestaand zoekwoord bevatten (bv. "Dauwpunt", "CO", "Pixel").
