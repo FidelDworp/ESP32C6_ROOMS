@@ -29,7 +29,7 @@ Start van een **nieuw gesprek met Claude** over de ROOM-sketch en de overstap va
 
 **Sheet** R-ROOMS Log: `1UiaexdpgpL3XjPWHNdMEbJ18_H9yp1w_VN8VBdVCpY0`, tab `Data` (nieuwste onderaan; uptime met punt als duizendtal). Lezen via de Google Sheets-koppeling.
 
-**Volgende stap:** v3.8.1 (vorstbeveiliging pas 3 min na de opstart), zie het plan in de README.
+**Volgende stap:** v3.8.1 (vorstbeveiliging pas 3 min na de opstart), daarna v3.8.2 (stabiel setup-/nood-AP: de client mag niet zoeken terwijl er iemand op het AP zit; les uit VAKANTIEHUIZEN v1.14b van 26/11), zie het plan in de README. Code pas na GO.
 
 **Nog thuis te testen (FiDel):** IO2 aan GND → Generic ADC ±0,00 V · `http://eetplaats.local/` · router 2–3 min uit → room80 komt vanzelf terug, Diagnose "1 keer weggevallen" · bewegingslamp 's avonds aan, overdag niet.
 
