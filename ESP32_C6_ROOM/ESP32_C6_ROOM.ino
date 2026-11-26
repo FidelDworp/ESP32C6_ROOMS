@@ -1,4 +1,4 @@
-// ESP32-C6 ROOM v3.8b.1 — 26 nov 2026 — zonder Matter
+// ESP32-C6 ROOM v3.9 — 26 nov 2026 — zonder Matter
 // Zarlar thuisautomatisering — Room controller (Apple Home via de RPi-bridge, niet meer via Matter op de ESP32)
 // Filip Delannoy — Zarlardinge (BE)
 //
@@ -8,6 +8,11 @@
 // PARTITIETABEL: Compileer met "partitions.csv" in de schetsmap (Custom partition scheme):
 //   nvs (20 KB), otadata (8 KB), app0 (6 MB), app1 (6 MB), spiffs (~4 MB)
 //
+// v3.9 (26nov26): LDR SNELLER. De LDR werd maar één keer per minuut gelezen (trage metingen) → nachtlampjes en
+//                 bewegingslampen reageerden tot een minuut te laat op dag/nacht. Nu: elke 2 s lezen, uitgevlakt;
+//                 "donker" met hysterese (donker onder de drempel, licht pas boven drempel + 5) en een wissel pas na
+//                 10 s stabiel (geen knipperen bij iemand voor de sensor). m en o volgen mee. Geen /json-wijziging.
+//                 (Versienummers vanaf nu gewoon doorlopend: v3.9, v3.10, ...)
 // v3.8b.1 (26nov26): EFFECTSTROOK LIVE + SETTINGS VIA POST. De strookvelden stonden achteraan het grote
 //                 instellingenformulier (GET) en kwamen nooit aan (na opslaan telkens weer −1, FiDel 26/11): de
 //                 adresregel werd met 8 pixels te lang. (1) Effectstrook: eigen formulier met knop "Toepassen" →
@@ -283,7 +288,7 @@ void releaseUsbPins() {
   usb_serial_jtag_ll_phy_enable_pad(false);
 }
 
-#define ROOM_VERSION "v3.8b.1"  // v3.2: enige plaats met het versienummer
+#define ROOM_VERSION "v3.9"  // v3.2: enige plaats met het versienummer
 
 // v3.2: reden van de laatste herstart, leesbaar
 esp_reset_reason_t boot_reason = ESP_RST_UNKNOWN;
@@ -668,7 +673,10 @@ int tstat_on = 0, mov1_triggers = 0, mov2_triggers = 0;
 int mov1_light = 0, mov2_light = 0;
 unsigned long uptime_sec = 0;
 int dew_alert = 0;       // Voor k: DewAlert (temp_ds < dew ? 1 : 0)  
-int night = 0;           // o: nacht (v3.5.3: light_ldr < drempel; light_ldr licht=100, donker=0)  
+int night = 0;           // o: nacht (v3.9: = is_dark, met hysterese en 10 s stabiliteit)
+bool is_dark = false;          // v3.9: donker volgens de LDR (hysterese + 10 s stabiel)
+float ldr_avg = -1.0f;         // v3.9: uitgevlakte LDR (−1 = nog geen meting)
+unsigned long ldr_last_ms = 0, dark_cand_since = 0;
 int bed = 0;             // Voor r: Bed switch (0/1, hardcoded initieel 0, later togglebaar)  
 uint8_t neo_r = 255;       // Voor s: R waarde (hardcoded 255)  
 uint8_t neo_g = 255;       // Voor t: G waarde (hardcoded 255)  
@@ -984,6 +992,23 @@ void updateEffect() {
 const char* pxModeName(uint8_t m) {
   switch (m) { case PXM_MOV1: return "beweging MOV1"; case PXM_MOV2: return "beweging MOV2";
                case PXM_NIGHT: return "nachtlampje"; default: return "manueel"; }
+}
+
+// v3.9: LDR elke 2 s, uitgevlakt; donker met hysterese en 10 s stabiliteit
+void updateLdr() {
+  if (ldr_avg >= 0.0f && millis() - ldr_last_ms < 2000) return;
+  ldr_last_ms = millis();
+  int v = scaleLDR(analogRead(LDR_ANALOG));
+  bool first = ldr_avg < 0.0f;
+  ldr_avg = first ? v : ldr_avg * 0.6f + v * 0.4f;
+  light_ldr = (int)(ldr_avg + 0.5f);
+  bool want = is_dark ? (light_ldr < LDR_DARK_THRESHOLD + 5) : (light_ldr < LDR_DARK_THRESHOLD);
+  if (first) { is_dark = want; dark_cand_since = 0; }
+  else if (want != is_dark) {
+    if (dark_cand_since == 0) dark_cand_since = millis();
+    if (millis() - dark_cand_since >= 10000UL) { is_dark = want; dark_cand_since = 0; }
+  } else dark_cand_since = 0;
+  night = is_dark ? 1 : 0;
 }
 
 int scaleLDR(int r) { return map(constrain(r, 100, 3800), 100, 3800, 0, 100); }   // v3.5.3: 100 = licht, 0 = donker (was omgekeerd)
@@ -3289,6 +3314,8 @@ void loop() {
     }
     Serial.printf("[FX] strook %d-%d, effect %s\n", fx.from, fx.to, fxEffName(fx.eff));
   }
+  crumbL(CL_LDR);
+  updateLdr();      // v3.9: LDR elke 2 s
   updateEffect();   // v3.8b
   // v3.8b: DS18B20-conversie klaar? (niet-blokkerend, 750 ms na de start)
   if (ds_conv_pending && millis() - ds_conv_ms >= 750) { crumbL(CL_DS); dsReadResults(); }
@@ -3321,7 +3348,7 @@ void loop() {
   crumbL(CL_PIXLOGIC);
 
   {  // v3.8a: per pixel volgens de modus
-    bool dark = (light_ldr < LDR_DARK_THRESHOLD);   // v3.5.3: omgekeerde schaal
+    bool dark = is_dark;   // v3.9: LDR elke 2 s met hysterese (was: waarde van de laatste minuutmeting)
     if (last_dark_state != (int)dark) {             // overgang dag/nacht → handmatige omschakeling nachtlampjes vervalt
       if (last_dark_state != -1) for (int i = 0; i < pixels_num; i++) if (pxEff(i) == PXM_NIGHT) px_ovr[i] = 0;
       if (last_dark_state != -1 && fxEff() == PXM_NIGHT) fx_ovr = 0;   // v3.8b
@@ -3509,11 +3536,11 @@ void loop() {
   if (!ds_conv_pending) dsStartConversion();   // v3.8b: uitlezen 750 ms later, zonder de lus stil te leggen
   
   crumbL(CL_LDR);
-  light_ldr = scaleLDR(analogRead(LDR_ANALOG));
+  // v3.9: light_ldr en night komen nu uit updateLdr() (elke 2 s)
   crumbL(CL_ADC);
   adc_volt = adc_enabled ? readGenericAdc() : NAN;   // v3.5.2: Generic ADC op GP3
   // v3.4: CO2 komt van de SCD41 (scdPoll hierboven, elke 5 s)
-  night = (light_ldr < LDR_DARK_THRESHOLD) ? 1 : 0;   // v3.5.3: volgt de drempel (was vast 50, oude schaal)
+  // v3.9: night = is_dark (updateLdr)
   // bed blijft voorlopig hardcoded 0, tot toggle in webserver  
 
 
