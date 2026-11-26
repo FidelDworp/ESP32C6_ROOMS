@@ -1,4 +1,4 @@
-// ESP32-C6 ROOM v3.8b — 26 nov 2026 — zonder Matter
+// ESP32-C6 ROOM v3.8b.1 — 26 nov 2026 — zonder Matter
 // Zarlar thuisautomatisering — Room controller (Apple Home via de RPi-bridge, niet meer via Matter op de ESP32)
 // Filip Delannoy — Zarlardinge (BE)
 //
@@ -8,6 +8,12 @@
 // PARTITIETABEL: Compileer met "partitions.csv" in de schetsmap (Custom partition scheme):
 //   nvs (20 KB), otadata (8 KB), app0 (6 MB), app1 (6 MB), spiffs (~4 MB)
 //
+// v3.8b.1 (26nov26): EFFECTSTROOK LIVE + SETTINGS VIA POST. De strookvelden stonden achteraan het grote
+//                 instellingenformulier (GET) en kwamen nooit aan (na opslaan telkens weer −1, FiDel 26/11): de
+//                 adresregel werd met 8 pixels te lang. (1) Effectstrook: eigen formulier met knop "Toepassen" →
+//                 /set_fx, meteen actief en bewaard, geen herstart; bij een ander bereik krijgen de oude strookpixels
+//                 hun eigen modus terug. (2) Groot formulier verstuurt via POST (lengte geen probleem meer, ook niet
+//                 met 17+ pixels); /save_settings aanvaardt GET en POST. Geen /json-wijziging.
 // v3.8b (26nov26): PIXEL-EFFECTEN (beslist door FiDel 26/11: één strook).
 //                 (1) Effectstrook in /settings: pixel X tot Y, naam, modus (manueel / beweging MOV1 / MOV2 /
 //                 nachtlampje, zoals de pixels), effect (vast · samen ademen · één voor één ademen · looplicht),
@@ -277,7 +283,7 @@ void releaseUsbPins() {
   usb_serial_jtag_ll_phy_enable_pad(false);
 }
 
-#define ROOM_VERSION "v3.8b"  // v3.2: enige plaats met het versienummer
+#define ROOM_VERSION "v3.8b.1"  // v3.2: enige plaats met het versienummer
 
 // v3.2: reden van de laatste herstart, leesbaar
 esp_reset_reason_t boot_reason = ESP_RST_UNKNOWN;
@@ -709,6 +715,8 @@ uint8_t fx_ovr = 0;           // zoals px_ovr (beweging: altijd aan, persistent 
 bool    fx_ovr_on = false;    // nachtlampje: gewenste stand tijdens handmatige omschakeling
 bool    fx_on = false;        // strook hoort te branden
 float   fx_level = 0.0f;      // 0..1, zacht aan/uit
+FxCfg   fx_new;               // v3.8b.1: nieuwe instellingen uit /set_fx, toegepast in loop()
+volatile bool fx_apply_req = false;
 // v3.8b: DS18B20 niet-blokkerend
 bool    ds_conv_pending = false;
 unsigned long ds_conv_ms = 0;
@@ -2585,7 +2593,7 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     "<a href=\"/settings\" class=\"active\">Settings</a>"
     "</div>"
     "<div class=\"main\">"
-    "<form action=\"/save_settings\" method=\"get\" id=\"sf\">"
+    "<form action=\"/save_settings\" method=\"post\" id=\"sf\">"
     "<table>"
     "<tr><td class=\"lbl\">MAC adres</td><td class=\"inp\"><code>"));
   p->print(mac_address);
@@ -2772,23 +2780,7 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
   p->print(F("<span style=\"font-size:12px;color:#666;\">Beweging: aan bij beweging in het donker (niet in bed-modus), tik = altijd aan. "
     "Nachtlampje: aan zolang het donker is, uit in bed-modus, tik = handmatig tot de volgende dag/nacht-overgang. "
     "Zonder eigen kleur volgt de pixel de kamerkleur. MOV2-pixels werken enkel als MOV2 aan staat.</span></td></tr>"));
-  // v3.8b: effectstrook
-  p->printf("<tr><td class=\"lbl\">Effectstrook</td><td class=\"inp\">"
-    "Pixel <input type=\"number\" name=\"fx_from\" min=\"-1\" max=\"29\" value=\"%d\" style=\"width:60px;\"> tot "
-    "<input type=\"number\" name=\"fx_to\" min=\"0\" max=\"29\" value=\"%d\" style=\"width:60px;\"> "
-    "<span style=\"font-size:12px;color:#666;\">(van = &minus;1: geen strook)</span><br>"
-    "Naam: <input type=\"text\" name=\"fx_name\" maxlength=\"20\" style=\"width:160px;\" value=\"", fx.from, fx.to < 0 ? 0 : fx.to);
-  printEsc(p, fx.name);
-  p->print(F("\"> Modus: <select name=\"fx_mode\" style=\"width:auto;padding:4px;\">"));
-  for (uint8_t m = 0; m <= 3; m++) p->printf("<option value=\"%u\"%s>%s</option>", m, fx.mode == m ? " selected" : "", pxModeName(m));
-  p->print(F("</select><br>Effect: <select name=\"fx_eff\" style=\"width:auto;padding:4px;\">"));
-  for (uint8_t e = 0; e <= 3; e++) p->printf("<option value=\"%u\"%s>%s</option>", e, fx.eff == e ? " selected" : "", fxEffName(e));
-  p->printf("</select> &nbsp; <label><input type=\"checkbox\" name=\"fx_col_en\"%s> eigen kleur</label> "
-    "<input type=\"color\" name=\"fx_col\" value=\"#%02x%02x%02x\" style=\"width:44px;padding:0;vertical-align:middle;\"><br>"
-    "Snelheid: <input type=\"number\" name=\"fx_speed\" min=\"2\" max=\"20\" value=\"%u\" style=\"width:60px;\"> s per golf &nbsp; "
-    "Helderheid: <input type=\"number\" name=\"fx_bri\" min=\"5\" max=\"100\" value=\"%u\" style=\"width:60px;\"> %%"
-    "<br><span style=\"font-size:12px;color:#666;\">De pixels van de strook krijgen samen één tegel; hun eigen modus en kleur hierboven worden dan niet gebruikt.</span></td></tr>",
-    fx.col_en ? " checked" : "", fx.r, fx.g, fx.b, fx.speed, fx.bri);
+
 
   p->printf("<tr><td class=\"lbl\">Optionele sensoren</td><td class=\"inp\">"
     "<label><input type=\"checkbox\" name=\"co2\"%s> SCD41 (CO&#8322;)</label> "
@@ -2870,13 +2862,65 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
     "if(+this.co2_hi.value<+this.co2_lo.value+100){alert('CO2 voor 100% moet minstens 100 ppm hoger zijn dan CO2 voor 0%.');e.preventDefault();return false;}"
     "return true;};"
     "</script>"
-    "</div></div></body></html>"));
+    ""));
+  // v3.8b: effectstrook
+  p->printf("<h3 style=\"color:#369;margin-top:24px;\">Effectstrook</h3><form id=\"fxf\" onsubmit=\"return fxApply(this);\"><table><tr><td class=\"lbl\">Strook</td><td class=\"inp\">"
+    "Pixel <input type=\"number\" name=\"fx_from\" min=\"-1\" max=\"29\" value=\"%d\" style=\"width:60px;\"> tot "
+    "<input type=\"number\" name=\"fx_to\" min=\"0\" max=\"29\" value=\"%d\" style=\"width:60px;\"> "
+    "<span style=\"font-size:12px;color:#666;\">(van = &minus;1: geen strook)</span><br>"
+    "Naam: <input type=\"text\" name=\"fx_name\" maxlength=\"20\" style=\"width:160px;\" value=\"", fx.from, fx.to < 0 ? 0 : fx.to);
+  printEsc(p, fx.name);
+  p->print(F("\"> Modus: <select name=\"fx_mode\" style=\"width:auto;padding:4px;\">"));
+  for (uint8_t m = 0; m <= 3; m++) p->printf("<option value=\"%u\"%s>%s</option>", m, fx.mode == m ? " selected" : "", pxModeName(m));
+  p->print(F("</select><br>Effect: <select name=\"fx_eff\" style=\"width:auto;padding:4px;\">"));
+  for (uint8_t e = 0; e <= 3; e++) p->printf("<option value=\"%u\"%s>%s</option>", e, fx.eff == e ? " selected" : "", fxEffName(e));
+  p->printf("</select> &nbsp; <label><input type=\"checkbox\" name=\"fx_col_en\"%s> eigen kleur</label> "
+    "<input type=\"color\" name=\"fx_col\" value=\"#%02x%02x%02x\" style=\"width:44px;padding:0;vertical-align:middle;\"><br>"
+    "Snelheid: <input type=\"number\" name=\"fx_speed\" min=\"2\" max=\"20\" value=\"%u\" style=\"width:60px;\"> s per golf &nbsp; "
+    "Helderheid: <input type=\"number\" name=\"fx_bri\" min=\"5\" max=\"100\" value=\"%u\" style=\"width:60px;\"> %%"
+    "<br><span style=\"font-size:12px;color:#666;\">De pixels van de strook krijgen samen één tegel; hun eigen modus en kleur hierboven worden dan niet gebruikt. "
+    "Toepassen werkt meteen, zonder herstart (landingspagina daarna herladen).</span></td></tr></table>"
+    "<div style=\"text-align:center;margin-top:10px;\"><button type=\"submit\" class=\"btn\">Toepassen</button> <span id=\"fxok\" style=\"color:#080;font-weight:bold;\"></span></div></form>"
+    "<script>function fxApply(f){var q=new URLSearchParams(new FormData(f)).toString();"
+    "fetch('/set_fx?'+q,{cache:'no-store'}).then(function(r){return r.text();}).then(function(t){"
+    "document.getElementById('fxok').textContent=(t=='OK'?'\u2713 toegepast':t);"
+    "setTimeout(function(){document.getElementById('fxok').textContent='';},3000);});return false;}</script>",
+    fx.col_en ? " checked" : "", fx.r, fx.g, fx.b, fx.speed, fx.bri);
+  p->print(F("</div></div></body></html>"));
 
   request->send(p);
 });
 
+// === v3.8b.1: EFFECTSTROOK LIVE ===
+server.on("/set_fx", HTTP_GET, [](AsyncWebServerRequest *request) {
+  crumbW(CW_SAVE);
+  FxCfg t = fx;
+  if (request->hasArg("fx_from")) t.from = constrain(request->arg("fx_from").toInt(), -1, 29);
+  if (request->hasArg("fx_to"))   t.to   = constrain(request->arg("fx_to").toInt(), 0, 29);
+  if (t.from >= pixels_num) t.from = -1;
+  if (t.to >= pixels_num) t.to = pixels_num - 1;
+  if (t.to < t.from) t.from = -1;
+  if (request->hasArg("fx_mode"))  t.mode  = constrain(request->arg("fx_mode").toInt(), 0, 3);
+  if (request->hasArg("fx_eff"))   t.eff   = constrain(request->arg("fx_eff").toInt(), 0, 3);
+  t.col_en = request->hasArg("fx_col_en") ? 1 : 0;
+  if (request->hasArg("fx_col") && request->arg("fx_col").length() == 7) {
+    uint32_t c = strtoul(request->arg("fx_col").c_str() + 1, nullptr, 16);
+    t.r = (c >> 16) & 0xFF; t.g = (c >> 8) & 0xFF; t.b = c & 0xFF;
+  }
+  if (request->hasArg("fx_speed")) t.speed = constrain(request->arg("fx_speed").toInt(), 2, 20);
+  if (request->hasArg("fx_bri"))   t.bri   = constrain(request->arg("fx_bri").toInt(), 5, 100);
+  if (request->hasArg("fx_name")) {
+    String nm = request->arg("fx_name"); nm.trim();
+    strlcpy(t.name, nm.length() ? nm.c_str() : "Effectstrook", sizeof(t.name));
+  }
+  preferences.putBytes("fx", &t, sizeof(t));
+  fx_new = t;
+  fx_apply_req = true;   // toepassen in loop()
+  request->send(200, "text/plain", "OK");
+});
+
 // === SAVE SETTINGS ===
-server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
+server.on("/save_settings", HTTP_ANY, [](AsyncWebServerRequest *request) {   // v3.8b.1: ook POST
     crumbW(CW_SAVE);  // v3.3
   // v2.10: geen String= toewijzing aan globals meer — char[] direct
 
@@ -2931,25 +2975,7 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
   preferences.putUChar(NVS_NEO_G, request->hasArg("neo_g") ? request->arg("neo_g").toInt() : 255);
   preferences.putUChar(NVS_NEO_B, request->hasArg("neo_b") ? request->arg("neo_b").toInt() : 255);
 
-  // v3.8b: effectstrook
-  if (request->hasArg("fx_from")) {
-    FxCfg t = fx;
-    t.from  = constrain(request->arg("fx_from").toInt(), -1, 29);
-    t.to    = constrain(request->arg("fx_to").toInt(), 0, 29);
-    if (t.to < t.from) t.from = -1;
-    t.mode  = constrain(request->arg("fx_mode").toInt(), 0, 3);
-    t.eff   = constrain(request->arg("fx_eff").toInt(), 0, 3);
-    t.col_en = request->hasArg("fx_col_en") ? 1 : 0;
-    if (request->hasArg("fx_col") && request->arg("fx_col").length() == 7) {
-      uint32_t c = strtoul(request->arg("fx_col").c_str() + 1, nullptr, 16);
-      t.r = (c >> 16) & 0xFF; t.g = (c >> 8) & 0xFF; t.b = c & 0xFF;
-    }
-    t.speed = constrain(request->arg("fx_speed").toInt(), 2, 20);
-    t.bri   = constrain(request->arg("fx_bri").toInt(), 5, 100);
-    String nm = request->arg("fx_name"); nm.trim();
-    strlcpy(t.name, nm.length() ? nm.c_str() : "Effectstrook", sizeof(t.name));
-    preferences.putBytes("fx", &t, sizeof(t));
-  }
+  // v3.8b.1: effectstrook niet meer hier (eigen formulier → /set_fx)
 
   // v3.8a: pixelmodi en eigen kleuren
   {
@@ -3247,6 +3273,22 @@ void loop() {
 
   crumbL(CL_FADE);
   updateFades();
+  if (fx_apply_req) {   // v3.8b.1: nieuwe strookinstellingen toepassen (uit /set_fx)
+    fx_apply_req = false;
+    FxCfg old = fx;
+    fx = fx_new;
+    if (old.from >= 0) {
+      for (int i = old.from; i <= old.to && i < pixels_num; i++) {
+        if (inFx(i)) continue;   // blijft in de strook
+        currR[i] = currG[i] = currB[i] = 0; startR[i] = startG[i] = startB[i] = 0;
+        fade_progress[i] = 0.0f;   // fade-engine neemt de pixel terug over
+        pixels.setPixelColor(i, 0);
+        pixel_on[i] = false;
+      }
+      pixels.show();
+    }
+    Serial.printf("[FX] strook %d-%d, effect %s\n", fx.from, fx.to, fxEffName(fx.eff));
+  }
   updateEffect();   // v3.8b
   // v3.8b: DS18B20-conversie klaar? (niet-blokkerend, 750 ms na de start)
   if (ds_conv_pending && millis() - ds_conv_ms >= 750) { crumbL(CL_DS); dsReadResults(); }

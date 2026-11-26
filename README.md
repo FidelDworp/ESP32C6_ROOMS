@@ -11,7 +11,7 @@ Room-controllers van het Zarlar-thuisautomatiseringssysteem (Zarlardinge): een E
 
 | | |
 |---|---|
-| **Sketch** | **v3.8b** — map `ESP32_C6_ROOM/`, klaar om te uploaden: `bin/ESP32_C6_ROOM_v3.8b.ino.bin` |
+| **Sketch** | **v3.8b.1** — map `ESP32_C6_ROOM/`, klaar om te uploaden: `bin/ESP32_C6_ROOM_v3.8b.1.ino.bin` |
 | **Draait op** | room80: `192.168.0.80` · `http://eetplaats.local/` — testbord met alle sensoren, rij R-EETPL op de Dashboard-matrix |
 | **Volgende room** | B&B (`.75`, R-BandB), in montage |
 | **Apple Home** | Via de RPi-bridge (`matterbridge-zarlar`), toestel "Eetplaats". Geen Matter op de ESP32 |
@@ -34,6 +34,7 @@ Room-controllers van het Zarlar-thuisautomatiseringssysteem (Zarlardinge): een E
 | `/` | iedereen | **Landingspagina:** temperatuur met het echte doel en schuifbalk, 🔥 = verwarming vraagt warmte, een tegel per lamp (beweging: tik = automatisch ↔ altijd aan; nachtlampje: tik = handmatig), kleur, 🛏️ bed-modus, 🏠 thuis/weg |
 | `/advanced` | FiDel | Alle metingen, overzicht van alle temperatuursensoren |
 | `/settings` | FiDel | Instellingen + **Diagnose** (versie, herstarts met laatste stap, geheugen, WiFi, mDNS, SCD41, DHT22, OTA, NVS) |
+| `/set_fx` | `/settings` | Effectstrook meteen toepassen en bewaren (sinds v3.8b.1) |
 | `/update` | FiDel | OTA met voortgangsbalk; meldt "Terug online" en gaat naar `/advanced` |
 | `/ver` | OTA-pagina | `versie\|uptime_s` |
 | `/json` | Dashboard, Portal, RPi-bridge | Live-gegevens (zie hieronder) |
@@ -48,7 +49,7 @@ Room-controllers van het Zarlar-thuisautomatiseringssysteem (Zarlardinge): een E
 
 **Van op afstand** (Mac via mobiele data + Tailscale; **niet** via de wifi in Nieuwpoort, die gebruikt ook 192.168.0.x). Download naar Downloads en upload via de OTA-pagina, of rechtstreeks met curl:
 ```
-curl -L -o ~/Downloads/room.bin https://raw.githubusercontent.com/FidelDworp/ESP32C6_ROOMS/main/bin/ESP32_C6_ROOM_v3.8b.ino.bin
+curl -L -o ~/Downloads/room.bin https://raw.githubusercontent.com/FidelDworp/ESP32C6_ROOMS/main/bin/ESP32_C6_ROOM_v3.8b.1.ino.bin
 ls -l ~/Downloads/room.bin
 curl -F "update=@$HOME/Downloads/room.bin" http://192.168.0.80/update
 ```
@@ -92,7 +93,7 @@ Sheet "R-ROOMS Log", tabblad **"Data"** (GAS v1.6, `GoogleScript/ROOM_GoogleScri
 | 1 | **v3.8.1** | **Vorstbeveiliging na de opstart.** Nu: vóór de eerste meting geldt "geen geldige temperatuur", en de vorstbeveiliging begint meteen met haar kwartier "aan" → na elke herstart kort een verwarmingsvraag (`b` = 1, gezien in de Sheet 25/11 22:10). Oplossing: de vorstbeveiliging pas laten ingrijpen als er **3 min na de opstart** nog geen geldige temperatuur is; daarna telt haar ritme vanaf het begin van de storing — ✅ geflasht 26/11 | alle rooms |
 | — | *(geschrapt 26/11)* | **Lessen uit het Vakantiehuizen-gesprek (26/11) die voor de ROOM-sketch NIET nodig zijn.** Het Ysermonde-bord herstartte thuis elke ±5 min en postte niet. Achteraf bleek de echte oorzaak het netwerk: vast IP **.212 lag in de DHCP-reeks** (ook aan een Apple Watch gegeven) en de DNS van de router antwoordde dat bord niet. De tussenstappen daar waren voorbarig en worden in ROOM **niet** overgenomen: (1) **SNTP weghalen** (v1.14c): de crash zat wel in SNTP, maar enkel omdat de naamopzoeking misliep; room80 (vast IP .80, onder .100) heeft daar nooit last van gehad; (2) **8.8.8.8 als reserve-DNS** (v1.14d): ROOM zoekt enkel `pool.ntp.org` op en dat werkt; (3) **setup-/nood-AP als "enkel AP"** (v1.14b): het wegvallen van het AP viel samen met die herstartlus en is dus niet bewezen een kanaalprobleem; (4) **Async TCP-versie** en **spanningsdip van het relais**: niet de oorzaak. **Wel overgenomen:** geen verwarmingsvraag bij de opstart (= v3.8.1) en de huisregel **vaste IP's onder .100, buiten de DHCP-reeks**. Het nood-AP van ROOM eerst thuis testen (router uit); pas aanpassen als het daar echt wegvalt | — |
 | 2 | → | **B&B gaat live** (montage door FiDel; opstarten volgens `aansluitingen.md` §2.4) | B&B |
-| 3 | v3.8b | **Pixel-effecten:** één effectstrook (pixel X tot Y, naam, modus zoals de pixels, effect vast / samen ademen / één voor één ademen / looplicht, kleur, snelheid, helderheid), één tegel; DS18B20 niet-blokkerend — 🔨 gebouwd 26/11. B&B: pixels 5–16 (8 treden deur + 4 badkamer), "één voor één ademen" | B&B, BADK, SLPK |
+| 3 | v3.8b | **Pixel-effecten:** één effectstrook (pixel X tot Y, naam, modus zoals de pixels, effect vast / samen ademen / één voor één ademen / looplicht, kleur, snelheid, helderheid), één tegel; DS18B20 niet-blokkerend — 🔨 gebouwd 26/11; v3.8b.1: strook live instellen ("Toepassen", `/set_fx`, geen herstart) en instellingenformulier via POST. B&B: pixels 5–16 (8 treden deur + 4 badkamer), "één voor één ademen" | B&B, BADK, SLPK |
 | 4 | v3.9 | **Generieke I/O** op GP1 (IO12), GP2 (IO7), GP4 (IO18): per pin uit · digitale ingang · digitale uitgang · PWM, met bijnaam; `/json` `ap`, `aq`, `as`; bediening `/set_gp?n=1..4&v=0..100`. Pas als er een toepassing is | alle rooms |
 | 5 | v3.10–v3.12 | **Pagina's apart** in `.h`-bestanden (`/update`, `/advanced`, `/settings`), met vaste `id` per veld i.p.v. zoeken op labeltekst. Onderhoud, geen zichtbaar nut | alle rooms |
 | 6 | — | **Uitrol:** elke Photon-room krijgt een ESP32 met deze sketch (na de B&B: BADK, INKOM, KEUKEN, WASPL, ZITPL) | |
@@ -101,7 +102,8 @@ Sheet "R-ROOMS Log", tabblad **"Data"** (GAS v1.6, `GoogleScript/ROOM_GoogleScri
 
 | Versie | Datum | Wat |
 |---|---|---|
-| **v3.8b** | 26/11 | **Pixel-effecten:** effectstrook met 4 effecten, één tegel; DS18B20 niet-blokkerend (geen 0,75 s stilstand van de lus meer) |
+| **v3.8b.1** | 26/11 | Effectstrook live instellen (eigen formulier, `/set_fx`, geen herstart); instellingen via POST (strookvelden kwamen via GET nooit aan) |
+| v3.8b | 26/11 | **Pixel-effecten:** effectstrook met 4 effecten, één tegel; DS18B20 niet-blokkerend (geen 0,75 s stilstand van de lus meer) |
 | v3.8.1 | 26/11 | Vorstbeveiliging pas 3 min na de opstart (geen verwarmingsvraag meer bij een herstart), ritme telt vanaf het begin van de storing |
 | v3.8a | 25/11 | **Pixelmodi** per pixel (manueel, beweging MOV1/MOV2, nachtlampje), eigen kleur per pixel; `u` één teken per pixel |
 | v3.8 | 25/11 | **Verwarmingslogica zoals de Sjalay:** effectief setpoint `ak`, hysterese, dauwpuntbeveiliging aan/uit, minimum setpoint, 30 °C-veiligheid |
