@@ -29,7 +29,7 @@ Start van een **nieuw gesprek met Claude** over de ROOM-sketch en de overstap va
 
 **Sheet** R-ROOMS Log: `1UiaexdpgpL3XjPWHNdMEbJ18_H9yp1w_VN8VBdVCpY0`, tab `Data` (nieuwste onderaan; uptime met punt als duizendtal). Lezen via de Google Sheets-koppeling.
 
-**v3.8.1** (vorstbeveiliging pas 3 min na de opstart, `FROST_GRACE_MS`, `frost_since`) geflasht 26/11 ±21:04 (eerste rij uptime 120 s: HEAT 0). Daarna: B&B live (zie plan in de README).
+**v3.8.1** (vorstbeveiliging pas 3 min na de opstart, `FROST_GRACE_MS`, `frost_since`) geflasht 26/11 ±21:04 (eerste rij uptime 120 s: HEAT 0). **v3.8b** (effectstrook: `FxCfg fx` = NVS-blob "fx", `updateEffect()` ±40 beelden/s, `inFx()`; DS18B20 niet-blokkerend `dsStartConversion()`/`dsReadResults()`) gebouwd 26/11. Daarna: B&B live (zie plan in de README).
 
 **Nog thuis te testen (FiDel):** IO2 aan GND → Generic ADC ±0,00 V · `http://eetplaats.local/` · router 2–3 min uit → room80 komt vanzelf terug, Diagnose "1 keer weggevallen" · bewegingslamp 's avonds aan, overdag niet.
 

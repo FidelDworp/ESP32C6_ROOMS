@@ -1,4 +1,4 @@
-// ESP32-C6 ROOM v3.8.1 — 26 nov 2026 — zonder Matter
+// ESP32-C6 ROOM v3.8b — 26 nov 2026 — zonder Matter
 // Zarlar thuisautomatisering — Room controller (Apple Home via de RPi-bridge, niet meer via Matter op de ESP32)
 // Filip Delannoy — Zarlardinge (BE)
 //
@@ -8,6 +8,16 @@
 // PARTITIETABEL: Compileer met "partitions.csv" in de schetsmap (Custom partition scheme):
 //   nvs (20 KB), otadata (8 KB), app0 (6 MB), app1 (6 MB), spiffs (~4 MB)
 //
+// v3.8b (26nov26): PIXEL-EFFECTEN (beslist door FiDel 26/11: één strook).
+//                 (1) Effectstrook in /settings: pixel X tot Y, naam, modus (manueel / beweging MOV1 / MOV2 /
+//                 nachtlampje, zoals de pixels), effect (vast · samen ademen · één voor één ademen · looplicht),
+//                 kamerkleur of eigen kleur, snelheid (2–20 s per golf), max. helderheid (%). Standaard uit.
+//                 (2) updateEffect(): ±40 beelden/s, enkel voor de strook; aan/uit zacht met de dimtijd. De gewone
+//                 fade-engine slaat de strookpixels over.
+//                 (3) Landingspagina en /advanced: één tegel/rij voor de strook; tik volgens de modus.
+//                 (4) DS18B20 niet-blokkerend in de loop: conversie starten, 750 ms later uitlezen (was delay(750),
+//                 dat de lus en dus elk effect telkens 0,75 s stillegde). Blokkerend enkel nog bij opstart en rescan.
+//                 /json ongewijzigd (t en u bevatten de strookpixels). NVS: één key "fx" (blob).
 // v3.8.1 (26nov26): VORSTBEVEILIGING NA DE OPSTART. Vóór de eerste meting gold "geen geldige temperatuur" en de
 //                 vorstbeveiliging rekende haar kwartier "aan" vanaf millis() = 0 → na elke herstart kort b = 1 (Sheet
 //                 25/11 22:10). Nu: de eerste 3 min na de opstart zonder geldige temperatuur geen verwarming (melding
@@ -229,6 +239,16 @@
 #include "driver/gpio.h"     // v3.4.4: gpio_get_level
 #include "nvs.h"             // v3.4.4: NVS-bezetting in Diagnose
 struct NvsNs { char name[16]; size_t used; };   // v3.4.5: hier bovenaan (vóór de automatische prototypes)
+// v3.8b: effectstrook (één NVS-blob "fx"); hier bovenaan vóór de automatische prototypes
+struct FxCfg {
+  int8_t  from, to;        // eerste en laatste pixel (from < 0 = uit)
+  uint8_t mode;            // 0 manueel, 1 MOV1, 2 MOV2, 3 nachtlampje
+  uint8_t eff;             // 0 vast, 1 samen ademen, 2 één voor één ademen, 3 looplicht
+  uint8_t col_en, r, g, b; // eigen kleur
+  uint8_t speed;           // seconden per golf (2–20)
+  uint8_t bri;             // max. helderheid % (5–100)
+  char    name[21];
+};
 #include <OneWireNg_CurrentPlatform.h>  // C6 compatibel (vervangt OneWire + DallasTemperature)
 
 #include <Adafruit_NeoPixel.h>
@@ -257,7 +277,7 @@ void releaseUsbPins() {
   usb_serial_jtag_ll_phy_enable_pad(false);
 }
 
-#define ROOM_VERSION "v3.8.1"  // v3.2: enige plaats met het versienummer
+#define ROOM_VERSION "v3.8b"  // v3.2: enige plaats met het versienummer
 
 // v3.2: reden van de laatste herstart, leesbaar
 esp_reset_reason_t boot_reason = ESP_RST_UNKNOWN;
@@ -683,6 +703,15 @@ bool    px_ovr_on[30];        // nachtlampje: gewenste stand tijdens handmatige 
 bool    px_col_en[30];        // eigen kleur aan
 uint8_t px_col[30][3];        // eigen kleur RGB
 int     last_dark_state = -1; // nachtlampje: overgang dag/nacht wist de handmatige omschakeling
+// v3.8b: effectstrook
+FxCfg   fx = { -1, -1, 0, 2, 0, 255, 255, 255, 6, 100, "Effectstrook" };
+uint8_t fx_ovr = 0;           // zoals px_ovr (beweging: altijd aan, persistent in de blob niet nodig → in px_ovr van fx.from)
+bool    fx_ovr_on = false;    // nachtlampje: gewenste stand tijdens handmatige omschakeling
+bool    fx_on = false;        // strook hoort te branden
+float   fx_level = 0.0f;      // 0..1, zacht aan/uit
+// v3.8b: DS18B20 niet-blokkerend
+bool    ds_conv_pending = false;
+unsigned long ds_conv_ms = 0;
 bool pixel_on[30] = {false}; // Voor alle pixels
 bool pixel_user_on[30] = {false};   // Manuele intentie (persistent)
 
@@ -750,6 +779,7 @@ void updateFades() {
   bool changed = false;
 
   for (int i = 0; i < pixels_num; i++) {
+    if (inFx(i)) continue;   // v3.8b: strookpixels via updateEffect()
     // Skip als fade al klaar is
     if (fade_progress[i] >= 1.0f && 
         currR[i] == targetR[i] && 
@@ -836,7 +866,7 @@ void pxRGB(int i, uint8_t &r, uint8_t &g, uint8_t &b) {
 void savePxOvr() {   // enkel de "altijd aan" van bewegingspixels is persistent
   char o[31];
   for (int i = 0; i < 30; i++) {
-    uint8_t m = px_mode[i];
+    uint8_t m = (fx.from >= 0 && i == fx.from) ? fx.mode : px_mode[i];   // v3.8b: strook bewaart in pixel fx.from
     o[i] = ((m == PXM_MOV1 || m == PXM_MOV2) && px_ovr[i]) ? '1' : '0';
   }
   o[30] = 0;
@@ -867,6 +897,15 @@ void loadPixelModes() {
 }
 // tik op een pixel (landingspagina, /advanced, Portal): gedrag volgens de modus
 void pxTap(int i) {
+  if (inFx(i)) {   // v3.8b: tik op de strook
+    uint8_t m = fxEff();
+    if (m == PXM_MOV1 || m == PXM_MOV2) { px_ovr[fx.from] = !px_ovr[fx.from]; savePxOvr(); }
+    else if (m == PXM_NIGHT) { if (fx_ovr) fx_ovr = 0; else { fx_ovr = 1; fx_ovr_on = !fx_on; } }
+    else { pixel_on[fx.from] = !pixel_on[fx.from];
+           char pokey[24]; snprintf(pokey, sizeof(pokey), "%s%d", NVS_PIXEL_ON_BASE, fx.from);
+           preferences.putBool(pokey, pixel_on[fx.from]); }
+    return;
+  }
   uint8_t m = pxEff(i);
   if (m == PXM_MOV1 || m == PXM_MOV2) {
     px_ovr[i] = !px_ovr[i];
@@ -880,6 +919,60 @@ void pxTap(int i) {
     preferences.putBool(pokey, pixel_on[i]);
   }
 }
+// v3.8b: effectstrook
+bool inFx(int i) { return fx.from >= 0 && i >= fx.from && i <= fx.to && i < pixels_num; }
+uint8_t fxEff() { return (fx.mode == PXM_MOV2 && !mov2_enabled) ? PXM_MAN : fx.mode; }
+const char* fxEffName(uint8_t e) {
+  switch (e) { case 1: return "samen ademen"; case 2: return "één voor één ademen"; case 3: return "looplicht"; default: return "vast"; }
+}
+void loadFx() {
+  FxCfg t;
+  if (preferences.getBytesLength("fx") == sizeof(t) && preferences.getBytes("fx", &t, sizeof(t)) == sizeof(t)) fx = t;
+  fx.name[sizeof(fx.name) - 1] = 0;
+  if (fx.from >= pixels_num || fx.to < fx.from) fx.from = -1;
+  if (fx.to >= pixels_num) fx.to = pixels_num - 1;
+  fx.mode = min<uint8_t>(fx.mode, 3); fx.eff = min<uint8_t>(fx.eff, 3);
+  fx.speed = constrain(fx.speed, 2, 20); fx.bri = constrain(fx.bri, 5, 100);
+}
+// ±40 beelden/s: enkel de strookpixels; aan/uit zacht met de dimtijd
+void updateEffect() {
+  static unsigned long last = 0;
+  static bool dark_drawn = false;
+  if (fx.from < 0) return;
+  unsigned long now = millis();
+  if (now - last < 25) return;
+  float dt = (now - last) / 1000.0f;
+  last = now;
+  float step = dt / (float)max(fade_duration, 1);
+  if (fx_on) fx_level = min(1.0f, fx_level + step); else fx_level = max(0.0f, fx_level - step);
+  int n = fx.to - fx.from + 1;
+  if (n <= 0) return;
+  if (fx_level <= 0.0f) {
+    if (!dark_drawn) { for (int i = fx.from; i <= fx.to && i < pixels_num; i++) pixels.setPixelColor(i, 0); pixels.show(); dark_drawn = true; }
+    return;
+  }
+  dark_drawn = false;
+  uint8_t r = fx.col_en ? fx.r : neo_r, g = fx.col_en ? fx.g : neo_g, b = fx.col_en ? fx.b : neo_b;
+  float base = fx_level * fx.bri / 100.0f;
+  float phase = (float)(now % (fx.speed * 1000UL)) / (fx.speed * 1000.0f);   // 0..1
+  for (int k = 0; k < n; k++) {
+    int i = fx.from + k;
+    if (i >= pixels_num) break;
+    float f = 1.0f;
+    if (fx.eff == 1) {                       // samen ademen
+      f = 0.05f + 0.95f * (0.5f - 0.5f * cosf(2.0f * PI * phase));
+    } else if (fx.eff == 2 || fx.eff == 3) { // één voor één ademen (breed, overlappend) / looplicht (smal)
+      float w = (fx.eff == 2) ? 2.0f / n : 1.0f / n;
+      float c = (k + 0.5f) / n;
+      float d = fabsf(phase - c); if (d > 0.5f) d = 1.0f - d;   // cirkelvormig: golf begint opnieuw
+      f = (d < w) ? 0.5f + 0.5f * cosf(PI * d / w) : 0.0f;
+    }
+    f = f * f;                               // eenvoudige gammacorrectie: zachter ademen
+    pixels.setPixelColor(i, (uint8_t)(r * base * f), (uint8_t)(g * base * f), (uint8_t)(b * base * f));
+  }
+  pixels.show();
+}
+
 const char* pxModeName(uint8_t m) {
   switch (m) { case PXM_MOV1: return "beweging MOV1"; case PXM_MOV2: return "beweging MOV2";
                case PXM_NIGHT: return "nachtlampje"; default: return "manueel"; }
@@ -959,15 +1052,27 @@ void loadDS18B20fromNVS() {
   }
 }
 
+// v3.8b: blokkerende versie enkel nog voor setup() en rescan; in de loop dsStartConversion() + dsReadResults()
 void readDS18B20temps() {
-  if (ds_count == 0) { temp_ds = NAN; return; }  // v3.5: geen sensor = geen geldige waarde (was 0,0)
+  dsStartConversion();
+  if (!ds_conv_pending) return;
+  delay(750);
+  dsReadResults();
+}
 
-  // Stap 1: Start conversie voor ALLE sensoren tegelijk via SKIP ROM (broadcast)
-  // Slechts 1x interrupt-blokkering voor de conversie-opdracht i.p.v. N keer
+void dsStartConversion() {
+  if (ds_count == 0) { temp_ds = NAN; ds_conv_pending = false; return; }  // v3.5: geen sensor = geen geldige waarde
+  // Start conversie voor ALLE sensoren tegelijk via SKIP ROM (broadcast)
   ow.reset();
   ow.writeByte(0xCC);  // SKIP ROM - alle sensoren tegelijk
   ow.writeByte(0x44);  // CONVERT T
-  delay(750);          // Een wacht voor alle sensoren - FreeRTOS-friendly
+  ds_conv_pending = true;
+  ds_conv_ms = millis();
+}
+
+void dsReadResults() {
+  ds_conv_pending = false;
+  if (ds_count == 0) { temp_ds = NAN; return; }
 
   // Stap 2: Lees elke sensor individueel via MATCH ROM
   for (int i = 0; i < ds_count; i++) {
@@ -1170,7 +1275,10 @@ const char* getJSON() {
     pixel_on_str[i] = pixel_on[i] ? '1' : '0';
   }
   char pixel_mode_str[32] = {0};   // v3.8a: één teken per pixel (1 = altijd aan / handmatig)
-  for (int i = 0; i < pixels_num && i < 30; i++) pixel_mode_str[i] = px_ovr[i] ? '1' : '0';
+  for (int i = 0; i < pixels_num && i < 30; i++) {
+    bool o = inFx(i) ? (fxEff() == PXM_NIGHT ? fx_ovr : px_ovr[fx.from]) : px_ovr[i];   // v3.8b: strook
+    pixel_mode_str[i] = o ? '1' : '0';
+  }
   if (pixels_num < 2) { pixel_mode_str[0] = pixel_mode_str[0] ? pixel_mode_str[0] : '0'; pixel_mode_str[1] = '0'; }
 
   static char json[840];   // v3.7: ruimte voor ah–ao; v3.8a: u tot 30 tekens
@@ -1502,6 +1610,7 @@ void setup() {
 
   // v3.8a: pixelmodi, "altijd aan" en eigen kleuren
   loadPixelModes();
+  loadFx();   // v3.8b: effectstrook
 
 
 
@@ -1755,9 +1864,11 @@ void setup() {
       p->print(F(",px:["));
       for (int i = 0; i < pixels_num; i++) {
         if (i) p->print(',');
+        if (inFx(i) && i != fx.from) { p->print(F("null")); continue; }   // v3.8b: strook = één tegel
+        const char* nm = (inFx(i)) ? fx.name : pixel_nicknames[i];
         p->print('"');
-        for (int j = 0; j < 32 && pixel_nicknames[i][j] != '\0'; j++) {   // veilig voor JS én HTML
-          char c = pixel_nicknames[i][j];
+        for (int j = 0; j < 32 && nm[j] != '\0'; j++) {   // veilig voor JS én HTML
+          char c = nm[j];
           if      (c == '\"') p->print(F("\\\""));
           else if (c == '\\') p->print(F("\\\\"));
           else if (c == '<')  p->print(F("&lt;"));
@@ -1767,11 +1878,12 @@ void setup() {
         p->print('"');
       }
       p->print(F("],md:\""));          // v3.8a: modus per pixel (0 manueel, 1 MOV1, 2 MOV2, 3 nachtlampje)
-      for (int i = 0; i < pixels_num; i++) p->print((char)('0' + pxEff(i)));
+      for (int i = 0; i < pixels_num; i++) p->print((char)('0' + (inFx(i) ? fxEff() : pxEff(i))));
       p->print(F("\",cl:["));          // v3.8a: eigen kleur per pixel ("" = kamerkleur)
       for (int i = 0; i < pixels_num; i++) {
         if (i) p->print(',');
-        if (px_col_en[i]) p->printf("\"#%02x%02x%02x\"", px_col[i][0], px_col[i][1], px_col[i][2]);
+        if (inFx(i) && fx.col_en) p->printf("\"#%02x%02x%02x\"", fx.r, fx.g, fx.b);   // v3.8b
+        else if (!inFx(i) && px_col_en[i]) p->printf("\"#%02x%02x%02x\"", px_col[i][0], px_col[i][1], px_col[i][2]);
         else p->print(F("\"\""));
       }
       p->print(F("],adc:\""));        // v3.5.2: bijnaam Generic ADC ("" = niet in gebruik)
@@ -1985,25 +2097,35 @@ void setup() {
 
     // Dynamische pixels loop — v2.7: char[] i.p.v. String label/action (geen heap-alloc per pixel)
     for (int i = 0; i < pixels_num; i++) {
+      if (inFx(i) && i != fx.from) continue;   // v3.8b: strook = één rij
+      bool isfx = inFx(i);
       char label[48];
-      if (pixel_nicknames[i][0] == '\0') snprintf(label, sizeof(label), "Pixel %d", i);
+      if (isfx) snprintf(label, sizeof(label), "%s", fx.name);
+      else if (pixel_nicknames[i][0] == '\0') snprintf(label, sizeof(label), "Pixel %d", i);
       else snprintf(label, sizeof(label), "%s", pixel_nicknames[i]);
+      uint8_t em = isfx ? fxEff() : pxEff(i);
+      bool eo = isfx ? (em == PXM_NIGHT ? fx_ovr : px_ovr[fx.from]) : px_ovr[i];
+      char mtxt[64];
+      if (isfx) snprintf(mtxt, sizeof(mtxt), "strook %d&ndash;%d &middot; %s &middot; %s", fx.from, fx.to, pxModeName(em), fxEffName(fx.eff));
+      else snprintf(mtxt, sizeof(mtxt), "%s", pxModeName(em));
       const char* val  = pixel_on[i] ? "On" : "Off";
       const char* chkd = pixel_on[i] ? "checked" : "";
       char action[40];
-      if (pxEff(i) != PXM_MAN)   // v3.8a: schakelaar = altijd aan / handmatig
+      if (em != PXM_MAN)   // v3.8a: schakelaar = altijd aan / handmatig
         snprintf(action, sizeof(action), "/toggle_pixel_mode?idx=%d", i);
       else
         snprintf(action, sizeof(action), "/toggle_pixel?idx=%d", i);
       // v2.12: dot met neo-kleur als pixel aan, grijs als uit
       char dotSpan[64];
-      char pxh[8]; { uint8_t cr, cg, cb; pxRGB(i, cr, cg, cb); snprintf(pxh, sizeof(pxh), "#%02x%02x%02x", cr, cg, cb); }   // v3.8a
+      char pxh[8]; { uint8_t cr, cg, cb; pxRGB(i, cr, cg, cb);
+        if (isfx) { cr = fx.col_en ? fx.r : neo_r; cg = fx.col_en ? fx.g : neo_g; cb = fx.col_en ? fx.b : neo_b; }
+        snprintf(pxh, sizeof(pxh), "#%02x%02x%02x", cr, cg, cb); }   // v3.8a, v3.8b
       snprintf(dotSpan, sizeof(dotSpan), "<span class='dot' style='background:%s'></span>",
                pixel_on[i] ? pxh : "#bbb");
       p->printf("<tr data-px=\"%d\" data-c=\"%s\"><td class=\"label\">%s <small style=\"font-weight:normal;color:#888\">(%s)</small></td><td class=\"value\">%s</td>"
         "<td class=\"control\"><form action=\"%s\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\"><label class=\"switch\">"
         "<input type=\"checkbox\" %s onchange=\"submitAjax(this.form);\"><span class=\"slider-switch\"></span></label></form></td></tr>",
-        i, pxh, label, pxModeName(pxEff(i)), dotSpan, action, (pxEff(i) == PXM_MAN) ? chkd : (px_ovr[i] ? "checked" : ""));
+        i, pxh, label, mtxt, dotSpan, action, (em == PXM_MAN) ? chkd : (eo ? "checked" : ""));
     }
 
     p->print(F("</table>"
@@ -2650,6 +2772,23 @@ server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request) {
   p->print(F("<span style=\"font-size:12px;color:#666;\">Beweging: aan bij beweging in het donker (niet in bed-modus), tik = altijd aan. "
     "Nachtlampje: aan zolang het donker is, uit in bed-modus, tik = handmatig tot de volgende dag/nacht-overgang. "
     "Zonder eigen kleur volgt de pixel de kamerkleur. MOV2-pixels werken enkel als MOV2 aan staat.</span></td></tr>"));
+  // v3.8b: effectstrook
+  p->printf("<tr><td class=\"lbl\">Effectstrook</td><td class=\"inp\">"
+    "Pixel <input type=\"number\" name=\"fx_from\" min=\"-1\" max=\"29\" value=\"%d\" style=\"width:60px;\"> tot "
+    "<input type=\"number\" name=\"fx_to\" min=\"0\" max=\"29\" value=\"%d\" style=\"width:60px;\"> "
+    "<span style=\"font-size:12px;color:#666;\">(van = &minus;1: geen strook)</span><br>"
+    "Naam: <input type=\"text\" name=\"fx_name\" maxlength=\"20\" style=\"width:160px;\" value=\"", fx.from, fx.to < 0 ? 0 : fx.to);
+  printEsc(p, fx.name);
+  p->print(F("\"> Modus: <select name=\"fx_mode\" style=\"width:auto;padding:4px;\">"));
+  for (uint8_t m = 0; m <= 3; m++) p->printf("<option value=\"%u\"%s>%s</option>", m, fx.mode == m ? " selected" : "", pxModeName(m));
+  p->print(F("</select><br>Effect: <select name=\"fx_eff\" style=\"width:auto;padding:4px;\">"));
+  for (uint8_t e = 0; e <= 3; e++) p->printf("<option value=\"%u\"%s>%s</option>", e, fx.eff == e ? " selected" : "", fxEffName(e));
+  p->printf("</select> &nbsp; <label><input type=\"checkbox\" name=\"fx_col_en\"%s> eigen kleur</label> "
+    "<input type=\"color\" name=\"fx_col\" value=\"#%02x%02x%02x\" style=\"width:44px;padding:0;vertical-align:middle;\"><br>"
+    "Snelheid: <input type=\"number\" name=\"fx_speed\" min=\"2\" max=\"20\" value=\"%u\" style=\"width:60px;\"> s per golf &nbsp; "
+    "Helderheid: <input type=\"number\" name=\"fx_bri\" min=\"5\" max=\"100\" value=\"%u\" style=\"width:60px;\"> %%"
+    "<br><span style=\"font-size:12px;color:#666;\">De pixels van de strook krijgen samen één tegel; hun eigen modus en kleur hierboven worden dan niet gebruikt.</span></td></tr>",
+    fx.col_en ? " checked" : "", fx.r, fx.g, fx.b, fx.speed, fx.bri);
 
   p->printf("<tr><td class=\"lbl\">Optionele sensoren</td><td class=\"inp\">"
     "<label><input type=\"checkbox\" name=\"co2\"%s> SCD41 (CO&#8322;)</label> "
@@ -2791,6 +2930,26 @@ server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
   preferences.putUChar(NVS_NEO_R, request->hasArg("neo_r") ? request->arg("neo_r").toInt() : 255);
   preferences.putUChar(NVS_NEO_G, request->hasArg("neo_g") ? request->arg("neo_g").toInt() : 255);
   preferences.putUChar(NVS_NEO_B, request->hasArg("neo_b") ? request->arg("neo_b").toInt() : 255);
+
+  // v3.8b: effectstrook
+  if (request->hasArg("fx_from")) {
+    FxCfg t = fx;
+    t.from  = constrain(request->arg("fx_from").toInt(), -1, 29);
+    t.to    = constrain(request->arg("fx_to").toInt(), 0, 29);
+    if (t.to < t.from) t.from = -1;
+    t.mode  = constrain(request->arg("fx_mode").toInt(), 0, 3);
+    t.eff   = constrain(request->arg("fx_eff").toInt(), 0, 3);
+    t.col_en = request->hasArg("fx_col_en") ? 1 : 0;
+    if (request->hasArg("fx_col") && request->arg("fx_col").length() == 7) {
+      uint32_t c = strtoul(request->arg("fx_col").c_str() + 1, nullptr, 16);
+      t.r = (c >> 16) & 0xFF; t.g = (c >> 8) & 0xFF; t.b = c & 0xFF;
+    }
+    t.speed = constrain(request->arg("fx_speed").toInt(), 2, 20);
+    t.bri   = constrain(request->arg("fx_bri").toInt(), 5, 100);
+    String nm = request->arg("fx_name"); nm.trim();
+    strlcpy(t.name, nm.length() ? nm.c_str() : "Effectstrook", sizeof(t.name));
+    preferences.putBytes("fx", &t, sizeof(t));
+  }
 
   // v3.8a: pixelmodi en eigen kleuren
   {
@@ -3088,6 +3247,9 @@ void loop() {
 
   crumbL(CL_FADE);
   updateFades();
+  updateEffect();   // v3.8b
+  // v3.8b: DS18B20-conversie klaar? (niet-blokkerend, 750 ms na de start)
+  if (ds_conv_pending && millis() - ds_conv_ms >= 750) { crumbL(CL_DS); dsReadResults(); }
 
   crumbL(CL_PIR);
 
@@ -3120,10 +3282,27 @@ void loop() {
     bool dark = (light_ldr < LDR_DARK_THRESHOLD);   // v3.5.3: omgekeerde schaal
     if (last_dark_state != (int)dark) {             // overgang dag/nacht → handmatige omschakeling nachtlampjes vervalt
       if (last_dark_state != -1) for (int i = 0; i < pixels_num; i++) if (pxEff(i) == PXM_NIGHT) px_ovr[i] = 0;
+      if (last_dark_state != -1 && fxEff() == PXM_NIGHT) fx_ovr = 0;   // v3.8b
       last_dark_state = dark;
     }
     int m1 = 0, m2 = 0;
+    if (fx.from >= 0) {   // v3.8b: effectstrook als één lamp
+      uint8_t m = fxEff();
+      bool on;
+      if (m == PXM_MOV1 || m == PXM_MOV2) {
+        unsigned long off = (m == PXM_MOV1) ? mov1_off_time : mov2_off_time;
+        if (bed == 1) on = false; else if (px_ovr[fx.from]) on = true; else on = dark && (millis() < off);
+        if (on) { if (m == PXM_MOV1) m1 = 1; else m2 = 1; }
+      } else if (m == PXM_NIGHT) {
+        on = fx_ovr ? fx_ovr_on : (dark && bed != 1);
+      } else {
+        on = pixel_on[fx.from];
+      }
+      fx_on = on;
+      for (int i = fx.from; i <= fx.to && i < pixels_num; i++) pixel_on[i] = on;   // t toont de strook
+    }
     for (int i = 0; i < pixels_num; i++) {
+      if (inFx(i)) continue;   // v3.8b: strook via updateEffect()
       uint8_t m = pxEff(i);
       bool on;
       if (m == PXM_MOV1 || m == PXM_MOV2) {
@@ -3285,7 +3464,7 @@ void loop() {
     }
   }
   crumbL(CL_DS);
-  readDS18B20temps();  // Lees alle DS18B20 sensoren → temp_ds = primaire sensor
+  if (!ds_conv_pending) dsStartConversion();   // v3.8b: uitlezen 750 ms later, zonder de lus stil te leggen
   
   crumbL(CL_LDR);
   light_ldr = scaleLDR(analogRead(LDR_ANALOG));

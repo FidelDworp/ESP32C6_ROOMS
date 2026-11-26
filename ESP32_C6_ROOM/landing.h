@@ -1,5 +1,5 @@
 // ============================================================================
-// landing.h — landingspagina "/" van de ROOM-sketch (hoort bij v3.2; v3.2: versie onderaan; v3.5.2: Generic ADC; v3.6.2: kamernaam als titel; v3.7.1: SCD41-terugval; v3.8: echt doel (ak) en minimum setpoint; v3.8a: pixelmodi en eigen kleur)
+// landing.h — landingspagina "/" van de ROOM-sketch (hoort bij v3.2; v3.2: versie onderaan; v3.5.2: Generic ADC; v3.6.2: kamernaam als titel; v3.7.1: SCD41-terugval; v3.8: echt doel (ak) en minimum setpoint; v3.8a: pixelmodi en eigen kleur; v3.8b: effectstrook als één tegel)
 // Eenvoudige pagina voor huisgenoten en gasten: temperatuur + setpoint, lampen,
 // kleur, bed-modus, thuis/weg. Technische pagina: /advanced (⚙ onderaan).
 //
@@ -73,7 +73,7 @@ var $=function(i){return document.getElementById(i);},laatst=null,bezig=0;
 function hex(v){return ('0'+Math.round(v).toString(16)).slice(-2);}
 function md(i){return CFG.md?+CFG.md.charAt(i):(i==0||(i==1&&CFG.mov2)?1:0);}  /* v3.8a: 0 manueel, 1 MOV1, 2 MOV2, 3 nachtlampje */
 function isMov(i){var m=md(i);return m==1||m==2;}
-function tegels(){var h='';for(var i=0;i<CFG.px.length;i++){
+function tegels(){var h='';for(var i=0;i<CFG.px.length;i++){if(CFG.px[i]===null)continue;  /* v3.8b: strook = één tegel */
  h+='<div class="tegel" id="t'+i+'" onclick="tik('+i+')"><div class="ic">💡</div><div>'+CFG.px[i]+'</div><div class="bd" id="b'+i+'"></div></div>';}
  $('tegels').innerHTML=h;}
 function aan(d,i){var s=(d.t||'').replace('P=','');return s.charAt(i)=='1';}  /* v3.8a: t = echte stand van elke pixel */
